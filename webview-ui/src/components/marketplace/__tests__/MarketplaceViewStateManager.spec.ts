@@ -171,6 +171,18 @@ describe("MarketplaceViewStateManager", () => {
 			const finalState = stateManager.getState()
 			expect(finalState.displayItems).toEqual(mockMarketplaceItems)
 		})
+
+		it("should handle marketplaceData messages without organization MCPs", async () => {
+			await stateManager.handleMessage({
+				type: "marketplaceData",
+				marketplaceItems: mockMarketplaceItems,
+				marketplaceInstalledMetadata: { project: {}, global: {} },
+			})
+
+			const notifiedState = mockStateChangeHandler.mock.calls[0][0]
+			expect(notifiedState.allItems).toEqual(mockMarketplaceItems)
+			expect(notifiedState.displayItems).toEqual(mockMarketplaceItems)
+		})
 	})
 
 	describe("filtering behavior", () => {

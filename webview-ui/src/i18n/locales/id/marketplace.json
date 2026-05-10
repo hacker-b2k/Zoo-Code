@@ -41,10 +41,6 @@
 		},
 		"none": "Tidak Ada"
 	},
-	"sections": {
-		"organizationMcps": "MCP {{organization}}",
-		"marketplace": "Marketplace"
-	},
 	"type-group": {
 		"modes": "Mode",
 		"mcps": "Server MCP"

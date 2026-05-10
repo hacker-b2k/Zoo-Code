@@ -174,7 +174,6 @@ describe("MarketplaceManager", () => {
 
 			expect(result.marketplaceItems).toHaveLength(1)
 			expect(result.marketplaceItems[0].name).toBe("Test Mode")
-			expect(result.organizationMcps).toHaveLength(0)
 		})
 
 		it("should handle API errors gracefully", async () => {
@@ -184,11 +183,10 @@ describe("MarketplaceManager", () => {
 			const result = await manager.getMarketplaceItems()
 
 			expect(result.marketplaceItems).toHaveLength(0)
-			expect(result.organizationMcps).toHaveLength(0)
 			expect(result.errors).toEqual(["API request failed"])
 		})
 
-		it("should return organization MCPs when available", async () => {
+		it("should ignore organization MCPs when building marketplace results", async () => {
 			const { CloudService } = await import("@roo-code/cloud")
 
 			// Mock CloudService to return organization settings
@@ -226,8 +224,6 @@ describe("MarketplaceManager", () => {
 
 			const result = await manager.getMarketplaceItems()
 
-			expect(result.organizationMcps).toHaveLength(1)
-			expect(result.organizationMcps[0].name).toBe("Organization MCP")
 			expect(result.marketplaceItems).toHaveLength(1)
 			expect(result.marketplaceItems[0].name).toBe("Test MCP")
 		})
@@ -272,7 +268,6 @@ describe("MarketplaceManager", () => {
 
 			expect(result.marketplaceItems).toHaveLength(1)
 			expect(result.marketplaceItems[0].name).toBe("Visible MCP")
-			expect(result.organizationMcps).toHaveLength(0)
 		})
 
 		it("should handle CloudService not being available", async () => {
@@ -297,9 +292,47 @@ describe("MarketplaceManager", () => {
 
 			const result = await manager.getMarketplaceItems()
 
-			expect(result.organizationMcps).toHaveLength(0)
 			expect(result.marketplaceItems).toHaveLength(1)
 			expect(result.marketplaceItems[0].name).toBe("Test MCP")
+		})
+	})
+
+	describe("getCurrentItems", () => {
+		it("should exclude organization MCPs from current items", async () => {
+			const { CloudService } = await import("@roo-code/cloud")
+
+			vi.mocked(CloudService.hasInstance).mockReturnValue(true)
+			vi.mocked(CloudService.instance.isAuthenticated).mockReturnValue(true)
+			vi.mocked(CloudService.instance.getOrganizationSettings).mockReturnValue({
+				version: 1,
+				mcps: [
+					{
+						id: "org-mcp-1",
+						name: "Organization MCP",
+						description: "An organization MCP",
+						url: "https://example.com/org-mcp",
+						content: '{"command": "node", "args": ["org-server.js"]}',
+					},
+				],
+				hiddenMcps: [],
+				allowList: { allowAll: true, providers: {} },
+				defaultSettings: {},
+			})
+
+			const mockItems: MarketplaceItem[] = [
+				{
+					id: "test-mcp",
+					name: "Test MCP",
+					description: "A test MCP",
+					type: "mcp",
+					url: "https://example.com/test-mcp",
+					content: '{"command": "node", "args": ["server.js"]}',
+				},
+			]
+
+			vi.spyOn(manager["configLoader"], "loadAllItems").mockResolvedValue(mockItems)
+
+			await expect(manager.getCurrentItems()).resolves.toEqual(mockItems)
 		})
 	})
 

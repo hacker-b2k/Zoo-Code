@@ -637,6 +637,45 @@ describe("ClineProvider", () => {
 		expect(mockPostMessage).toHaveBeenCalled()
 	})
 
+	test("fetchMarketplaceData posts marketplace items without organization MCPs", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+		;(provider as any).marketplaceManager = {
+			getMarketplaceItems: vi.fn().mockResolvedValue({
+				marketplaceItems: [
+					{
+						id: "test-mcp",
+						name: "Test MCP",
+						description: "Marketplace item",
+						type: "mcp",
+						url: "https://example.com/test-mcp",
+						content: '{"command":"node"}',
+					},
+				],
+			}),
+			getInstallationMetadata: vi.fn().mockResolvedValue({ project: {}, global: {} }),
+		}
+
+		mockPostMessage.mockClear()
+
+		await provider.fetchMarketplaceData()
+
+		expect(mockPostMessage).toHaveBeenCalledWith({
+			type: "marketplaceData",
+			marketplaceItems: [
+				{
+					id: "test-mcp",
+					name: "Test MCP",
+					description: "Marketplace item",
+					type: "mcp",
+					url: "https://example.com/test-mcp",
+					content: '{"command":"node"}',
+				},
+			],
+			marketplaceInstalledMetadata: { project: {}, global: {} },
+			errors: undefined,
+		})
+	})
+
 	test("clearTask aborts current task", async () => {
 		// Setup Cline instance with auto-mock from the top of the file
 		const mockCline = new Task(defaultTaskOptions) // Create a new mocked instance

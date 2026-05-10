@@ -18,9 +18,7 @@ vi.mock("@/i18n/TranslationContext", () => ({
 const mockTransition = vi.fn()
 const mockState: ViewState = {
 	allItems: [],
-	organizationMcps: [],
 	displayItems: [],
-	displayOrganizationMcps: [],
 	isFetching: false,
 	activeTab: "mcp",
 	filters: {
@@ -99,6 +97,25 @@ describe("MarketplaceListView", () => {
 
 		expect(screen.getByText("marketplace:items.empty.noItems")).toBeInTheDocument()
 		expect(screen.getByText("marketplace:items.empty.adjustFilters")).toBeInTheDocument()
+	})
+
+	it("renders marketplace items without organization section headings", () => {
+		mockState.displayItems = [
+			{
+				id: "test-mcp",
+				name: "Test MCP",
+				description: "Test description",
+				type: "mcp",
+				url: "https://example.com/test-mcp",
+				content: "test content",
+			},
+		]
+
+		renderWithProviders({ filterByType: "mcp" })
+
+		expect(screen.getByText("Test MCP")).toBeInTheDocument()
+		expect(screen.queryByText("marketplace:sections.organizationMcps")).not.toBeInTheDocument()
+		expect(screen.queryByText("marketplace:sections.marketplace")).not.toBeInTheDocument()
 	})
 
 	it("updates search filter when typing", () => {

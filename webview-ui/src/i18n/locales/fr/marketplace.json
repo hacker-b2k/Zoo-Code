@@ -41,10 +41,6 @@
 		},
 		"none": "Aucun"
 	},
-	"sections": {
-		"organizationMcps": "MCPs de {{organization}}",
-		"marketplace": "Marché"
-	},
 	"type-group": {
 		"modes": "Modes",
 		"mcps": "Serveurs MCP"

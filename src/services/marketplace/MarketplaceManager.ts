@@ -4,7 +4,7 @@ import * as path from "path"
 import * as vscode from "vscode"
 import * as yaml from "yaml"
 
-import type { OrganizationSettings, MarketplaceItem, MarketplaceItemType, McpMarketplaceItem } from "@roo-code/types"
+import type { OrganizationSettings, MarketplaceItem, MarketplaceItemType } from "@roo-code/types"
 import { TelemetryService } from "@roo-code/telemetry"
 import { CloudService } from "@roo-code/cloud"
 
@@ -17,7 +17,6 @@ import { RemoteConfigLoader } from "./RemoteConfigLoader"
 import { SimpleInstaller } from "./SimpleInstaller"
 
 export interface MarketplaceItemsResponse {
-	organizationMcps: MarketplaceItem[]
 	marketplaceItems: MarketplaceItem[]
 	errors?: string[]
 }
@@ -51,19 +50,9 @@ export class MarketplaceManager {
 			}
 
 			const allMarketplaceItems = await this.configLoader.loadAllItems(orgSettings?.hideMarketplaceMcps)
-			let organizationMcps: MarketplaceItem[] = []
 			let marketplaceItems = allMarketplaceItems
 
 			if (orgSettings) {
-				if (orgSettings.mcps && orgSettings.mcps.length > 0) {
-					organizationMcps = orgSettings.mcps.map(
-						(mcp: McpMarketplaceItem): MarketplaceItem => ({
-							...mcp,
-							type: "mcp" as const,
-						}),
-					)
-				}
-
 				if (orgSettings.hiddenMcps && orgSettings.hiddenMcps.length > 0) {
 					const hiddenMcpIds = new Set(orgSettings.hiddenMcps)
 					marketplaceItems = allMarketplaceItems.filter(
@@ -73,7 +62,6 @@ export class MarketplaceManager {
 			}
 
 			return {
-				organizationMcps,
 				marketplaceItems,
 				errors: errors.length > 0 ? errors : undefined,
 			}
@@ -82,7 +70,6 @@ export class MarketplaceManager {
 			console.error("Failed to load marketplace items:", error)
 
 			return {
-				organizationMcps: [],
 				marketplaceItems: [],
 				errors: [errorMessage],
 			}
@@ -91,7 +78,7 @@ export class MarketplaceManager {
 
 	async getCurrentItems(): Promise<MarketplaceItem[]> {
 		const result = await this.getMarketplaceItems()
-		return [...result.organizationMcps, ...result.marketplaceItems]
+		return result.marketplaceItems
 	}
 
 	filterItems(
