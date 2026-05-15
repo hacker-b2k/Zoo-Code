@@ -92,6 +92,7 @@ import {
 	ZAi,
 	Fireworks,
 	VercelAiGateway,
+	ZooGateway,
 	MiniMax,
 } from "./providers"
 
@@ -681,6 +682,17 @@ const ApiOptions = ({
 
 					{selectedProvider === "vercel-ai-gateway" && (
 						<VercelAiGateway
+							apiConfiguration={apiConfiguration}
+							setApiConfigurationField={setApiConfigurationField}
+							routerModels={routerModels}
+							organizationAllowList={organizationAllowList}
+							modelValidationError={modelValidationError}
+							simplifySettings={fromWelcomeView}
+						/>
+					)}
+
+					{selectedProvider === "zoo-gateway" && (
+						<ZooGateway
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
