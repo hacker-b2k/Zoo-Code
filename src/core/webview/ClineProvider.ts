@@ -1687,10 +1687,15 @@ export class ClineProvider
 	async handleZooCodeCallback(token: string) {
 		// Auth mutation (token storage, subscription check, success toast) was already
 		// performed by handleAuthCallback() in handleUri.ts before this method was called.
-		// Auto-populate the zoo-gateway provider profile with the session token so that
+		// Save the zoo-gateway provider profile with the session token so that
 		// ZooGatewayHandler can authenticate without any manual user input.
+		//
+		// activate: false — do NOT switch the active provider or rebuild the current
+		// task's API handler. The user must explicitly select Zoo Gateway in settings.
+		// Passing activate: true (the default) would call updateTaskApiHandlerIfNeeded
+		// with forceRebuild: true, silently switching providers mid-conversation.
 		try {
-			const { apiConfiguration, currentApiConfigName = "default" } = await this.getState()
+			const { apiConfiguration } = await this.getState()
 			const profileName = "Zoo Gateway"
 			const newConfiguration: ProviderSettings = {
 				...apiConfiguration,
@@ -1699,10 +1704,10 @@ export class ClineProvider
 				zooGatewayModelId: apiConfiguration.zooGatewayModelId,
 				zooGatewayBaseUrl: apiConfiguration.zooGatewayBaseUrl,
 			}
-			await this.upsertProviderProfile(profileName, newConfiguration)
+			await this.upsertProviderProfile(profileName, newConfiguration, false)
 		} catch (error) {
 			this.log(
-				`[handleZooCodeCallback] Failed to auto-populate zoo-gateway profile: ${
+				`[handleZooCodeCallback] Failed to save zoo-gateway profile: ${
 					error instanceof Error ? error.message : String(error)
 				}`,
 			)
