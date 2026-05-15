@@ -965,6 +965,14 @@ export const webviewMessageHandler = async (
 					},
 				},
 				{ key: "vercel-ai-gateway", options: { provider: "vercel-ai-gateway" } },
+				{
+					key: "zoo-gateway",
+					options: {
+						provider: "zoo-gateway",
+						apiKey: apiConfiguration.zooSessionToken,
+						baseUrl: apiConfiguration.zooGatewayBaseUrl,
+					},
+				},
 			]
 
 			// LiteLLM is conditional on baseUrl+apiKey
