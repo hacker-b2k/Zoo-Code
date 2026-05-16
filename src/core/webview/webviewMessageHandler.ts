@@ -2442,33 +2442,40 @@ export const webviewMessageHandler = async (
 				const { disconnectZooCode } = await import("../../services/zoo-code-auth")
 				await disconnectZooCode()
 
-				// Also clear the zooSessionToken from the "Zoo Gateway" provider profile
-				// The token is saved there by handleZooCodeCallback() and persists after sign-out
+				// Clear zooSessionToken from ALL provider profiles with apiProvider === "zoo-gateway".
+				// Profiles are user-renameable, so we cannot rely on a hardcoded name like "Zoo Gateway".
+				// We must scan all profiles and clear tokens from any that use the zoo-gateway provider.
 				try {
-					const profileName = "Zoo Gateway"
-					if (provider.hasProviderProfileEntry(profileName)) {
-						const profile = await provider.providerSettingsManager.getProfile({ name: profileName })
-						if (profile.zooSessionToken) {
-							// Clear the token from the profile
-							const { zooSessionToken: _removed, ...cleanedProfile } = profile
+					const allProfiles = await provider.providerSettingsManager.listConfig()
+					// Check if Zoo Gateway is the currently active profile by apiProvider identity
+					const currentSettings = provider.contextProxy.getProviderSettings()
+					const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
+					const currentApiConfigName = provider.contextProxy.getValues().currentApiConfigName
 
-							// Check if Zoo Gateway is the currently active profile.
-							// If so, we must push the cleared profile to the in-memory handler
-							// using upsertProviderProfile with activate: true. Otherwise the
-							// current Task's API handler retains the stale token.
-							const currentApiConfigName = provider.contextProxy.getValues().currentApiConfigName
-							const isZooGatewayActive = currentApiConfigName === profileName
+					for (const entry of allProfiles) {
+						if (entry.apiProvider === "zoo-gateway") {
+							const profile = await provider.providerSettingsManager.getProfile({ name: entry.name })
+							if (profile.zooSessionToken) {
+								// Clear the token from the profile
+								const { zooSessionToken: _removed, ...cleanedProfile } = profile
 
-							if (isZooGatewayActive) {
-								// Push cleared profile to in-memory handler
-								await provider.upsertProviderProfile(profileName, cleanedProfile, true)
-								provider.log(
-									`[zooCodeSignOut] Cleared zooSessionToken from "${profileName}" profile and updated in-memory handler`,
-								)
-							} else {
-								// Just persist to disk; in-memory handler is not using Zoo Gateway
-								await provider.providerSettingsManager.saveConfig(profileName, cleanedProfile)
-								provider.log(`[zooCodeSignOut] Cleared zooSessionToken from "${profileName}" profile`)
+								// If this is the currently active profile, push to in-memory handler
+								// so the current Task's API handler doesn't retain the stale token.
+								const isThisProfileActive = isZooGatewayActive && currentApiConfigName === entry.name
+
+								if (isThisProfileActive) {
+									// Push cleared profile to in-memory handler
+									await provider.upsertProviderProfile(entry.name, cleanedProfile, true)
+									provider.log(
+										`[zooCodeSignOut] Cleared zooSessionToken from "${entry.name}" profile and updated in-memory handler`,
+									)
+								} else {
+									// Just persist to disk; this profile is not currently active
+									await provider.providerSettingsManager.saveConfig(entry.name, cleanedProfile)
+									provider.log(
+										`[zooCodeSignOut] Cleared zooSessionToken from "${entry.name}" profile`,
+									)
+								}
 							}
 						}
 					}

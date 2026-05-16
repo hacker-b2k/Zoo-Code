@@ -1705,9 +1705,10 @@ export class ClineProvider
 				zooGatewayBaseUrl: apiConfiguration.zooGatewayBaseUrl,
 			}
 
-			// Check if Zoo Gateway is the currently active profile
-			const currentApiConfigName = this.contextProxy.getValues().currentApiConfigName
-			const isZooGatewayActive = currentApiConfigName === profileName
+			// Check if Zoo Gateway is the currently active profile by apiProvider identity,
+			// not by profile name (profile names are user-renameable).
+			const currentSettings = this.contextProxy.getProviderSettings()
+			const isZooGatewayActive = currentSettings.apiProvider === "zoo-gateway"
 
 			await this.upsertProviderProfile(profileName, newConfiguration, isZooGatewayActive)
 		} catch (error) {
