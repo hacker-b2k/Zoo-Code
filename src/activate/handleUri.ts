@@ -50,10 +50,12 @@ export const handleUri = async (uri: vscode.Uri) => {
 						email,
 						image,
 					})
-					// Refresh webview state if a panel is currently open
-					if (visibleProvider) {
-						await visibleProvider.handleZooCodeCallback(token)
-					}
+					// Write the token to all active provider instances regardless of visibility.
+					// The profile settings write (handleZooCodeCallback) must run on any active
+					// instance — not just the visible one — so the zoo-gateway zooSessionToken
+					// is persisted even when the sidebar/panel is hidden at callback time.
+					const allInstances = ClineProvider.getAllInstances()
+					await Promise.all(allInstances.map((instance) => instance.handleZooCodeCallback(token)))
 				}
 			}
 			break

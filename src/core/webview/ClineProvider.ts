@@ -661,6 +661,10 @@ export class ClineProvider
 		return findLast(Array.from(this.activeInstances), (instance) => instance.view?.visible === true)
 	}
 
+	public static getAllInstances(): ClineProvider[] {
+		return Array.from(this.activeInstances)
+	}
+
 	public static async getInstance(): Promise<ClineProvider | undefined> {
 		let visibleProvider = ClineProvider.getVisibleInstance()
 
