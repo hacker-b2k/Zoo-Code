@@ -5,6 +5,14 @@ import * as fs from "fs/promises"
 import { runTests } from "@vscode/test-electron"
 import { LLMock } from "@copilotkit/aimock"
 
+import { addApplyDiffResultFixtures } from "./fixtures/apply-diff"
+import { addExecuteCommandResultFixtures } from "./fixtures/execute-command"
+import { addListFilesResultFixtures } from "./fixtures/list-files"
+import { addReadFileResultFixtures } from "./fixtures/read-file"
+import { addSearchFilesResultFixtures } from "./fixtures/search-files"
+import { addUseMcpToolResultFixtures } from "./fixtures/use-mcp-tool"
+import { addWriteToFileResultFixtures } from "./fixtures/write-to-file"
+
 function getCliFlagValue(flag: string) {
 	return process.argv.find((arg, index) => process.argv[index - 1] === flag)
 }
@@ -52,6 +60,10 @@ async function main() {
 	let testWorkspace: string | undefined
 
 	try {
+		// Create a temporary workspace folder for tests before installing fixtures that
+		// need workspace-specific paths.
+		testWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "roo-test-workspace-"))
+
 		if (useMock) {
 			const fixturesDir = path.resolve(__dirname, "../fixtures")
 
@@ -75,6 +87,14 @@ async function main() {
 			mock.loadFixtureDir(fixturesDir)
 
 			if (!isRecord) {
+				addApplyDiffResultFixtures(mock)
+				addExecuteCommandResultFixtures(mock)
+				addListFilesResultFixtures(mock)
+				addReadFileResultFixtures(mock)
+				addSearchFilesResultFixtures(mock)
+				addUseMcpToolResultFixtures(mock)
+				addWriteToFileResultFixtures(mock)
+
 				// The modes test (switch_mode → ask) triggers a second API call whose last
 				// user message starts with <environment_details> directly — no <user_message>
 				// wrapper. JSON fixtures use substring matching so a bare "<environment_details>"
@@ -96,9 +116,6 @@ async function main() {
 
 			await mock.start()
 		}
-
-		// Create a temporary workspace folder for tests
-		testWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "roo-test-workspace-"))
 		// Get test filter from command line arguments or environment variable
 		// Usage examples:
 		// - npm run test:e2e -- --grep "write-to-file"

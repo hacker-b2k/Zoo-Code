@@ -80,6 +80,32 @@ describe("getModelMaxOutputTokens", () => {
 		expect(result).toBe(ANTHROPIC_DEFAULT_MAX_TOKENS) // Should be 8192, not 64_000
 	})
 
+	test("should preserve Anthropic hybrid token handling when a model also supports binary reasoning", () => {
+		const model: ModelInfo = {
+			contextWindow: 1_000_000,
+			supportsPromptCache: true,
+			supportsReasoningBudget: true,
+			supportsReasoningBinary: true,
+			maxTokens: 128_000,
+		}
+
+		expect(
+			getModelMaxOutputTokens({
+				modelId: "claude-opus-4-7",
+				model,
+				settings: { apiProvider: "anthropic", enableReasoningEffort: false },
+			}),
+		).toBe(ANTHROPIC_DEFAULT_MAX_TOKENS)
+
+		expect(
+			getModelMaxOutputTokens({
+				modelId: "claude-opus-4-7",
+				model,
+				settings: { apiProvider: "anthropic", enableReasoningEffort: true, modelMaxTokens: 32_768 },
+			}),
+		).toBe(32_768)
+	})
+
 	test("should return model.maxTokens for non-Anthropic models that support reasoning budget but aren't using it", () => {
 		const geminiModelId = "gemini-2.5-flash-preview-04-17"
 		const model: ModelInfo = {
@@ -248,8 +274,7 @@ describe("getModelMaxOutputTokens", () => {
 		})
 	})
 
-	test("should bypass 20% cap for Z.ai provider and use exact configured max tokens", () => {
-		// glm-5.1: maxTokens=131_072 on a 200k context window (65.5%) — would be capped to 40k without bypass
+	test("should still clamp Z.ai models to 20% of context window by default", () => {
 		const model: ModelInfo = {
 			contextWindow: 200_000,
 			supportsPromptCache: true,
@@ -264,7 +289,7 @@ describe("getModelMaxOutputTokens", () => {
 			format: "openai",
 		})
 
-		expect(result).toBe(131_072)
+		expect(result).toBe(40_000)
 	})
 
 	test("should still clamp non-Z.ai models with high maxTokens to 20% of context window", () => {
