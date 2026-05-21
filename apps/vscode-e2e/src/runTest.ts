@@ -26,11 +26,20 @@ function isDeepSeekTargetedRun(testFile?: string, testGrep?: string) {
 	return testGrep?.toLowerCase().includes("deepseek") ?? false
 }
 
+function isMultiRootTargetedRun(testFile?: string, testGrep?: string) {
+	if (testFile?.toLowerCase().includes("multi-root-read-file-content.test")) {
+		return true
+	}
+
+	return testGrep?.toLowerCase().includes("multi-root") ?? false
+}
+
 async function main() {
 	const isRecord = process.env.AIMOCK_RECORD === "true"
 	const testGrep = getCliFlagValue("--grep") || process.env.TEST_GREP
 	const testFile = getCliFlagValue("--file") || process.env.TEST_FILE
 	const isDeepSeekTest = isDeepSeekTargetedRun(testFile, testGrep)
+	const isMultiRootTest = isMultiRootTargetedRun(testFile, testGrep)
 
 	if (isRecord && isDeepSeekTest && !process.env.DEEPSEEK_API_KEY) {
 		throw new Error("AIMOCK_RECORD=true requires DEEPSEEK_API_KEY to record DeepSeek fixtures")
@@ -58,11 +67,28 @@ async function main() {
 	const extensionTestsPath = path.resolve(__dirname, "./suite/index")
 
 	let testWorkspace: string | undefined
+	let secondaryWorkspace: string | undefined
+	let multiRootWorkspaceFile: string | undefined
 
 	try {
 		// Create a temporary workspace folder for tests before installing fixtures that
 		// need workspace-specific paths.
 		testWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "roo-test-workspace-"))
+		if (isMultiRootTest) {
+			secondaryWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "roo-test-secondary-workspace-"))
+			multiRootWorkspaceFile = path.join(os.tmpdir(), `roo-test-workspace-${Date.now()}.code-workspace`)
+			await fs.writeFile(
+				multiRootWorkspaceFile,
+				JSON.stringify(
+					{
+						folders: [{ path: testWorkspace }, { path: secondaryWorkspace }],
+					},
+					null,
+					2,
+				),
+				"utf8",
+			)
+		}
 
 		if (useMock) {
 			const fixturesDir = path.resolve(__dirname, "../fixtures")
@@ -134,7 +160,7 @@ async function main() {
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,
-			launchArgs: [testWorkspace],
+			launchArgs: [multiRootWorkspaceFile ?? testWorkspace],
 			extensionTestsEnv,
 			version: process.env.VSCODE_VERSION || "1.101.2",
 		})
@@ -142,6 +168,12 @@ async function main() {
 		console.error("Failed to run tests", error)
 		process.exitCode = 1
 	} finally {
+		if (multiRootWorkspaceFile) {
+			await fs.rm(multiRootWorkspaceFile, { force: true })
+		}
+		if (secondaryWorkspace) {
+			await fs.rm(secondaryWorkspace, { recursive: true, force: true })
+		}
 		if (testWorkspace) {
 			await fs.rm(testWorkspace, { recursive: true, force: true })
 		}

@@ -71,6 +71,12 @@ export function addReadFileResultFixtures(mock: InstanceType<typeof LLMock>) {
 			result: "The file [`large-read-file.txt`](large-read-file.txt) contains 100 lines, each following the pattern: `Line N: This is a test line with some content`, where `N` is the line number (from 1 to 100). The structure is consistent throughout the file, with only the line number changing on each line.",
 			id: "call_read_file_large_002",
 		},
+		{
+			toolCallId: "call_read_file_multi_root_secondary_001",
+			expected: ["File: secondary-root-read-file.txt", "SECONDARY_ROOT_MARKER_204"],
+			result: "The read_file tool successfully read `secondary-root-read-file.txt` from the secondary workspace root. Its contents include `SECONDARY_ROOT_MARKER_204`.",
+			id: "call_read_file_multi_root_secondary_002",
+		},
 	]
 
 	for (const fixture of fixtures) {

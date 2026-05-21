@@ -109,6 +109,21 @@
 					}
 				]
 			}
+		},
+		{
+			"match": {
+				"sequenceIndex": 0,
+				"userMessage": "READ_FILE_MULTI_ROOT_REPRO"
+			},
+			"response": {
+				"toolCalls": [
+					{
+						"name": "read_file",
+						"arguments": "{\"path\":\"secondary-root-read-file.txt\",\"mode\":\"slice\",\"offset\":1,\"limit\":50,\"indentation\":{\"anchor_line\":1,\"max_levels\":0,\"include_siblings\":false,\"include_header\":true,\"max_lines\":50}}",
+						"id": "call_read_file_multi_root_secondary_001"
+					}
+				]
+			}
 		}
 	]
 }
