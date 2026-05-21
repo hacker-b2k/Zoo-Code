@@ -3,7 +3,7 @@ import * as path from "path"
 import type { MockedFunction } from "vitest"
 
 import { fileExistsAtPath, createDirectoriesForFile } from "../../../utils/fs"
-import { isPathOutsideWorkspace } from "../../../utils/pathUtils"
+import { isPathOutsideWorkspace, resolvePathInWorkspace } from "../../../utils/pathUtils"
 import { getReadablePath } from "../../../utils/path"
 import { unescapeHtmlEntities } from "../../../utils/text-normalization"
 import { everyLineHasLineNumbers, stripLineNumbers } from "../../../integrations/misc/extract-text"
@@ -101,6 +101,8 @@ describe("writeToFileTool", () => {
 	// Test data
 	const testFilePath = "test/file.txt"
 	const absoluteFilePath = process.platform === "win32" ? "C:\\test\\file.txt" : "/test/file.txt"
+	const outsideRootAbsolutePath =
+		process.platform === "win32" ? "C:\\secondary\\test\\file.txt" : "/secondary/test/file.txt"
 	const testContent = "Line 1\nLine 2\nLine 3"
 	const testContentWithMarkdown = "```javascript\nLine 1\nLine 2\n```"
 
@@ -108,6 +110,7 @@ describe("writeToFileTool", () => {
 	const mockedFileExistsAtPath = fileExistsAtPath as MockedFunction<typeof fileExistsAtPath>
 	const mockedCreateDirectoriesForFile = createDirectoriesForFile as MockedFunction<typeof createDirectoriesForFile>
 	const mockedIsPathOutsideWorkspace = isPathOutsideWorkspace as MockedFunction<typeof isPathOutsideWorkspace>
+	const mockedResolvePathInWorkspace = resolvePathInWorkspace as MockedFunction<typeof resolvePathInWorkspace>
 	const mockedGetReadablePath = getReadablePath as MockedFunction<typeof getReadablePath>
 	const mockedUnescapeHtmlEntities = unescapeHtmlEntities as MockedFunction<typeof unescapeHtmlEntities>
 	const mockedEveryLineHasLineNumbers = everyLineHasLineNumbers as MockedFunction<typeof everyLineHasLineNumbers>
@@ -125,6 +128,9 @@ describe("writeToFileTool", () => {
 		writeToFileTool.resetPartialState()
 
 		mockedPathResolve.mockReturnValue(absoluteFilePath)
+		mockedResolvePathInWorkspace.mockImplementation(async (_cwd: string, filePath: string) =>
+			path.resolve("/", filePath),
+		)
 		mockedFileExistsAtPath.mockResolvedValue(false)
 		mockedIsPathOutsideWorkspace.mockReturnValue(false)
 		mockedGetReadablePath.mockReturnValue("test/path.txt")
@@ -253,6 +259,15 @@ describe("writeToFileTool", () => {
 
 			expect(mockCline.rooIgnoreController.validateAccess).toHaveBeenCalledWith(absoluteFilePath)
 			expect(mockCline.diffViewProvider.open).toHaveBeenCalledWith(testFilePath)
+		})
+
+		it("opens the absolute diff path when the resolver lands outside task.cwd", async () => {
+			mockedResolvePathInWorkspace.mockResolvedValue(outsideRootAbsolutePath)
+
+			await executeWriteFileTool({}, { accessAllowed: true })
+
+			expect(mockCline.rooIgnoreController.validateAccess).toHaveBeenCalledWith(outsideRootAbsolutePath)
+			expect(mockCline.diffViewProvider.open).toHaveBeenCalledWith(outsideRootAbsolutePath)
 		})
 	})
 
