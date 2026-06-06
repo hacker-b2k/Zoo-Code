@@ -30,7 +30,7 @@
 
 Você encontra um guia rápido para migrar do Roo Code para o Zoo Code no [guia de migração Roo→Zoo](https://docs.zoocode.dev/roo-to-zoo-migration). Queremos ajudar os usuários durante essa transição da melhor forma possível, e é exatamente para isso que temos nosso [Reddit](https://www.reddit.com/r/ZooCode) e nosso [Discord](https://discord.gg/VxfP4Vx3gX). Se você tiver algum problema ou dúvida, apareça por lá e pergunte.
 
-## Novidades na v3.58.1
+## Novidades na v3.58.0
 
 - **Zoo Gateway** — conecte-se por um gateway gerenciado com suporte a autenticação multi-perfil
 - **Gemini 3.5 Flash** — um modelo Google rápido e capaz, agora disponível nas configurações do provedor

@@ -30,7 +30,7 @@
 
 Roo Code से Zoo Code में आने के लिए एक quick guide तुम्हें [Roo→Zoo migration guide](https://docs.zoocode.dev/roo-to-zoo-migration) में मिल जाएगी। We plan to help users as much as possible during the transition, और उसी support के लिए हमारा [Reddit](https://www.reddit.com/r/ZooCode) और [Discord](https://discord.gg/VxfP4Vx3gX) है। अगर तुम्हें कोई problem हो या कोई question हो, आकर पूछो।
 
-## v3.58.1 में नया क्या है
+## v3.58.0 में नया क्या है
 
 - **Zoo Gateway** — multi-profile auth support के साथ एक managed gateway के ज़रिए कनेक्ट करें
 - **Gemini 3.5 Flash** — एक तेज़ और सक्षम Google model, अब provider settings से सीधे उपलब्ध

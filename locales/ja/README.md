@@ -30,7 +30,7 @@
 
 Roo Code から Zoo Code へ移行するためのクイックガイドは、[Roo→Zoo 移行ガイド](https://docs.zoocode.dev/roo-to-zoo-migration) で確認できます。移行中のユーザーをできるだけ支援したいと考えていて、そのために [Reddit](https://www.reddit.com/r/ZooCode) と [Discord](https://discord.gg/VxfP4Vx3gX) を用意しています。困ったことや質問があれば、気軽に参加して聞いてください。
 
-## v3.58.1 の新機能
+## v3.58.0 の新機能
 
 - **Zoo Gateway** — マルチプロファイル認証に対応したマネージドゲートウェイ経由で接続
 - **Gemini 3.5 Flash** — 高速で優れた Google モデルがプロバイダー設定から直接利用可能に

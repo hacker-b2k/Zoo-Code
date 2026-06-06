@@ -30,7 +30,7 @@
 
 你可以在 [Roo→Zoo 遷移指南](https://docs.zoocode.dev/roo-to-zoo-migration) 中找到從 Roo Code 遷移到 Zoo Code 的快速說明。我們希望在大家轉移過程中盡可能提供協助，這也是我們設立 [Reddit](https://www.reddit.com/r/ZooCode) 和 [Discord](https://discord.gg/VxfP4Vx3gX) 社群的原因。如果你遇到問題或有任何疑問，歡迎加入後直接提問。
 
-## v3.58.1 新功能
+## v3.58.0 新功能
 
 - **Zoo Gateway** — 透過支援多設定檔驗證的託管閘道連線
 - **Gemini 3.5 Flash** — 快速且強大的 Google 模型，現可直接在供應商設定中使用
