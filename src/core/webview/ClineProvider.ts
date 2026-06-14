@@ -3169,17 +3169,14 @@ export class ClineProvider
 				await this.runDelegationTransition(task.parentTaskId, async () => {
 					const { historyItem: parentHistory } = await this.getTaskWithId(task.parentTaskId!)
 
-					if (
-						parentHistory?.status === "delegated" &&
-						parentHistory?.awaitingChildId === task.taskId &&
-						historyItem
-					) {
+					if (parentHistory?.status === "delegated" && parentHistory?.awaitingChildId === task.taskId) {
 						// Mark the child as interrupted but preserve the parent-child link.
 						// The parent stays "delegated" with awaitingChildId intact so that
 						// when the user resumes the child and it calls attempt_completion,
 						// it can still report back to the parent.
+						// historyItem is guaranteed non-null by the early return guard above.
 						historyItem = {
-							...historyItem,
+							...historyItem!,
 							status: "interrupted",
 						}
 						await this.updateTaskHistory(historyItem)

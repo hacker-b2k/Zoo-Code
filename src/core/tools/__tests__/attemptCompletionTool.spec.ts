@@ -587,6 +587,48 @@ describe("attemptCompletionTool", () => {
 				expect(mockPushToolResult).toHaveBeenCalledWith("")
 			})
 
+			it("skips delegation and logs when child has unexpected status like delegated", async () => {
+				const block: AttemptCompletionToolUse = {
+					type: "tool_use",
+					name: "attempt_completion",
+					params: { result: "unexpected" },
+					nativeArgs: { result: "unexpected" },
+					partial: false,
+				}
+				const mockProvider = {
+					log: vi.fn(),
+					getTaskWithId: vi.fn().mockImplementation((id: string) => {
+						if (id === "child-1") {
+							return Promise.resolve({ historyItem: { id, status: "delegated" } })
+						}
+						throw new Error(`unexpected task id ${id}`)
+					}),
+					reopenParentFromDelegation: vi.fn(),
+				}
+
+				Object.assign(mockTask, {
+					taskId: "child-1",
+					parentTaskId: "parent-1",
+					providerRef: { deref: () => mockProvider },
+				})
+				mockTask.ask = vi.fn().mockResolvedValue({ response: "yesButtonClicked", text: "", images: [] })
+
+				const callbacks: AttemptCompletionCallbacks = {
+					askApproval: mockAskApproval,
+					handleError: mockHandleError,
+					pushToolResult: mockPushToolResult,
+					askFinishSubTaskApproval: mockAskFinishSubTaskApproval,
+					toolDescription: mockToolDescription,
+				}
+
+				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
+
+				expect(mockProvider.log).toHaveBeenCalledWith(
+					expect.stringContaining('Unexpected child task status "delegated"'),
+				)
+				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
+			})
+
 			it("falls through to standalone completion when parent delegation becomes stale after approval", async () => {
 				const block: AttemptCompletionToolUse = {
 					type: "tool_use",

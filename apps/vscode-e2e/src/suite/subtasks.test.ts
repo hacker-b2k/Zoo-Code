@@ -219,9 +219,10 @@ suite("Roo Code Subtasks", function () {
 		}
 	})
 
-	// Race mitigation: runDelegationTransition lock + cancelledDelegationChildIds guard
-	// ensures cancelTask() wins over a concurrent reopenParentFromDelegation() (Race 3).
-	test("cancelled child completes in-place and does not reopen parent", async () => {
+	// Issue #560: interrupted child resumes and reports back to parent.
+	// cancelTask() marks the child as "interrupted" but preserves the parent-child link,
+	// so when the child resumes and calls attempt_completion, it delegates back to the parent.
+	test("interrupted child resumes and reports back to parent", async () => {
 		const api = globalThis.api
 		const asks: Record<string, ClineMessage[]> = {}
 		const messages: Record<string, ClineMessage[]> = {}
@@ -237,24 +238,10 @@ suite("Roo Code Subtasks", function () {
 			}
 		}
 
-		const findCompletionText = (taskId: string) =>
-			messages[taskId]
-				?.filter(
-					(message) =>
-						message.type === "say" && (message.say === "completion_result" || message.say === "text"),
-				)
-				.map((message) => message.text?.trim())
-				.find((text): text is string => !!text)
-
-		const findErrorText = (taskId: string) =>
-			messages[taskId]
-				?.filter((message) => message.type === "say" && message.say === "error")
-				.map((message) => message.text?.trim())
-				.find((text): text is string => !!text)
-
 		api.on(RooCodeEventName.Message, messageHandler)
 
 		try {
+			// 1) Start parent, wait for child to spawn
 			const parentTaskId = await api.startNewTask({
 				configuration: {
 					mode: "ask",
@@ -277,55 +264,39 @@ suite("Roo Code Subtasks", function () {
 				return false
 			})
 
+			// 2) Wait for child to reach a stable point (followup ask)
 			await waitFor(
 				() => asks[spawnedTaskId!]?.some(({ type, ask }) => type === "ask" && ask === "followup") ?? false,
 			)
 
-			const cancelledChildTaskId = spawnedTaskId!
+			// 3) Cancel the child — it becomes "interrupted", parent stays "delegated"
+			const interruptedChildTaskId = spawnedTaskId!
 			await api.cancelCurrentTask()
 
-			await waitFor(() => api.getCurrentTaskStack().at(-1) === cancelledChildTaskId)
+			// 4) Wait for the child to show resume_task ask
+			await waitFor(() => api.getCurrentTaskStack().at(-1) === interruptedChildTaskId)
 			await waitFor(
 				() =>
-					asks[cancelledChildTaskId]?.some(({ type, ask }) => type === "ask" && ask === "resume_task") ??
+					asks[interruptedChildTaskId]?.some(({ type, ask }) => type === "ask" && ask === "resume_task") ??
 					false,
 			)
 
-			const resumedChildTaskId = await waitUntilCompleted({
-				api,
-				start: async () => {
-					await api.sendMessage(SUBTASK_CHILD_FOLLOWUP_ANSWER)
-					return cancelledChildTaskId
-				},
-			})
+			// 5) Resume the child by answering — it should complete and delegate back to parent
+			await api.sendMessage(SUBTASK_CHILD_FOLLOWUP_ANSWER)
 
-			assert.strictEqual(
-				resumedChildTaskId,
-				cancelledChildTaskId,
-				"Cancelled child task should be resumed in place",
-			)
-			assert.strictEqual(
-				findErrorText(resumedChildTaskId),
-				undefined,
-				"Resumed child task should not emit an error",
-			)
-			assert.strictEqual(
-				findCompletionText(resumedChildTaskId),
-				"9",
-				"Resumed child task should complete with `9`",
-			)
-			assert.strictEqual(
-				api.getCurrentTaskStack().at(-1),
-				cancelledChildTaskId,
-				"Cancelled child task should remain the active completed task",
-			)
-			assert.ok(
-				messages[parentTaskId]?.find(({ type, text }) => type === "say" && text === "Parent task resumed") ===
-					undefined,
-				"Parent task should not have resumed after the cancelled child completed",
+			// 6) Wait for the parent to complete (child reports back, parent resumes and finishes)
+			await waitFor(
+				() =>
+					messages[parentTaskId]?.some(
+						({ type, say, text }) =>
+							type === "say" && say === "completion_result" && text === "Parent task resumed",
+					) ?? false,
 			)
 
-			await api.clearCurrentTask()
+			// 7) Drain the task stack
+			while (api.getCurrentTaskStack().length > 0) {
+				await api.clearCurrentTask()
+			}
 		} finally {
 			api.off(RooCodeEventName.Message, messageHandler)
 		}
