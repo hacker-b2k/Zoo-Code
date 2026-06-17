@@ -28,6 +28,7 @@ import { TelemetryService } from "@roo-code/telemetry"
 
 import { type ApiMessage } from "../task-persistence/apiMessages"
 import { saveTaskMessages } from "../task-persistence"
+import { importRooTaskHistory } from "../task-persistence/importRooTaskHistory"
 
 import { ClineProvider } from "./ClineProvider"
 import { handleCheckpointRestoreOperation } from "./checkpointRestoreHandler"
@@ -901,6 +902,86 @@ export const webviewMessageHandler = async (
 				provider: provider,
 			})
 
+			break
+		}
+		case "importRooHistory": {
+			let latestProgress = {
+				copiedFileCount: 0,
+				totalFileCount: 0,
+				importedTaskCount: 0,
+				totalTaskCount: 0,
+			}
+
+			try {
+				await provider.postMessageToWebview({
+					type: "rooHistoryImportProgress",
+					rooHistoryImportProgress: {
+						status: "starting",
+						...latestProgress,
+					},
+				})
+
+				const result = await importRooTaskHistory(
+					provider.contextProxy.globalStorageUri.fsPath,
+					async (progress) => {
+						latestProgress = progress
+						await provider.postMessageToWebview({
+							type: "rooHistoryImportProgress",
+							rooHistoryImportProgress: {
+								status: "copying",
+								...progress,
+							},
+						})
+					},
+				)
+
+				if (result.importedTaskCount === 0) {
+					await provider.postMessageToWebview({
+						type: "rooHistoryImportProgress",
+						rooHistoryImportProgress: {
+							status: "finished",
+							...latestProgress,
+						},
+					})
+					const warningMessage =
+						result.foundTaskCount === 0
+							? t("common:warnings.rooHistoryImport.nothingFound", { domain: result.rooExtensionDomain })
+							: t("common:warnings.rooHistoryImport.alreadyImported", { count: result.foundTaskCount })
+					vscode.window.showWarningMessage(warningMessage)
+					break
+				}
+
+				provider.taskHistoryStore.invalidateAll()
+				await provider.taskHistoryStore.reconcile()
+				await provider.taskHistoryStore.flushIndex()
+				await provider.postStateToWebview()
+				await provider.postMessageToWebview({
+					type: "rooHistoryImportProgress",
+					rooHistoryImportProgress: {
+						status: "finished",
+						...latestProgress,
+						copiedFileCount: result.importedFileCount,
+						totalFileCount: latestProgress.totalFileCount || result.importedFileCount,
+						importedTaskCount: result.importedTaskCount,
+						totalTaskCount: latestProgress.totalTaskCount || result.importedTaskCount,
+					},
+				})
+
+				vscode.window.showInformationMessage(
+					t("common:info.rooHistoryImport.success", { count: result.importedTaskCount }),
+				)
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				provider.log(`[importRooHistory] failed: ${message}`)
+				await provider.postMessageToWebview({
+					type: "rooHistoryImportProgress",
+					rooHistoryImportProgress: {
+						status: "failed",
+						...latestProgress,
+					},
+				})
+				vscode.window.showErrorMessage(t("common:errors.rooHistoryImport", { error: message }))
+			}
 			break
 		}
 		case "exportSettings":
