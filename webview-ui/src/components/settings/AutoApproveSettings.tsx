@@ -157,7 +157,14 @@ export const AutoApproveSettings = ({
 						alwaysAllowSubtasks={alwaysAllowSubtasks}
 						alwaysAllowExecute={alwaysAllowExecute}
 						alwaysAllowFollowupQuestions={alwaysAllowFollowupQuestions}
-						onToggle={(key, value) => setCachedStateField(key, value)}
+						onToggle={(key, value) => {
+							setCachedStateField(key, value)
+							// Auto-enable master switch when enabling any individual toggle
+							if (value && !autoApprovalEnabled) {
+								setAutoApprovalEnabled(true)
+								vscode.postMessage({ type: "autoApprovalEnabled", bool: true })
+							}
+						}}
 					/>
 
 					<MaxLimitInputs
