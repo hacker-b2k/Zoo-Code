@@ -14,6 +14,12 @@ export default defineConfig({
 		reporters,
 		silent,
 		environment: "jsdom",
+		pool: "forks",
+		poolOptions: {
+			forks: {
+				execArgv: ["--max-old-space-size=4096"],
+			},
+		},
 		include: ["src/**/*.spec.ts", "src/**/*.spec.tsx"],
 		onConsoleLog,
 		server: {
