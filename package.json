@@ -25,7 +25,10 @@
 		"code-server:install": "node scripts/code-server.js",
 		"changeset:version": "cp CHANGELOG.md src/CHANGELOG.md && changeset version && cp -vf src/CHANGELOG.md .",
 		"knip": "knip",
-		"npm:publish:types": "pnpm --filter @roo-code/types npm:publish"
+		"npm:publish:types": "pnpm --filter @roo-code/types npm:publish",
+		"upstream:check": "powershell -NoProfile -File scripts/upstream-check.ps1",
+		"upstream:import": "powershell -NoProfile -File scripts/upstream-import.ps1",
+		"upstream:skip": "powershell -NoProfile -File scripts/upstream-skip.ps1"
 	},
 	"devDependencies": {
 		"@changesets/cli": "2.29.7",

@@ -23,6 +23,18 @@
 
 ---
 
+## 🔄 Upstream Sync
+
+| Document | Purpose |
+|----------|---------|
+| [`upstream-sync/README.md`](upstream-sync/README.md) | Track, review & selectively import upstream changes |
+| [`../.upstream/STATE.json`](../.upstream/STATE.json) | Machine-readable sync state (auto-updated) |
+| [`../.upstream/COMMITS.md`](../.upstream/COMMITS.md) | Human-readable commit log |
+
+**Commands**: `pnpm upstream:check` | `pnpm upstream:import <sha>` | `pnpm upstream:skip <sha> "<reason>"`
+
+---
+
 ## 📋 Living Documents (Updated Per Task)
 
 | Folder | Purpose |

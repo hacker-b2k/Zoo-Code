@@ -1,0 +1,22 @@
+{
+  "repo": "Zoo-Code-Org/Zoo-Code",
+  "upstreamUrl": "https://github.com/Zoo-Code-Org/Zoo-Code.git",
+  "forkUrl": "https://github.com/hacker-b2k/Zoo-Code.git",
+  "forkBranch": "main",
+
+  "lastFetchedCommit": "e8acc6a498a794d5e07f5a4238155326ec82e1c4",
+  "lastFetchedAt": "2026-06-24T03:35:00Z",
+  "lastFetchedMessage": "test(mcp): fix McpHub Windows command wrapping test ordering (#632)",
+
+  "upstreamHead": "e8acc6a498a794d5e07f5a4238155326ec82e1c4",
+  "upstreamHeadAt": "2026-06-24T03:35:00Z",
+
+  "importedCommits": [],
+  "pendingCommits": [],
+  "skippedCommits": [],
+
+  "lastSyncCommit": null,
+  "lastSyncAt": null
+}
+
+
