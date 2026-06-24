@@ -117,7 +117,13 @@ export async function checkAutoApproval({
 		}
 
 		if (state.alwaysAllowExecute === true) {
-			const decision = getCommandDecision(text, state.allowedCommands || [], state.deniedCommands || [])
+			// When alwaysAllowExecute is ON but no allowedCommands are configured,
+			// treat it as wildcard "*" — auto-approve ALL commands (except denied).
+			// This makes BRRR mode work correctly: toggling alwaysAllowExecute on
+			// should auto-approve commands without requiring manual allowlist setup.
+			// Denied commands still take priority via the denylist check below.
+			const effectiveAllowed = state.allowedCommands?.length ? state.allowedCommands : ["*"]
+			const decision = getCommandDecision(text, effectiveAllowed, state.deniedCommands || [])
 
 			if (decision === "auto_approve") {
 				return { decision: "approve" }
