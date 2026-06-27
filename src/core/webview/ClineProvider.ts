@@ -106,6 +106,7 @@ import { getUri } from "./getUri"
 import { REQUESTY_BASE_URL } from "../../shared/utils/requesty"
 import { validateAndFixToolResultIds } from "../task/validateToolResultIds"
 import { PendingEditOperationStore, type PendingEditOperationInput } from "./PendingEditOperationStore"
+import { StatePushDebouncer } from "./StatePushDebouncer"
 
 /**
  * https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -194,6 +195,15 @@ export class ClineProvider
 	 */
 	private clineMessagesSeq = 0
 
+	/**
+	 * Debounced state push — batches multiple postStateToWebview() calls
+	 * within a single animation frame (16 ms) into a single push.
+	 */
+	private readonly statePushDebouncer: StatePushDebouncer = new StatePushDebouncer(
+		{ postStateToWebview: () => this.doPostStateToWebview() },
+		16,
+	)
+
 	public isViewLaunched = false
 	public settingsImportedAt?: number
 	public readonly latestAnnouncementId = "jun-2026-v3.62.0-glm52-opencodego-toolwriter" // v3.62.0 GLM-5.2, OpenCode-Go native model params & routing, tool-writer mode
@@ -208,6 +218,10 @@ export class ClineProvider
 		mdmService?: MdmService,
 	) {
 		super()
+		const start = performance.now()
+
+		// The StatePushDebouncer is already initialised as a field default above.
+
 		this.currentWorkspacePath = getWorkspacePath()
 		this.pendingEditOperations = new PendingEditOperationStore(
 			ClineProvider.PENDING_OPERATION_TIMEOUT_MS,
@@ -350,6 +364,10 @@ export class ClineProvider
 				() => instance.off(RooCodeEventName.TaskTokenUsageUpdated, onTaskTokenUsageUpdated),
 			])
 		}
+
+		// Performance instrumentation
+		const duration = performance.now() - start
+		console.log(`[ClineProvider] Constructor: ${duration.toFixed(2)}ms`)
 	}
 
 	/**
@@ -771,6 +789,7 @@ export class ClineProvider
 	}
 
 	async resolveWebviewView(webviewView: vscode.WebviewView | vscode.WebviewPanel) {
+		console.log(`[ClineProvider] resolveWebviewView() ENTRY`)
 		this.view = webviewView
 		const inTabMode = "onDidChangeViewState" in webviewView
 
@@ -2059,11 +2078,37 @@ export class ClineProvider
 		await this.postStateToWebview()
 	}
 
-	async postStateToWebview() {
-		const state = await this.getStateToPostToWebview()
-		this.clineMessagesSeq++
-		state.clineMessagesSeq = this.clineMessagesSeq
-		this.postMessageToWebview({ type: "state", state })
+	/**
+	 * Schedule a debounced state push. Multiple calls within 16 ms are
+	 * coalesced into a single push.  Returns a promise that resolves after
+	 * the push completes.
+	 */
+	async postStateToWebview(): Promise<void> {
+		console.log(`[ClineProvider] postStateToWebview() called, scheduling debouncer`)
+		await this.statePushDebouncer.schedule()
+		console.log(`[ClineProvider] postStateToWebview() debouncer resolved`)
+	}
+
+	/**
+	 * The actual (un-debounced) state push implementation.
+	 * Called by StatePushDebouncer.flush().
+	 */
+	private async doPostStateToWebview(): Promise<void> {
+		console.log(`[ClineProvider] doPostStateToWebview() ENTRY`)
+		try {
+			const start = performance.now()
+			const state = await this.getStateToPostToWebview()
+			console.log(
+				`[ClineProvider] doPostStateToWebview() getStateToPostToWebview resolved in ${(performance.now() - start).toFixed(0)}ms, keys=${Object.keys(state).length}`,
+			)
+			this.clineMessagesSeq++
+			state.clineMessagesSeq = this.clineMessagesSeq
+			this.postMessageToWebview({ type: "state", state })
+			console.log(`[ClineProvider] doPostStateToWebview() postMessage sent OK`)
+		} catch (error) {
+			console.error(`[ClineProvider] doPostStateToWebview() ERROR:`, error)
+			throw error
+		}
 	}
 
 	/**
@@ -2201,8 +2246,11 @@ export class ClineProvider
 	}
 
 	async getStateToPostToWebview(): Promise<ExtensionState> {
+		console.log(`[ClineProvider] getStateToPostToWebview() ENTRY`)
 		// Ensure the store is initialized before reading task history
+		console.log(`[ClineProvider] getStateToPostToWebview() awaiting taskHistoryStore.initialized...`)
 		await this.taskHistoryStore.initialized
+		console.log(`[ClineProvider] getStateToPostToWebview() taskHistoryStore.initialized RESOLVED`)
 
 		const {
 			apiConfiguration,
@@ -2292,6 +2340,7 @@ export class ClineProvider
 			autoCloseZooOpenedFilesAfterUserEdited,
 			autoCloseZooOpenedNewFiles,
 		} = await this.getState()
+		console.log(`[ClineProvider] getStateToPostToWebview() getState() RESOLVED`)
 
 		let cloudOrganizations: CloudOrganizationMembership[] = []
 
@@ -2354,6 +2403,7 @@ export class ClineProvider
 			// Keep the default unauthenticated state if the optional Zoo Code auth service is unavailable.
 		}
 
+		console.log(`[ClineProvider] getStateToPostToWebview() building return object...`)
 		return {
 			version: this.context.extension?.packageJSON?.version ?? "",
 			apiConfiguration,
@@ -2501,8 +2551,13 @@ export class ClineProvider
 			"clineMessages" | "renderContext" | "hasOpenedModeSelector" | "version" | "shouldShowAnnouncement"
 		>
 	> {
+		const start = performance.now()
+
+		console.log(`[ClineProvider] getState() ENTRY`)
 		const stateValues = this.contextProxy.getValues()
+		console.log(`[ClineProvider] getState() getValues done`)
 		const customModes = await this.customModesManager.getCustomModes()
+		console.log(`[ClineProvider] getState() getCustomModes RESOLVED`)
 
 		// Determine apiProvider with the same logic as before, while filtering retired providers.
 		const apiProvider: ProviderName =
@@ -2567,8 +2622,8 @@ export class ClineProvider
 
 		const taskSyncEnabled: boolean = false
 
-		// Return the same structure as before.
-		return {
+		// Build the result object
+		const result = {
 			apiConfiguration: providerSettings,
 			lastShownAnnouncementId: stateValues.lastShownAnnouncementId,
 			customInstructions: stateValues.customInstructions,
@@ -2679,6 +2734,14 @@ export class ClineProvider
 			autoCloseZooOpenedFilesAfterUserEdited: stateValues.autoCloseZooOpenedFilesAfterUserEdited,
 			autoCloseZooOpenedNewFiles: stateValues.autoCloseZooOpenedNewFiles,
 		}
+
+		// Performance logging
+		const duration = performance.now() - start
+		if (duration > 50) {
+			console.warn(`[getState] slow execution: ${duration.toFixed(2)}ms`)
+		}
+
+		return result
 	}
 
 	/**

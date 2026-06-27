@@ -546,10 +546,15 @@ export const webviewMessageHandler = async (
 
 	switch (message.type) {
 		case "webviewDidLaunch":
+			console.log(`[webviewMessageHandler] webviewDidLaunch received`)
 			// Load custom modes first
+			console.log(`[webviewMessageHandler] webviewDidLaunch: calling getCustomModes...`)
 			const customModes = await provider.customModesManager.getCustomModes()
+			console.log(`[webviewMessageHandler] webviewDidLaunch: getCustomModes RESOLVED`)
 			await updateGlobalState("customModes", customModes)
+			console.log(`[webviewMessageHandler] webviewDidLaunch: updateGlobalState RESOLVED`)
 
+			console.log(`[webviewMessageHandler] webviewDidLaunch: calling postStateToWebview (NOT awaited)`)
 			provider.postStateToWebview()
 			provider.workspaceTracker?.initializeFilePaths() // Don't await.
 
@@ -623,6 +628,7 @@ export const webviewMessageHandler = async (
 				TelemetryService.instance.updateTelemetryState(isOptedIn)
 			})
 
+			console.log(`[webviewMessageHandler] webviewDidLaunch: handler COMPLETE, isViewLaunched=true`)
 			provider.isViewLaunched = true
 			break
 		case "newTask":

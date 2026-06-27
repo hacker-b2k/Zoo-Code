@@ -131,7 +131,29 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const modifiedMessages = useMemo(() => combineApiRequests(combineCommandSequences(messages.slice(1))), [messages])
 
 	// Has to be after api_req_finished are all reduced into api_req_started messages.
-	const apiMetrics = useMemo(() => getApiMetrics(modifiedMessages), [modifiedMessages])
+	// Use cached apiMetrics to avoid recalculating on every render
+	const apiMetricsCacheRef = useRef<Map<string, any>>(new Map())
+	const apiMetrics = useMemo(() => {
+		// Create a simple hash based on messages length and last message timestamp
+		const hash = `${modifiedMessages.length}-${modifiedMessages[modifiedMessages.length - 1]?.ts ?? ""}`
+
+		if (apiMetricsCacheRef.current.has(hash)) {
+			return apiMetricsCacheRef.current.get(hash)!
+		}
+
+		const metrics = getApiMetrics(modifiedMessages)
+		apiMetricsCacheRef.current.set(hash, metrics)
+
+		// Limit cache size to prevent memory leaks
+		if (apiMetricsCacheRef.current.size > 10) {
+			const firstKey = apiMetricsCacheRef.current.keys().next().value
+			if (firstKey !== undefined) {
+				apiMetricsCacheRef.current.delete(firstKey)
+			}
+		}
+
+		return metrics
+	}, [modifiedMessages])
 
 	const [inputValue, setInputValue] = useState("")
 	const inputValueRef = useRef(inputValue)

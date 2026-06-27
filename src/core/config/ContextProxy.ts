@@ -89,20 +89,17 @@ export class ContextProxy {
 
 		await Promise.all(promises)
 
-		// Migration: Check for old nested image generation settings and migrate them
-		await this.migrateImageGenerationSettings()
+		// Run migrations with dependency-aware parallelization
+		await Promise.all([
+			// Group 1: Independent (can run in parallel with others)
+			this.migrateImageGenerationSettings(),
 
-		// Migration: Downgrade legacy Roo Code Router state before generic sanitization.
-		await this.migrateLegacyRooApiProvider()
+			// Group 2: apiProvider migrations (sequential chain)
+			this.migrateLegacyRooApiProvider().then(() => this.migrateInvalidApiProvider()),
 
-		// Migration: Sanitize invalid/removed API providers
-		await this.migrateInvalidApiProvider()
-
-		// Migration: Move legacy customCondensingPrompt to customSupportPrompts
-		await this.migrateLegacyCondensingPrompt()
-
-		// Migration: Clear old default condensing prompt so users get the improved v2 default
-		await this.migrateOldDefaultCondensingPrompt()
+			// Group 3: customSupportPrompts migrations (sequential chain)
+			this.migrateLegacyCondensingPrompt().then(() => this.migrateOldDefaultCondensingPrompt()),
+		])
 
 		this._isInitialized = true
 	}

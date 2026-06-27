@@ -25,6 +25,7 @@ import { customToolRegistry } from "@roo-code/core"
 import "./utils/path" // Necessary to have access to String.prototype.toPosix.
 import { createOutputChannelLogger, createDualLogger } from "./utils/outputChannelLogger"
 import { initializeNetworkProxy } from "./utils/networkProxy"
+import { runParallel, PerformanceTimer } from "./utils/parallelInit"
 
 import { Package } from "./shared/package"
 import { formatLanguage } from "./shared/language"
@@ -120,21 +121,37 @@ async function checkWorktreeAutoOpen(
 // This method is called when your extension is activated.
 // Your extension is activated the very first time the command is executed.
 export async function activate(context: vscode.ExtensionContext) {
+	const activationTimer = new PerformanceTimer("zoo-code-activation")
+
 	extensionContext = context
 	outputChannel = vscode.window.createOutputChannel(Package.outputChannel)
 	context.subscriptions.push(outputChannel)
+	outputChannel.appendLine(`[activate] ENTRY - starting activation`)
 	outputChannel.appendLine(`${Package.name} extension activated - ${JSON.stringify(Package)}`)
 
-	// Initialize network proxy configuration early, before any network requests.
-	// When proxyUrl is configured, all HTTP/HTTPS traffic will be routed through it.
-	// Only applied in debug mode (F5).
-	await initializeNetworkProxy(context, outputChannel)
+	// ========== BATCH 1: No Dependencies (Parallel) ==========
+	// These tasks have no dependencies on each other and can run simultaneously
+	// Added 30s timeout to prevent hanging
+	await runParallel(
+		[
+			() => initializeNetworkProxy(context, outputChannel),
+			() => migrateSettings(context, outputChannel),
+			async () => {
+				initializeI18n(context.globalState.get("language") ?? formatLanguage(vscode.env.language))
+			},
+			async () => {
+				TerminalRegistry.initialize()
+			},
+			async () => {
+				openAiCodexOAuthManager.initialize(context, (message) => outputChannel.appendLine(message))
+			},
+		],
+		{ timeoutMs: 30000 },
+	)
+	outputChannel.appendLine(`[activate] Batch 1 complete`)
 
 	// Set extension path for custom tool registry to find bundled esbuild
 	customToolRegistry.setExtensionPath(context.extensionPath)
-
-	// Migrate old settings to new
-	await migrateSettings(context, outputChannel)
 
 	// Initialize telemetry service.
 	const telemetryService = TelemetryService.createInstance()
@@ -148,20 +165,49 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Create logger for cloud services.
 	const cloudLogger = createDualLogger(createOutputChannelLogger(outputChannel))
 
-	// Initialize MDM service
-	const mdmService = await MdmService.createInstance(cloudLogger)
+	// ========== BATCH 2: Context-Dependent (Parallel) ==========
+	// These depend on context but not on each other.
+	// Use Promise.allSettled so that a single failure (e.g. initZooCodeAuth
+	// network error or timeout) does NOT crash the entire activate() and
+	// prevent the extension from loading.
+	const batch2TimeoutMs = 60000
+	const batch2Results = await Promise.allSettled([
+		Promise.race([
+			ContextProxy.getInstance(context),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("ContextProxy.getInstance timed out")), batch2TimeoutMs),
+			),
+		]),
+		Promise.race([
+			MdmService.createInstance(cloudLogger),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("MdmService.createInstance timed out")), batch2TimeoutMs),
+			),
+		]),
+		initZooCodeAuth(context),
+	])
 
-	// Initialize i18n for internationalization support.
-	initializeI18n(context.globalState.get("language") ?? formatLanguage(vscode.env.language))
+	// ContextProxy is critical — fail hard if it didn't resolve.
+	if (batch2Results[0].status === "rejected") {
+		throw new Error(`Failed to initialize ContextProxy: ${batch2Results[0].reason}`)
+	}
+	outputChannel.appendLine(`[activate] Batch 2 complete, creating provider...`)
+	const contextProxy = batch2Results[0].value
 
-	// Initialize terminal shell execution handlers.
-	TerminalRegistry.initialize()
+	// MdmService is optional — log and continue.
+	let mdmService: MdmService | undefined
+	if (batch2Results[1].status === "fulfilled") {
+		mdmService = batch2Results[1].value
+	} else {
+		outputChannel.appendLine(
+			`[MdmService] Initialization failed, continuing without MDM: ${batch2Results[1].reason}`,
+		)
+	}
 
-	// Initialize OpenAI Codex OAuth manager for ChatGPT subscription-based access.
-	openAiCodexOAuthManager.initialize(context, (message) => outputChannel.appendLine(message))
-
-	// Initialize Zoo Code auth service for extension session token management.
-	await initZooCodeAuth(context)
+	// initZooCodeAuth is best-effort — log failures.
+	if (batch2Results[2].status === "rejected") {
+		outputChannel.appendLine(`[ZooCodeAuth] Initialization failed: ${batch2Results[2].reason}`)
+	}
 
 	// Get default commands from configuration.
 	const defaultCommands = vscode.workspace.getConfiguration(Package.name).get<string[]>("allowedCommands") || []
@@ -170,8 +216,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	if (!context.globalState.get("allowedCommands")) {
 		context.globalState.update("allowedCommands", defaultCommands)
 	}
-
-	const contextProxy = await ContextProxy.getInstance(context)
 
 	// Initialize code index managers for all workspace folders.
 	const codeIndexManagers: CodeIndexManager[] = []
@@ -197,7 +241,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	// Initialize the provider *before* the Roo Code Cloud service.
+	outputChannel.appendLine(`[activate] Creating ClineProvider...`)
 	const provider = new ClineProvider(context, outputChannel, "sidebar", contextProxy, mdmService)
+	outputChannel.appendLine(`[activate] ClineProvider created`)
 
 	// Initialize Roo Code Cloud service.
 	const postStateListener = () => ClineProvider.getVisibleInstance()?.postStateToWebviewWithoutClineMessages()
@@ -239,22 +285,21 @@ export async function activate(context: vscode.ExtensionContext) {
 		}),
 	)
 
-	// Check for worktree auto-open path (set when switching to a worktree)
-	await checkWorktreeAutoOpen(context, outputChannel)
+	// ========== BACKGROUND OPERATIONS (Non-blocking) ==========
+	// These can run after provider registration without blocking
+	void checkWorktreeAutoOpen(context, outputChannel).catch((error) => {
+		outputChannel.appendLine(`[Worktree] Error: ${error}`)
+	})
 
-	// Auto-import configuration if specified in settings.
-	try {
-		await autoImportSettings(outputChannel, {
-			providerSettingsManager: provider.providerSettingsManager,
-			contextProxy: provider.contextProxy,
-			customModesManager: provider.customModesManager,
-		})
-	} catch (error) {
-		outputChannel.appendLine(
-			`[AutoImport] Error during auto-import: ${error instanceof Error ? error.message : String(error)}`,
-		)
-	}
+	void autoImportSettings(outputChannel, {
+		providerSettingsManager: provider.providerSettingsManager,
+		contextProxy: provider.contextProxy,
+		customModesManager: provider.customModesManager,
+	}).catch((error) => {
+		outputChannel.appendLine(`[AutoImport] Error: ${error}`)
+	})
 
+	outputChannel.appendLine(`[activate] Registering commands and completing activation`)
 	registerCommands({ context, outputChannel, provider })
 
 	/**
@@ -296,6 +341,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerTerminalActions(context)
 
 	// Allows other extensions to activate once Roo is ready.
+	outputChannel.appendLine(`[activate] ACTIVATION COMPLETE`)
 	vscode.commands.executeCommand(`${Package.name}.activationCompleted`)
 
 	// Implements the `RooCodeAPI` interface.
@@ -356,6 +402,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Initialize background model cache refresh
 	initializeModelCacheRefresh()
+
+	// Performance instrumentation
+	activationTimer.end()
 
 	return new API(outputChannel, provider, socketPath, enableLogging)
 }

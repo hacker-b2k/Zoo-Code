@@ -153,6 +153,21 @@ export interface ExtensionStateContextType extends ExtensionState {
 export const ExtensionStateContext = createContext<ExtensionStateContextType | undefined>(undefined)
 
 export const mergeExtensionState = (prevState: ExtensionState, newState: Partial<ExtensionState>) => {
+	// Quick check: if newState is empty, return prevState
+	if (!newState || Object.keys(newState).length === 0) {
+		return prevState
+	}
+
+	// Check if anything actually changed (shallow comparison)
+	const hasChanges = Object.keys(newState).some((key) => {
+		return prevState[key as keyof ExtensionState] !== newState[key as keyof ExtensionState]
+	})
+
+	// If nothing changed, return previous state (prevents re-render)
+	if (!hasChanges) {
+		return prevState
+	}
+
 	const { customModePrompts: prevCustomModePrompts, experiments: prevExperiments, ...prevRest } = prevState
 
 	const {
