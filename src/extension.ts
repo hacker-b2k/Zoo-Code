@@ -126,7 +126,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	extensionContext = context
 	outputChannel = vscode.window.createOutputChannel(Package.outputChannel)
 	context.subscriptions.push(outputChannel)
-	outputChannel.appendLine(`[activate] ENTRY - starting activation`)
 	outputChannel.appendLine(`${Package.name} extension activated - ${JSON.stringify(Package)}`)
 
 	// ========== BATCH 1: No Dependencies (Parallel) ==========
@@ -148,8 +147,6 @@ export async function activate(context: vscode.ExtensionContext) {
 		],
 		{ timeoutMs: 30000 },
 	)
-	outputChannel.appendLine(`[activate] Batch 1 complete`)
-
 	// Set extension path for custom tool registry to find bundled esbuild
 	customToolRegistry.setExtensionPath(context.extensionPath)
 
@@ -191,7 +188,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	if (batch2Results[0].status === "rejected") {
 		throw new Error(`Failed to initialize ContextProxy: ${batch2Results[0].reason}`)
 	}
-	outputChannel.appendLine(`[activate] Batch 2 complete, creating provider...`)
 	const contextProxy = batch2Results[0].value
 
 	// MdmService is optional — log and continue.
@@ -241,9 +237,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	// Initialize the provider *before* the Roo Code Cloud service.
-	outputChannel.appendLine(`[activate] Creating ClineProvider...`)
 	const provider = new ClineProvider(context, outputChannel, "sidebar", contextProxy, mdmService)
-	outputChannel.appendLine(`[activate] ClineProvider created`)
 
 	// Initialize Roo Code Cloud service.
 	const postStateListener = () => ClineProvider.getVisibleInstance()?.postStateToWebviewWithoutClineMessages()
@@ -299,7 +293,6 @@ export async function activate(context: vscode.ExtensionContext) {
 		outputChannel.appendLine(`[AutoImport] Error: ${error}`)
 	})
 
-	outputChannel.appendLine(`[activate] Registering commands and completing activation`)
 	registerCommands({ context, outputChannel, provider })
 
 	/**
@@ -341,7 +334,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	registerTerminalActions(context)
 
 	// Allows other extensions to activate once Roo is ready.
-	outputChannel.appendLine(`[activate] ACTIVATION COMPLETE`)
 	vscode.commands.executeCommand(`${Package.name}.activationCompleted`)
 
 	// Implements the `RooCodeAPI` interface.

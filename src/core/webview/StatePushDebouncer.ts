@@ -19,9 +19,6 @@ export class StatePushDebouncer {
 	 */
 	schedule(): Promise<void> {
 		this.debouncedCount++
-		console.log(
-			`[StatePushDebouncer] schedule() called, debouncedCount=${this.debouncedCount}, pendingResolvers=${this.pendingResolvers.length}, timerExists=${!!this.timer}`,
-		)
 
 		return new Promise((resolve, reject) => {
 			this.pendingResolvers.push({ resolve, reject })
@@ -31,7 +28,6 @@ export class StatePushDebouncer {
 			}
 
 			this.timer = setTimeout(() => {
-				console.log(`[StatePushDebouncer] setTimeout fired, calling flush()`)
 				this.flush()
 			}, this.delayMs)
 		})
@@ -42,35 +38,21 @@ export class StatePushDebouncer {
 	 * Use for critical updates that must be visible immediately.
 	 */
 	async flush(): Promise<void> {
-		console.log(
-			`[StatePushDebouncer] flush() entry, timer=${!!this.timer}, pendingResolvers=${this.pendingResolvers.length}`,
-		)
-
 		if (this.timer) {
 			clearTimeout(this.timer)
 			this.timer = null
 		}
 
 		if (this.pendingResolvers.length === 0) {
-			console.log(`[StatePushDebouncer] flush() no pending resolvers, returning`)
 			return // Nothing to flush
 		}
 
 		const resolvers = this.pendingResolvers.splice(0)
 
 		try {
-			console.log(`[StatePushDebouncer] flush() calling provider.postStateToWebview()...`)
 			await this.provider.postStateToWebview()
 			this.pushCount++
-			console.log(
-				`[StatePushDebouncer] flush() SUCCESS, pushCount=${this.pushCount}, resolving ${resolvers.length} resolvers`,
-			)
 			resolvers.forEach((r) => r.resolve())
-
-			// Log stats periodically
-			if (this.pushCount % 100 === 0) {
-				console.log(`[StatePush] Total: ${this.pushCount}, Debounced saved: ${this.debouncedCount}`)
-			}
 		} catch (error) {
 			console.error(`[StatePushDebouncer] flush() ERROR:`, error)
 			resolvers.forEach((r) => r.reject(error))
