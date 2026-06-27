@@ -1,8 +1,6 @@
 import { useState, useCallback, useMemo } from "react"
 import { useEvent } from "react-use"
-import { LanguageModelChatSelector } from "vscode"
-
-import type { ProviderSettings, ExtensionMessage, ModelInfo } from "@roo-code/types"
+import type { ProviderSettings, ExtensionMessage, ModelInfo, LanguageModelChatSelector } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 
@@ -33,12 +31,16 @@ export const VSCodeLM = ({ apiConfiguration, setApiConfigurationField }: VSCodeL
 
 	useEvent("message", onMessage)
 
+	const getModelKey = useCallback((model: LanguageModelChatSelector): string => {
+		return model.id ?? [model.vendor, model.family, model.version].filter(Boolean).join("/")
+	}, [])
+
 	// Convert VSCode LM models array to Record format for ModelPicker
 	const modelsRecord = useMemo((): Record<string, ModelInfo> => {
 		return vsCodeLmModels.reduce(
 			(acc, model) => {
-				const modelId = `${model.vendor}/${model.family}`
-				acc[modelId] = {
+				const modelId = getModelKey(model)
+				acc[modelId] = model.info ?? {
 					maxTokens: 0,
 					contextWindow: 0,
 					supportsPromptCache: false,
@@ -48,20 +50,30 @@ export const VSCodeLM = ({ apiConfiguration, setApiConfigurationField }: VSCodeL
 			},
 			{} as Record<string, ModelInfo>,
 		)
-	}, [vsCodeLmModels])
+	}, [getModelKey, vsCodeLmModels])
 
-	// Transform string model ID to { vendor, family } object for storage
-	const valueTransform = useCallback((modelId: string) => {
-		const [vendor, family] = modelId.split("/")
-		return { vendor, family }
-	}, [])
+	// Transform string model ID to a persisted selector, preserving extension-provided model capabilities.
+	const valueTransform = useCallback(
+		(modelId: string) => {
+			const selectedModel = vsCodeLmModels.find((model) => getModelKey(model) === modelId)
+			if (selectedModel) {
+				return selectedModel
+			}
 
-	// Transform stored { vendor, family } object back to display string
-	const displayTransform = useCallback((value: unknown) => {
-		if (!value) return ""
-		const selector = value as { vendor?: string; family?: string }
-		return selector.vendor && selector.family ? `${selector.vendor}/${selector.family}` : ""
-	}, [])
+			const [vendor, family, version] = modelId.split("/")
+			return { id: modelId, vendor, family, version }
+		},
+		[getModelKey, vsCodeLmModels],
+	)
+
+	// Transform stored selector object back to display string
+	const displayTransform = useCallback(
+		(value: unknown) => {
+			if (!value) return ""
+			return getModelKey(value as LanguageModelChatSelector)
+		},
+		[getModelKey],
+	)
 
 	return (
 		<>

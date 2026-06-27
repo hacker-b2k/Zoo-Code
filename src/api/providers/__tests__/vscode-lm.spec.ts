@@ -7,6 +7,14 @@ vi.mock("vscode", () => {
 		constructor(public value: string) {}
 	}
 
+	class MockLanguageModelDataPart {
+		type = "data"
+		constructor(
+			public data: Uint8Array,
+			public mimeType: string,
+		) {}
+	}
+
 	class MockLanguageModelToolCallPart {
 		type = "tool_call"
 		constructor(
@@ -52,6 +60,7 @@ vi.mock("vscode", () => {
 			})),
 		},
 		LanguageModelTextPart: MockLanguageModelTextPart,
+		LanguageModelDataPart: MockLanguageModelDataPart,
 		LanguageModelToolCallPart: MockLanguageModelToolCallPart,
 		lm: {
 			selectChatModels: vi.fn(),
@@ -383,6 +392,44 @@ describe("VsCodeLmHandler", () => {
 			)
 		})
 
+		it("should pass image blocks to VS Code LM as data parts", async () => {
+			const systemPrompt = "You are a helpful assistant"
+			const imageData = Buffer.from("image-data").toString("base64")
+			const messages: Anthropic.Messages.MessageParam[] = [
+				{
+					role: "user" as const,
+					content: [
+						{ type: "text", text: "Describe this image" },
+						{ type: "image", source: { type: "base64", media_type: "image/png", data: imageData } },
+					],
+				},
+			]
+
+			mockLanguageModelChat.sendRequest.mockResolvedValueOnce({
+				stream: (async function* () {
+					yield new vscode.LanguageModelTextPart("Image description")
+					return
+				})(),
+				text: (async function* () {
+					yield "Image description"
+					return
+				})(),
+			})
+
+			const stream = handler.createMessage(systemPrompt, messages)
+			for await (const _chunk of stream) {
+				// Drain stream so sendRequest is invoked.
+			}
+
+			const requestMessages = mockLanguageModelChat.sendRequest.mock.calls[0][0]
+			const userMessage = requestMessages[1]
+			const imagePart = userMessage.content[1]
+
+			expect(imagePart.type).toBe("data")
+			expect(imagePart.mimeType).toBe("image/png")
+			expect(Buffer.from(imagePart.data).toString()).toBe("image-data")
+		})
+
 		it("should handle errors", async () => {
 			const systemPrompt = "You are a helpful assistant"
 			const messages: Anthropic.Messages.MessageParam[] = [
@@ -411,6 +458,56 @@ describe("VsCodeLmHandler", () => {
 			expect(model.id).toBe("test-model")
 			expect(model.info).toBeDefined()
 			expect(model.info.contextWindow).toBe(4096)
+		})
+
+		it("should mark VS Code LM models with imageInput capability as supporting images", async () => {
+			const mockModel = { ...mockLanguageModelChat, capabilities: { imageInput: true } }
+			;(vscode.lm.selectChatModels as Mock).mockResolvedValue([mockModel])
+			handler["client"] = null
+			await handler.initializeClient()
+
+			const model = handler.getModel()
+			expect(model.info.supportsImages).toBe(true)
+		})
+
+		it("should mark VS Code LM models with supportsImages capability as supporting images", async () => {
+			const mockModel = { ...mockLanguageModelChat, capabilities: { supportsImages: true } }
+			;(vscode.lm.selectChatModels as Mock).mockResolvedValue([mockModel])
+			handler["client"] = null
+			await handler.initializeClient()
+
+			const model = handler.getModel()
+			expect(model.info.supportsImages).toBe(true)
+		})
+
+		it("should mark VS Code LM models with image modality as supporting images", async () => {
+			const mockModel = { ...mockLanguageModelChat, capabilities: { inputModalities: ["text", "image"] } }
+			;(vscode.lm.selectChatModels as Mock).mockResolvedValue([mockModel])
+			handler["client"] = null
+			await handler.initializeClient()
+
+			const model = handler.getModel()
+			expect(model.info.supportsImages).toBe(true)
+		})
+
+		it("should preserve explicit false image capability", async () => {
+			const mockModel = { ...mockLanguageModelChat, capabilities: { imageInput: false } }
+			;(vscode.lm.selectChatModels as Mock).mockResolvedValue([mockModel])
+			handler["client"] = null
+			await handler.initializeClient()
+
+			const model = handler.getModel()
+			expect(model.info.supportsImages).toBe(false)
+		})
+
+		it("should allow images for unknown custom VS Code LM models by default", async () => {
+			const mockModel = { ...mockLanguageModelChat, family: "unknown-custom-family" }
+			;(vscode.lm.selectChatModels as Mock).mockResolvedValue([mockModel])
+			handler["client"] = null
+			await handler.initializeClient()
+
+			const model = handler.getModel()
+			expect(model.info.supportsImages).toBe(true)
 		})
 
 		it("should return fallback model info when no client exists", () => {

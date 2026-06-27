@@ -2,7 +2,7 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import * as vscode from "vscode"
 import OpenAI from "openai"
 
-import { type ModelInfo, openAiModelInfoSaneDefaults } from "@roo-code/types"
+import { type ModelInfo, openAiModelInfoSaneDefaults, vscodeLlmModels } from "@roo-code/types"
 
 import type { ApiHandlerOptions } from "../../shared/api"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "../../shared/vsCodeSelectorUtils"
@@ -13,6 +13,119 @@ import { convertToVsCodeLmMessages, extractTextCountFromMessage } from "../trans
 
 import { BaseProvider } from "./base-provider"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
+
+type VsCodeLmCapabilityValue = boolean | string | string[] | undefined
+
+type VsCodeLmCapabilities = {
+	imageInput?: boolean
+	vision?: boolean
+	supportsImages?: boolean
+	supportsVision?: boolean
+	supports_image_input?: boolean
+	supports_vision?: boolean
+	inputModalities?: string[]
+	input_modalities?: string[]
+	modalities?: string[]
+}
+
+type VsCodeLmModelWithCapabilities = vscode.LanguageModelChat & {
+	capabilities?: VsCodeLmCapabilities
+	imageInput?: boolean
+	vision?: boolean
+	supportsImages?: boolean
+	supportsVision?: boolean
+	supports_image_input?: boolean
+	supports_vision?: boolean
+	inputModalities?: string[]
+	input_modalities?: string[]
+	modalities?: string[]
+}
+
+const VS_CODE_LM_IMAGE_CAPABILITY_KEYS = [
+	"imageInput",
+	"vision",
+	"supportsImages",
+	"supportsVision",
+	"supports_image_input",
+	"supports_vision",
+] as const
+
+const VS_CODE_LM_MODALITY_KEYS = ["inputModalities", "input_modalities", "modalities"] as const
+
+function imageCapabilityFromValue(value: VsCodeLmCapabilityValue): boolean | undefined {
+	if (typeof value === "boolean") {
+		return value
+	}
+
+	if (typeof value === "string") {
+		return value.toLowerCase() === "image" || value.toLowerCase() === "vision" ? true : undefined
+	}
+
+	if (Array.isArray(value)) {
+		return value.some((modality) => ["image", "vision"].includes(modality.toLowerCase()))
+	}
+
+	return undefined
+}
+
+function getVsCodeLmImageSupport(model: vscode.LanguageModelChat): boolean {
+	const familyInfo = vscodeLlmModels[model.family as keyof typeof vscodeLlmModels]
+	const modelWithCapabilities = model as VsCodeLmModelWithCapabilities
+	const capabilityContainers: Array<Record<string, VsCodeLmCapabilityValue> | undefined> = [
+		modelWithCapabilities.capabilities as Record<string, VsCodeLmCapabilityValue> | undefined,
+		modelWithCapabilities as unknown as Record<string, VsCodeLmCapabilityValue>,
+	]
+
+	for (const container of capabilityContainers) {
+		if (!container) {
+			continue
+		}
+
+		for (const key of VS_CODE_LM_IMAGE_CAPABILITY_KEYS) {
+			const capability = imageCapabilityFromValue(container[key])
+			if (capability !== undefined) {
+				console.log(
+					`[IMAGE-TRACE] getVsCodeLmImageSupport: model=${model.id}, key=${key}, value=${container[key]}, result=${capability}`,
+				)
+				return capability
+			}
+		}
+
+		for (const key of VS_CODE_LM_MODALITY_KEYS) {
+			const capability = imageCapabilityFromValue(container[key])
+			if (capability !== undefined) {
+				console.log(
+					`[IMAGE-TRACE] getVsCodeLmImageSupport: model=${model.id}, modalityKey=${key}, value=${JSON.stringify(container[key])}, result=${capability}`,
+				)
+				return capability
+			}
+		}
+	}
+
+	const result = familyInfo?.supportsImages ?? true
+	console.log(
+		`[IMAGE-TRACE] getVsCodeLmImageSupport: model=${model.id}, family=${model.family}, no capability keys found, familyInfo=${JSON.stringify(familyInfo)}, fallback result=${result}`,
+	)
+	return result
+}
+
+function getVsCodeLmModelInfo(model: vscode.LanguageModelChat): ModelInfo {
+	const familyInfo = vscodeLlmModels[model.family as keyof typeof vscodeLlmModels]
+	const supportsImages = getVsCodeLmImageSupport(model)
+
+	return {
+		maxTokens: -1,
+		contextWindow:
+			typeof model.maxInputTokens === "number"
+				? Math.max(0, model.maxInputTokens)
+				: (familyInfo?.contextWindow ?? openAiModelInfoSaneDefaults.contextWindow),
+		supportsImages,
+		supportsPromptCache: true,
+		inputPrice: 0,
+		outputPrice: 0,
+		description: `VSCode Language Model: ${model.id}`,
+	}
+}
 
 /**
  * Converts OpenAI-format tools to VSCode Language Model tools.
@@ -371,17 +484,63 @@ export class VsCodeLmHandler extends BaseProvider implements SingleCompletionHan
 		this.ensureCleanState()
 		const client: vscode.LanguageModelChat = await this.getClient()
 
+		// [IMAGE-TRACE] Log incoming messages for image debugging
+		for (let i = 0; i < messages.length; i++) {
+			const msg = messages[i]
+			if (Array.isArray(msg.content)) {
+				const imageBlocks = msg.content.filter((b: any) => b.type === "image")
+				if (imageBlocks.length > 0) {
+					console.log(
+						`[IMAGE-TRACE] createMessage input msg[${i}] role=${msg.role}: ${imageBlocks.length} image block(s) found`,
+					)
+					for (const img of imageBlocks) {
+						const imgBlock = img as any
+						console.log(
+							`[IMAGE-TRACE]   image block: source.type=${imgBlock.source?.type}, media_type=${imgBlock.source?.media_type}, data_length=${imgBlock.source?.data?.length ?? "N/A"}`,
+						)
+					}
+				}
+			}
+		}
+
 		// Process messages
 		const cleanedMessages = messages.map((msg) => ({
 			...msg,
 			content: this.cleanMessageContent(msg.content),
 		}))
 
+		// [IMAGE-TRACE] Check cleaned messages for images
+		for (let i = 0; i < cleanedMessages.length; i++) {
+			const msg = cleanedMessages[i]
+			if (Array.isArray(msg.content)) {
+				const imageBlocks = (msg.content as any[]).filter((b: any) => b.type === "image")
+				if (imageBlocks.length > 0) {
+					console.log(
+						`[IMAGE-TRACE] cleanedMessages msg[${i}] role=${msg.role}: ${imageBlocks.length} image block(s) survived cleaning`,
+					)
+				}
+			}
+		}
+
 		// Convert Anthropic messages to VS Code LM messages
 		const vsCodeLmMessages: vscode.LanguageModelChatMessage[] = [
 			vscode.LanguageModelChatMessage.Assistant(systemPrompt),
 			...convertToVsCodeLmMessages(cleanedMessages),
 		]
+
+		// [IMAGE-TRACE] Check VS Code LM messages for data parts
+		console.log(`[IMAGE-TRACE] convertToVsCodeLmMessages produced ${vsCodeLmMessages.length} messages`)
+		for (let i = 0; i < vsCodeLmMessages.length; i++) {
+			const m = vsCodeLmMessages[i] as any
+			if (m.content && Array.isArray(m.content)) {
+				const textParts = m.content.filter((p: any) => p instanceof vscode.LanguageModelTextPart)
+				const dataParts = m.content.filter((p: any) => p.mimeType !== undefined)
+				const toolCallParts = m.content.filter((p: any) => p instanceof vscode.LanguageModelToolCallPart)
+				console.log(
+					`[IMAGE-TRACE] vsCodeLmMsg[${i}] role=${m.role}: ${textParts.length} text, ${dataParts.length} data(parts with mimeType), ${toolCallParts.length} toolCalls`,
+				)
+			}
+		}
 
 		// Initialize cancellation token for the request
 		this.currentRequestCancellation = new vscode.CancellationTokenSource()
@@ -529,20 +688,12 @@ export class VsCodeLmHandler extends BaseProvider implements SingleCompletionHan
 
 			const modelId = this.client.id || modelParts.join(SELECTOR_SEPARATOR)
 
-			// Build model info with conservative defaults for missing values
-			const modelInfo: ModelInfo = {
-				maxTokens: -1, // Unlimited tokens by default
-				contextWindow:
-					typeof this.client.maxInputTokens === "number"
-						? Math.max(0, this.client.maxInputTokens)
-						: openAiModelInfoSaneDefaults.contextWindow,
-				supportsImages: false, // VSCode Language Model API currently doesn't support image inputs
-				supportsPromptCache: true,
-				inputPrice: 0,
-				outputPrice: 0,
-				description: `VSCode Language Model: ${modelId}`,
-			}
+			// Build model info with VS Code LM capabilities and conservative defaults for missing values
+			const modelInfo: ModelInfo = getVsCodeLmModelInfo(this.client)
 
+			console.log(
+				`[IMAGE-TRACE] getModel() with client: id=${modelId}, supportsImages=${modelInfo.supportsImages}, client.id=${this.client.id}, client.family=${this.client.family}`,
+			)
 			return { id: modelId, info: modelInfo }
 		}
 
@@ -551,7 +702,9 @@ export class VsCodeLmHandler extends BaseProvider implements SingleCompletionHan
 			? stringifyVsCodeLmModelSelector(this.options.vsCodeLmModelSelector)
 			: "vscode-lm"
 
-		console.debug("Roo Code <Language Model API>: No client available, using fallback model info")
+		console.log(
+			`[IMAGE-TRACE] getModel() FALLBACK (no client): id=${fallbackId}, supportsImages=${openAiModelInfoSaneDefaults.supportsImages}`,
+		)
 
 		return {
 			id: fallbackId,
@@ -592,7 +745,9 @@ const VSCODE_LM_STATIC_BLACKLIST: string[] = ["claude-3.7-sonnet", "claude-3.7-s
 export async function getVsCodeLmModels() {
 	try {
 		const models = (await vscode.lm.selectChatModels({})) || []
-		return models.filter((model) => !VSCODE_LM_STATIC_BLACKLIST.includes(model.id))
+		return models
+			.filter((model) => !VSCODE_LM_STATIC_BLACKLIST.includes(model.id))
+			.map((model) => ({ ...model, info: getVsCodeLmModelInfo(model) }))
 	} catch (error) {
 		console.error(
 			`Error fetching VS Code LM models: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,

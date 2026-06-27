@@ -1,6 +1,33 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import * as vscode from "vscode"
 
+const IMAGE_NOT_SUPPORTED_MESSAGE = "not supported by VSCode LM API"
+
+type VsCodeLanguageModelDataPartCtor = new (data: Uint8Array, mimeType: string) => vscode.LanguageModelTextPart
+
+function createVsCodeLmImagePart(part: Anthropic.ImageBlockParam): unknown {
+	const LanguageModelDataPart = (vscode as unknown as { LanguageModelDataPart?: VsCodeLanguageModelDataPartCtor })
+		.LanguageModelDataPart
+
+	console.log(
+		`[IMAGE-TRACE] createVsCodeLmImagePart: LanguageModelDataPart=${LanguageModelDataPart ? "AVAILABLE" : "MISSING"}, source.type=${part.source?.type}, media_type=${part.source?.media_type}, data_length=${part.source?.type === "base64" ? part.source.data?.length : "N/A"}`,
+	)
+
+	if (!LanguageModelDataPart || part.source.type !== "base64") {
+		console.log(
+			`[IMAGE-TRACE] createVsCodeLmImagePart: FALLING BACK to LanguageModelTextPart (DataPart missing=${!LanguageModelDataPart}, sourceType=${part.source?.type})`,
+		)
+		return new vscode.LanguageModelTextPart(
+			`[Image (${part.source?.type || "Unknown source-type"}): ${part.source?.media_type || "unknown media-type"} ${IMAGE_NOT_SUPPORTED_MESSAGE}]`,
+		)
+	}
+
+	console.log(
+		`[IMAGE-TRACE] createVsCodeLmImagePart: Creating LanguageModelDataPart with mimeType=${part.source.media_type}, dataLength=${part.source.data.length}`,
+	)
+	return new LanguageModelDataPart(Buffer.from(part.source.data, "base64"), part.source.media_type)
+}
+
 /**
  * Safely converts a value into a plain object.
  */
@@ -34,6 +61,16 @@ export function convertToVsCodeLmMessages(
 	const vsCodeLmMessages: vscode.LanguageModelChatMessage[] = []
 
 	for (const anthropicMessage of anthropicMessages) {
+		// [IMAGE-TRACE] Log message structure
+		if (Array.isArray(anthropicMessage.content)) {
+			const imageCount = anthropicMessage.content.filter((b: any) => b.type === "image").length
+			if (imageCount > 0) {
+				console.log(
+					`[IMAGE-TRACE] convertToVsCodeLmMessages: input message role=${anthropicMessage.role}, content blocks=${anthropicMessage.content.length}, image blocks=${imageCount}`,
+				)
+			}
+		}
+
 		// Handle simple string messages
 		if (typeof anthropicMessage.content === "string") {
 			vsCodeLmMessages.push(
@@ -72,9 +109,7 @@ export function convertToVsCodeLmMessages(
 								? [new vscode.LanguageModelTextPart(toolMessage.content)]
 								: (toolMessage.content?.map((part) => {
 										if (part.type === "image") {
-											return new vscode.LanguageModelTextPart(
-												`[Image (${part.source?.type || "Unknown source-type"}): ${part.source?.media_type || "unknown media-type"} not supported by VSCode LM API]`,
-											)
+											return createVsCodeLmImagePart(part) as vscode.LanguageModelTextPart
 										}
 										return new vscode.LanguageModelTextPart(part.text)
 									}) ?? [new vscode.LanguageModelTextPart("")])
@@ -85,16 +120,14 @@ export function convertToVsCodeLmMessages(
 					// Convert non-tool messages to TextParts after tool messages
 					...nonToolMessages.map((part) => {
 						if (part.type === "image") {
-							return new vscode.LanguageModelTextPart(
-								`[Image (${part.source?.type || "Unknown source-type"}): ${part.source?.media_type || "unknown media-type"} not supported by VSCode LM API]`,
-							)
+							return createVsCodeLmImagePart(part)
 						}
 						return new vscode.LanguageModelTextPart(part.text)
 					}),
 				]
 
 				// Add single user message with all content parts
-				vsCodeLmMessages.push(vscode.LanguageModelChatMessage.User(contentParts))
+				vsCodeLmMessages.push(vscode.LanguageModelChatMessage.User(contentParts as any))
 				break
 			}
 
@@ -120,7 +153,7 @@ export function convertToVsCodeLmMessages(
 					// Convert non-tool messages to TextParts first
 					...nonToolMessages.map((part) => {
 						if (part.type === "image") {
-							return new vscode.LanguageModelTextPart("[Image generation not supported by VSCode LM API]")
+							return createVsCodeLmImagePart(part)
 						}
 						return new vscode.LanguageModelTextPart(part.text)
 					}),
@@ -137,7 +170,7 @@ export function convertToVsCodeLmMessages(
 				]
 
 				// Add the assistant message to the list of messages
-				vsCodeLmMessages.push(vscode.LanguageModelChatMessage.Assistant(contentParts))
+				vsCodeLmMessages.push(vscode.LanguageModelChatMessage.Assistant(contentParts as any))
 				break
 			}
 		}

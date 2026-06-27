@@ -276,6 +276,7 @@ const vsCodeLmSchema = baseProviderSettingsSchema.extend({
 			family: z.string().optional(),
 			version: z.string().optional(),
 			id: z.string().optional(),
+			info: modelInfoSchema.optional(),
 		})
 		.optional(),
 })

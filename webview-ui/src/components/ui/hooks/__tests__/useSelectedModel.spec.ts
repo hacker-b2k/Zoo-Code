@@ -645,6 +645,74 @@ describe("useSelectedModel", () => {
 		})
 	})
 
+	describe("vscode-lm provider", () => {
+		beforeEach(() => {
+			mockUseRouterModels.mockReturnValue({
+				data: {
+					openrouter: {},
+					requesty: {},
+					litellm: {},
+				},
+				isLoading: false,
+				isError: false,
+			} as any)
+
+			mockUseOpenRouterModelProviders.mockReturnValue({
+				data: {},
+				isLoading: false,
+				isError: false,
+			} as any)
+		})
+
+		it("should preserve image support from the selected VS Code LM model info", () => {
+			const apiConfiguration: ProviderSettings = {
+				apiProvider: "vscode-lm",
+				vsCodeLmModelSelector: {
+					vendor: "customendpoint",
+					family: "gpt-5.5",
+					info: {
+						maxTokens: -1,
+						contextWindow: 128000,
+						supportsImages: true,
+						supportsPromptCache: true,
+					},
+				},
+			}
+
+			const wrapper = createWrapper()
+			const { result } = renderHook(() => useSelectedModel(apiConfiguration), { wrapper })
+
+			expect(result.current.provider).toBe("vscode-lm")
+			expect(result.current.id).toBe("customendpoint/gpt-5.5")
+			expect(result.current.info?.supportsImages).toBe(true)
+		})
+
+		it("should prefer VS Code LM selector id when available", () => {
+			const apiConfiguration: ProviderSettings = {
+				apiProvider: "vscode-lm",
+				vsCodeLmModelSelector: {
+					id: "customendpoint/gpt-5.5/vision",
+					vendor: "customendpoint",
+					family: "gpt-5.5",
+					version: "vision",
+					info: {
+						maxTokens: -1,
+						contextWindow: 128000,
+						supportsImages: true,
+						supportsPromptCache: true,
+					},
+				},
+			}
+
+			const wrapper = createWrapper()
+			const { result } = renderHook(() => useSelectedModel(apiConfiguration), { wrapper })
+
+			expect(result.current.provider).toBe("vscode-lm")
+			expect(result.current.id).toBe("customendpoint/gpt-5.5/vision")
+			expect(result.current.info?.supportsImages).toBe(true)
+		})
+	})
+
 	describe("openai provider", () => {
 		beforeEach(() => {
 			mockUseRouterModels.mockReturnValue({

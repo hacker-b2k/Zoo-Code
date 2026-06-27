@@ -16,6 +16,12 @@ interface MockLanguageModelTextPart {
 	value: string
 }
 
+interface MockLanguageModelDataPart {
+	type: "data"
+	data: Uint8Array
+	mimeType: string
+}
+
 interface MockLanguageModelToolCallPart {
 	type: "tool_call"
 	callId: string
@@ -39,6 +45,14 @@ vitest.mock("vscode", () => {
 	class MockLanguageModelTextPart {
 		type = "text"
 		constructor(public value: string) {}
+	}
+
+	class MockLanguageModelDataPart {
+		type = "data"
+		constructor(
+			public data: Uint8Array,
+			public mimeType: string,
+		) {}
 	}
 
 	class MockLanguageModelToolCallPart {
@@ -77,6 +91,7 @@ vitest.mock("vscode", () => {
 		},
 		LanguageModelChatMessageRole,
 		LanguageModelTextPart: MockLanguageModelTextPart,
+		LanguageModelDataPart: MockLanguageModelDataPart,
 		LanguageModelToolCallPart: MockLanguageModelToolCallPart,
 		LanguageModelToolResultPart: MockLanguageModelToolResultPart,
 	}
@@ -154,7 +169,7 @@ describe("convertToVsCodeLmMessages", () => {
 		expect(toolCall.type).toBe("tool_call")
 	})
 
-	it("should handle image blocks with appropriate placeholders", () => {
+	it("should convert image blocks to VS Code LM data parts", () => {
 		const messages: Anthropic.Messages.MessageParam[] = [
 			{
 				role: "user",
@@ -165,7 +180,7 @@ describe("convertToVsCodeLmMessages", () => {
 						source: {
 							type: "base64",
 							media_type: "image/png",
-							data: "base64data",
+							data: Buffer.from("image-data").toString("base64"),
 						},
 					},
 				],
@@ -175,8 +190,10 @@ describe("convertToVsCodeLmMessages", () => {
 		const result = convertToVsCodeLmMessages(messages)
 
 		expect(result).toHaveLength(1)
-		const imagePlaceholder = result[0].content[1] as MockLanguageModelTextPart
-		expect(imagePlaceholder.value).toContain("[Image (base64): image/png not supported by VSCode LM API]")
+		const imagePart = result[0].content[1] as unknown as MockLanguageModelDataPart
+		expect(imagePart.type).toBe("data")
+		expect(imagePart.mimeType).toBe("image/png")
+		expect(Buffer.from(imagePart.data).toString()).toBe("image-data")
 	})
 })
 

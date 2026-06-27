@@ -2688,9 +2688,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								if (signal.aborted) {
 									reject(new Error("Request cancelled by user"))
 								} else {
-									signal.addEventListener("abort", () => {
-										reject(new Error("Request cancelled by user"))
-									}, { once: true })
+									signal.addEventListener(
+										"abort",
+										() => {
+											reject(new Error("Request cancelled by user"))
+										},
+										{ once: true },
+									)
 								}
 							})
 							return await Promise.race([nextPromise, abortPromise])
@@ -4103,6 +4107,18 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// For API only: merge consecutive user messages (excludes summary messages per
 		// mergeConsecutiveApiMessages implementation) without mutating stored history.
 		const mergedForApi = mergeConsecutiveApiMessages(messagesSinceLastSummary, { roles: ["user"] })
+
+		// [IMAGE-TRACE] Log conversation history state before image removal
+		let historyImageCount = 0
+		for (const msg of mergedForApi) {
+			if (Array.isArray(msg.content)) {
+				historyImageCount += (msg.content as any[]).filter((b: any) => b.type === "image").length
+			}
+		}
+		console.log(
+			`[IMAGE-TRACE] attemptApiRequest: provider=${this.apiConfiguration.apiProvider}, mergedMessages=${mergedForApi.length}, imagesInHistory=${historyImageCount}`,
+		)
+
 		const messagesWithoutImages = maybeRemoveImageBlocks(mergedForApi, this.api)
 		const cleanConversationHistory = this.buildCleanConversationHistory(messagesWithoutImages as ApiMessage[])
 
@@ -4191,10 +4207,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const iterator = stream[Symbol.asyncIterator]()
 
 		// Set up abort handling - when the signal is aborted, clean up the controller reference
-		abortSignal.addEventListener("abort", () => {
-			console.log(`[Task#${this.taskId}.${this.instanceId}] AbortSignal triggered for current request`)
-			this.currentRequestAbortController = undefined
-		}, { once: true })
+		abortSignal.addEventListener(
+			"abort",
+			() => {
+				console.log(`[Task#${this.taskId}.${this.instanceId}] AbortSignal triggered for current request`)
+				this.currentRequestAbortController = undefined
+			},
+			{ once: true },
+		)
 
 		try {
 			// Awaiting first chunk to see if it will throw an error.
@@ -4206,9 +4226,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				if (abortSignal.aborted) {
 					reject(new Error("Request cancelled by user"))
 				} else {
-					abortSignal.addEventListener("abort", () => {
-						reject(new Error("Request cancelled by user"))
-					}, { once: true })
+					abortSignal.addEventListener(
+						"abort",
+						() => {
+							reject(new Error("Request cancelled by user"))
+						},
+						{ once: true },
+					)
 				}
 			})
 

@@ -306,12 +306,18 @@ function getSelectedModel({
 			}
 		}
 		case "vscode-lm": {
-			const id = apiConfiguration?.vsCodeLmModelSelector
-				? `${apiConfiguration.vsCodeLmModelSelector.vendor}/${apiConfiguration.vsCodeLmModelSelector.family}`
-				: vscodeLlmDefaultModelId
-			const modelFamily = apiConfiguration?.vsCodeLmModelSelector?.family ?? vscodeLlmDefaultModelId
-			const info = vscodeLlmModels[modelFamily as keyof typeof vscodeLlmModels]
-			return { id, info: { ...openAiModelInfoSaneDefaults, ...info, supportsImages: false } } // VSCode LM API currently doesn't support images.
+			const selector = apiConfiguration?.vsCodeLmModelSelector
+			const id =
+				selector?.id ??
+				(selector
+					? [selector.vendor, selector.family, selector.version].filter(Boolean).join("/")
+					: vscodeLlmDefaultModelId)
+			const modelFamily = selector?.family ?? vscodeLlmDefaultModelId
+			const info = selector?.info ?? vscodeLlmModels[modelFamily as keyof typeof vscodeLlmModels]
+			// Always default supportsImages to true for VS Code LM models.
+			// The backend's getVsCodeLmImageSupport() defaults to true for unknown/custom models,
+			// so we must not let stale stored selector.info values override this.
+			return { id, info: { ...openAiModelInfoSaneDefaults, ...info, supportsImages: true } }
 		}
 		case "sambanova": {
 			const id = apiConfiguration.apiModelId ?? defaultModelId
