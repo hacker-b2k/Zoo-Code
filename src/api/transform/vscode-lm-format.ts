@@ -10,7 +10,7 @@ function createVsCodeLmImagePart(part: Anthropic.ImageBlockParam): unknown {
 		.LanguageModelDataPart
 
 	console.log(
-		`[IMAGE-TRACE] createVsCodeLmImagePart: LanguageModelDataPart=${LanguageModelDataPart ? "AVAILABLE" : "MISSING"}, source.type=${part.source?.type}, media_type=${part.source?.media_type}, data_length=${part.source?.type === "base64" ? part.source.data?.length : "N/A"}`,
+		`[IMAGE-TRACE] createVsCodeLmImagePart: LanguageModelDataPart=${LanguageModelDataPart ? "AVAILABLE" : "MISSING"}, source.type=${part.source?.type}, media_type=${part.source?.type === "base64" ? part.source.media_type : "N/A"}, data_length=${part.source?.type === "base64" ? part.source.data?.length : "N/A"}`,
 	)
 
 	if (!LanguageModelDataPart || part.source.type !== "base64") {
@@ -18,7 +18,7 @@ function createVsCodeLmImagePart(part: Anthropic.ImageBlockParam): unknown {
 			`[IMAGE-TRACE] createVsCodeLmImagePart: FALLING BACK to LanguageModelTextPart (DataPart missing=${!LanguageModelDataPart}, sourceType=${part.source?.type})`,
 		)
 		return new vscode.LanguageModelTextPart(
-			`[Image (${part.source?.type || "Unknown source-type"}): ${part.source?.media_type || "unknown media-type"} ${IMAGE_NOT_SUPPORTED_MESSAGE}]`,
+			`[Image (${part.source?.type || "Unknown source-type"}): ${part.source?.type === "base64" ? part.source.media_type : "unknown media-type"} ${IMAGE_NOT_SUPPORTED_MESSAGE}]`,
 		)
 	}
 
@@ -109,9 +109,12 @@ export function convertToVsCodeLmMessages(
 								? [new vscode.LanguageModelTextPart(toolMessage.content)]
 								: (toolMessage.content?.map((part) => {
 										if (part.type === "image") {
-											return createVsCodeLmImagePart(part) as vscode.LanguageModelTextPart
+												return createVsCodeLmImagePart(part) as vscode.LanguageModelTextPart
 										}
-										return new vscode.LanguageModelTextPart(part.text)
+										if (part.type === "text") {
+											return new vscode.LanguageModelTextPart(part.text)
+										}
+										return new vscode.LanguageModelTextPart("")
 									}) ?? [new vscode.LanguageModelTextPart("")])
 
 						return new vscode.LanguageModelToolResultPart(toolMessage.tool_use_id, toolContentParts)
