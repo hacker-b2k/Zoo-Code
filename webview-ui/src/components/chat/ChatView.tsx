@@ -76,7 +76,7 @@ const taskActivityGroupCache = new Map<
 	number,
 	{
 		groupState: Record<number, { isCollapsed: boolean }>
-		knownTimestamps: Set<number>
+		manualToggledGroups: Set<number>
 	}
 >()
 
@@ -214,8 +214,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const expandedRowsRef = useRef<Record<number, boolean>>({})
 	const prevExpandedRowsRef = useRef<Record<number, boolean>>()
 	const [taskActivityGroupState, setTaskActivityGroupState] = useState<Record<number, { isCollapsed: boolean }>>({})
-	const prevGroupTimestampsRef = useRef<Set<number>>(new Set())
-	// Track which groups the user has manually toggled, so completion auto-collapse
+	// Track which groups the user has manually toggled, so auto-collapse
 	// does not override an explicit expand/collapse decision.
 	const manualToggleRef = useRef<Set<number>>(new Set())
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -1415,7 +1414,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		setExpandedRows({})
 	}, [autoCollapseLongMessages, longMessageCollapseThreshold])
 
-	// Persist task activity group state across chat switches.
+	// Persist task activity group state and manual-toggle tracking across chat switches.
 	// When the task changes, save current state to the module-level cache before switching.
 	// When returning to a previously-visited task, restore from cache to preserve manual
 	// expand/collapse choices. Only start fresh for a task with no cache entry (truly new task).
@@ -1425,7 +1424,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		if (prevTaskTsRef.current !== undefined) {
 			taskActivityGroupCache.set(prevTaskTsRef.current, {
 				groupState: taskActivityGroupState,
-				knownTimestamps: prevGroupTimestampsRef.current,
+				manualToggledGroups: new Set(manualToggleRef.current),
 			})
 		}
 		prevTaskTsRef.current = task?.ts
@@ -1433,92 +1432,36 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		const cached = task?.ts !== undefined ? taskActivityGroupCache.get(task.ts) : undefined
 		if (cached) {
 			setTaskActivityGroupState(cached.groupState)
-			prevGroupTimestampsRef.current = new Set(cached.knownTimestamps)
+			manualToggleRef.current = new Set(cached.manualToggledGroups)
 		} else {
 			setTaskActivityGroupState({})
-			prevGroupTimestampsRef.current = new Set()
+			manualToggleRef.current = new Set()
 		}
-		// Reset manual-toggle tracking for the new task.
-		manualToggleRef.current = new Set()
 	}
 
-	// Auto-collapse older Task Activity groups when a new one is created.
-	// Triggered ONLY by the appearance of a new group, not by completion,
-	// streaming state, or any other event. Each old group is collapsed
-	// exactly once at the moment the next newer group appears. After that
-	// the user may freely expand or collapse it without the system overriding.
+	// Unified lifecycle auto-collapse effect.
+	//
+	// Each Task Activity group has a lifecycle:
+	//   - Active: the agent is currently working on this group.
+	//     A group is active iff it is the latest (newest) group AND isStreaming is true.
+	//     Active groups are expanded by default.
+	//   - Finished: the agent has moved past this group.
+	//     A group is finished if it is NOT the latest group (a newer group exists),
+	//     OR if it IS the latest group but isStreaming is false (agent stopped).
+	//     Finished groups are auto-collapsed.
+	//
+	// This single effect replaces both the previous "new group creation" effect
+	// (which collapsed older groups when a newer one appeared) and the
+	// "isStreaming transition" effect (which tried to collapse the last group
+	// when streaming stopped). Both were patches on a flat state model; this
+	// effect derives collapse state from each group's lifecycle directly.
+	//
+	// Manual user interaction always wins — groups recorded in manualToggleRef
+	// are never overridden by this effect.
 	useEffect(() => {
 		if (!autoCollapseTaskActivity) return
 
-		// Collect the current set of Task Activity group timestamps.
-		const currentTimestamps = new Set<number>()
-		for (const item of virtuosoItems) {
-			if (isTaskActivityGroup(item)) {
-				currentTimestamps.add((item as TaskActivityGroupData).ts)
-			}
-		}
-
-		// Detect newly-created groups (present now but absent in previous render).
-		const newTimestamps: number[] = []
-		for (const ts of currentTimestamps) {
-			if (!prevGroupTimestampsRef.current.has(ts)) {
-				newTimestamps.push(ts)
-			}
-		}
-
-		// Always keep the ref in sync for the next render.
-		prevGroupTimestampsRef.current = currentTimestamps
-
-		if (newTimestamps.length > 0) {
-			// Collapse every group except the newest one.
-			const newestTs = Math.max(...currentTimestamps)
-
-			setTaskActivityGroupState((prev) => {
-				const next: Record<number, { isCollapsed: boolean }> = {}
-				for (const ts of currentTimestamps) {
-					if (ts === newestTs) {
-						// Newest group — expanded by default (no entry → isCollapsed ?? false).
-						if (prev[ts] !== undefined) {
-							// Preserve any existing explicit state for the newest group
-							// (e.g. user already toggled it in a previous render cycle).
-							next[ts] = prev[ts]
-						}
-					} else {
-						// Older group — collapse it. If the user later expands it,
-						// handleToggleTaskActivity will set isCollapsed: false.
-						next[ts] = { isCollapsed: true }
-					}
-				}
-				return next
-			})
-		}
-	}, [virtuosoItems, autoCollapseTaskActivity])
-
-	// Auto-collapse the latest Task Activity group when the agent stops streaming.
-	// Lifecycle-based: triggers on isStreaming transitioning from true → false,
-	// regardless of how the task ends (completion, followup, error, cancel, etc.).
-	// Skips task-switch transitions to avoid false triggers. Respects manual user
-	// interaction — if the user has explicitly toggled a group, its state is preserved.
-	const prevIsStreamingRef = useRef<boolean>(isStreaming)
-	const prevTaskTsForStreamingRef = useRef<number | undefined>(task?.ts)
-	useEffect(() => {
-		const taskChanged = task?.ts !== prevTaskTsForStreamingRef.current
-		const wasStreaming = prevIsStreamingRef.current
-
-		// Update refs for next render.
-		prevTaskTsForStreamingRef.current = task?.ts
-		prevIsStreamingRef.current = isStreaming
-
-		// Skip auto-collapse on task switch — the cache persistence logic
-		// (above) already handles restoring the correct state.
-		if (taskChanged) return
-
-		if (!autoCollapseTaskActivity) return
-
-		// Only trigger when streaming transitions from active to inactive.
-		if (!(wasStreaming && !isStreaming)) return
-
-		// Find the latest (newest) Task Activity group timestamp.
+		// Find the latest (newest) group timestamp.
 		let latestGroupTs: number | undefined
 		for (const item of virtuosoItems) {
 			if (isTaskActivityGroup(item)) {
@@ -1528,16 +1471,44 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 				}
 			}
 		}
-		if (latestGroupTs === undefined) return
 
-		// Don't override explicit user interaction.
-		if (manualToggleRef.current.has(latestGroupTs)) return
+		setTaskActivityGroupState((prev) => {
+			const next: Record<number, { isCollapsed: boolean }> = {}
+			let changed = false
 
-		setTaskActivityGroupState((prev) => ({
-			...prev,
-			[latestGroupTs!]: { isCollapsed: true },
-		}))
-	}, [isStreaming, task?.ts, virtuosoItems, autoCollapseTaskActivity])
+			for (const item of virtuosoItems) {
+				if (!isTaskActivityGroup(item)) continue
+				const ts = (item as TaskActivityGroupData).ts
+
+				// A group is "active" if it is the latest AND the agent is streaming.
+				const isActive = ts === latestGroupTs && isStreaming
+
+				if (manualToggleRef.current.has(ts)) {
+					// User manually changed this group — preserve their choice.
+					next[ts] = prev[ts] ?? { isCollapsed: false }
+				} else if (isActive) {
+					// Active group: expanded by default.
+					next[ts] = { isCollapsed: false }
+				} else {
+					// Finished group: auto-collapse.
+					next[ts] = { isCollapsed: true }
+				}
+
+				if (prev[ts]?.isCollapsed !== next[ts].isCollapsed) {
+					changed = true
+				}
+			}
+
+			// Detect if groups were removed (e.g. message list changed).
+			const prevKeyCount = Object.keys(prev).length
+			const nextKeyCount = Object.keys(next).length
+			if (prevKeyCount !== nextKeyCount) {
+				changed = true
+			}
+
+			return changed ? next : prev
+		})
+	}, [virtuosoItems, isStreaming, autoCollapseTaskActivity])
 
 	// Toggle collapse state for a task activity group.
 	const handleToggleTaskActivity = useCallback((groupTs: number) => {
