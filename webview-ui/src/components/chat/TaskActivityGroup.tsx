@@ -1,15 +1,19 @@
-import { memo, useMemo } from "react"
+import { memo } from "react"
 import { ChevronDown, ChevronRight, Activity } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import type { ClineMessage, SuggestionItem, CompletionCheckpoint } from "@roo-code/types"
 import type { CollapseDecision } from "@src/utils/messageSize"
+import type { TaskActivityViewModel } from "@src/utils/taskActivityViewModel"
+import type { ActivitySummary } from "@src/utils/taskActivityStatus"
 import { cn } from "@/lib/utils"
 
 import { ChatRowContent } from "./ChatRow"
 
 export interface TaskActivityGroupProps {
-	/** The messages contained in this group */
+	/** The complete view-model derived by ChatView — the only data source for the header */
+	viewModel: TaskActivityViewModel
+	/** The messages contained in this group (for expanded ChatRowContent rendering) */
 	messages: ClineMessage[]
 	/** Whether the group is currently collapsed */
 	isCollapsed: boolean
@@ -37,46 +41,86 @@ export interface TaskActivityGroupProps {
 	onJumpToPreviousCheckpoint?: () => void
 }
 
+// ---------------------------------------------------------------------------
+// Header sub-components (presentational, no side effects)
+// ---------------------------------------------------------------------------
+
 /**
- * Generate a short human-readable summary for the last message in a group.
- * Used in the collapsed view to show what the agent was last doing.
+ * Active realtime status badge — shown when the group is collapsed AND active.
+ * Renders the current activity label (e.g. "THINKING", "READING", "EDITING")
+ * from the i18n status key provided by the view-model.
  */
-function getLastActivityText(msg: ClineMessage): string {
-	if (msg.type === "ask") {
-		return msg.ask === "tool" ? "Tool request" : msg.ask === "command" ? "Command" : "Question"
-	}
-	// msg.type === "say"
-	switch (msg.say) {
-		case "text":
-			return "Response"
-		case "api_req_started":
-			return "API request"
-		case "api_req_retry_delayed":
-			return "Retrying"
-		case "reasoning":
-			return "Thinking"
-		case "condense_context":
-			return "Condensing context"
-		case "codebase_search_result":
-			return "Codebase search"
-		case "tool":
-			return "Tool result"
-		default:
-			return msg.say ? msg.say.replace(/_/g, " ") : "Activity"
-	}
+function ActiveStatusBadge({ statusKey }: { statusKey: string }) {
+	const { t } = useTranslation()
+	return (
+		<span className="ml-auto flex items-center gap-1.5 shrink-0">
+			<span className="relative flex h-2 w-2">
+				<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-vscode-textLink-foreground opacity-75" />
+				<span className="relative inline-flex rounded-full h-2 w-2 bg-vscode-textLink-foreground" />
+			</span>
+			<span className="text-xs font-medium text-vscode-textLink-foreground uppercase tracking-wider">
+				{t(`chat:taskActivity.status.${statusKey}`)}
+			</span>
+		</span>
+	)
 }
 
 /**
+ * Summary stats line — shown when the group is collapsed AND finished.
+ * Renders a compact " · "-separated list of non-zero aggregated stats.
+ */
+function SummaryStats({ summary }: { summary: ActivitySummary }) {
+	const { t } = useTranslation()
+
+	const parts: string[] = []
+
+	if (summary.filesRead > 0) {
+		parts.push(t("chat:taskActivity.summary.filesRead", { count: summary.filesRead }))
+	}
+	if (summary.filesEdited > 0) {
+		parts.push(t("chat:taskActivity.summary.filesEdited", { count: summary.filesEdited }))
+	}
+	if (summary.filesCreated > 0) {
+		parts.push(t("chat:taskActivity.summary.filesCreated", { count: summary.filesCreated }))
+	}
+	if (summary.searches > 0) {
+		parts.push(t("chat:taskActivity.summary.searches", { count: summary.searches }))
+	}
+	if (summary.commands > 0) {
+		parts.push(t("chat:taskActivity.summary.commands", { count: summary.commands }))
+	}
+	if (summary.toolUses > 0) {
+		parts.push(t("chat:taskActivity.summary.toolUses", { count: summary.toolUses }))
+	}
+
+	if (parts.length === 0) return null
+
+	return (
+		<span className="text-xs text-vscode-descriptionForeground ml-auto shrink-0 truncate max-w-[50%]">
+			{parts.join(" · ")}
+		</span>
+	)
+}
+
+// ---------------------------------------------------------------------------
+// TaskActivityGroup — pure presentational
+// ---------------------------------------------------------------------------
+
+/**
  * TaskActivityGroup renders a collapsible summary bar for a group of
- * intermediate agent messages. When expanded, it renders each contained
- * message using ChatRowContent. When collapsed, it shows a compact
- * summary bar with step count and last activity.
+ * intermediate agent messages. The component is purely presentational:
  *
- * The collapse state is fully controlled by the parent via `isCollapsed`.
- * The user always has manual control — no streaming guard overrides collapse.
+ * - **Collapsed + active**: header shows realtime status badge (THINKING, READING, …)
+ * - **Collapsed + finished**: header shows aggregated summary stats
+ * - **Expanded**: full ChatRowContent message timeline (unchanged behavior)
+ *
+ * All business logic (activity classification, summary aggregation) lives in
+ * `taskActivityStatus.ts` → `taskActivityViewModel.ts`. ChatView computes the
+ * view-model and passes it down. This component only renders the supplied data.
  */
 const TaskActivityGroup = memo(
 	({
+		viewModel,
 		messages,
 		isCollapsed,
 		onToggleCollapse,
@@ -98,12 +142,6 @@ const TaskActivityGroup = memo(
 	}: TaskActivityGroupProps) => {
 		const { t } = useTranslation()
 
-		const effectivelyCollapsed = isCollapsed
-
-		const stepCount = messages.length
-		const lastMessage = messages[messages.length - 1]
-		const lastActivity = useMemo(() => getLastActivityText(lastMessage), [lastMessage])
-
 		return (
 			<div
 				className={cn(
@@ -118,13 +156,13 @@ const TaskActivityGroup = memo(
 						"hover:bg-vscode-textLink-foreground/[0.06] transition-colors",
 						"focus:outline-none focus-visible:ring-1 focus-visible:ring-vscode-focusBorder",
 					)}
-					aria-expanded={!effectivelyCollapsed}
+					aria-expanded={!isCollapsed}
 					aria-label={
-						effectivelyCollapsed
-							? t("chat:taskActivity.expand", { count: stepCount })
-							: t("chat:taskActivity.collapse", { count: stepCount })
+						isCollapsed
+							? t("chat:taskActivity.expand", { count: viewModel.stepCount })
+							: t("chat:taskActivity.collapse", { count: viewModel.stepCount })
 					}>
-					{effectivelyCollapsed ? (
+					{isCollapsed ? (
 						<ChevronRight className="size-3.5 shrink-0 text-vscode-descriptionForeground" />
 					) : (
 						<ChevronDown className="size-3.5 shrink-0 text-vscode-descriptionForeground" />
@@ -132,17 +170,16 @@ const TaskActivityGroup = memo(
 					<Activity className="size-3.5 shrink-0 text-vscode-textLink-foreground" />
 					<span className="text-xs font-medium text-vscode-foreground">{t("chat:taskActivity.label")}</span>
 					<span className="text-xs text-vscode-descriptionForeground">
-						— {t("chat:taskActivity.stepCount", { count: stepCount })}
+						— {t("chat:taskActivity.stepCount", { count: viewModel.stepCount })}
 					</span>
-					{effectivelyCollapsed && lastActivity && (
-						<span className="text-xs text-vscode-descriptionForeground truncate ml-auto">
-							{t("chat:taskActivity.lastActivity", { activity: lastActivity })}
-						</span>
+					{isCollapsed && viewModel.headerMode === "active" && (
+						<ActiveStatusBadge statusKey={viewModel.currentStatus} />
 					)}
+					{isCollapsed && viewModel.headerMode === "finished" && <SummaryStats summary={viewModel.summary} />}
 				</button>
 
 				{/* Expanded content — each contained message rendered via ChatRowContent */}
-				{!effectivelyCollapsed && (
+				{!isCollapsed && (
 					<div className="px-[15px] py-[2px]">
 						{messages.map((msg, msgIdx) => {
 							const decision = collapseDecisions.get(msg.ts)
@@ -151,7 +188,7 @@ const TaskActivityGroup = memo(
 							// The last message in the group is "last" only if this group
 							// is also the last Virtuoso item in the list.
 							const isLastMessage = isLastInList && msgIdx === messages.length - 1
-	
+
 							return (
 								<div key={msg.ts} data-message-row={msg.ts} className="py-[4px]">
 									<ChatRowContent

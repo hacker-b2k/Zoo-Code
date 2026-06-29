@@ -11,6 +11,7 @@ import { getCostBreakdownIfNeeded } from "@src/utils/costFormatting"
 import { batchConsecutive } from "@src/utils/batchConsecutive"
 import { buildVirtuosoItems, isTaskActivityGroup } from "@src/utils/taskActivityGrouping"
 import type { VirtuosoItem, TaskActivityGroupData } from "@src/utils/taskActivityGrouping"
+import { deriveTaskActivityViewModel } from "@src/utils/taskActivityViewModel"
 
 import type { ClineAsk, ClineSayTool, ClineMessage, ExtensionMessage, AudioType, SuggestionItem } from "@roo-code/types"
 import type { CollapseDecision } from "@src/utils/messageSize"
@@ -1458,19 +1459,23 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	//
 	// Manual user interaction always wins — groups recorded in manualToggleRef
 	// are never overridden by this effect.
-	useEffect(() => {
-		if (!autoCollapseTaskActivity) return
-
-		// Find the latest (newest) group timestamp.
-		let latestGroupTs: number | undefined
+	// Extract latestGroupTs so it can be shared between the lifecycle effect
+	// and the itemContent callback (where viewModel is derived per group).
+	const latestGroupTs = useMemo(() => {
+		let latest: number | undefined
 		for (const item of virtuosoItems) {
 			if (isTaskActivityGroup(item)) {
 				const ts = (item as TaskActivityGroupData).ts
-				if (latestGroupTs === undefined || ts > latestGroupTs) {
-					latestGroupTs = ts
+				if (latest === undefined || ts > latest) {
+					latest = ts
 				}
 			}
 		}
+		return latest
+	}, [virtuosoItems])
+
+	useEffect(() => {
+		if (!autoCollapseTaskActivity) return
 
 		setTaskActivityGroupState((prev) => {
 			const next: Record<number, { isCollapsed: boolean }> = {}
@@ -1508,7 +1513,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 
 			return changed ? next : prev
 		})
-	}, [virtuosoItems, isStreaming, autoCollapseTaskActivity])
+	}, [virtuosoItems, isStreaming, autoCollapseTaskActivity, latestGroupTs])
 
 	// Toggle collapse state for a task activity group.
 	const handleToggleTaskActivity = useCallback((groupTs: number) => {
@@ -1707,9 +1712,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			if (isTaskActivityGroup(item)) {
 				const groupData = item as TaskActivityGroupData
 				const groupCollapse = taskActivityGroupState[groupData.ts]
+				const isActive = groupData.ts === latestGroupTs && isStreaming
+				const viewModel = deriveTaskActivityViewModel(groupData.messages, isActive)
 				return (
 					<TaskActivityGroup
 						key={`tag-${groupData.ts}`}
+						viewModel={viewModel}
 						messages={groupData.messages}
 						isCollapsed={groupCollapse?.isCollapsed ?? false}
 						onToggleCollapse={() => handleToggleTaskActivity(groupData.ts)}
@@ -1776,6 +1784,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		[
 			collapseDecisions,
 			taskActivityGroupState,
+			latestGroupTs,
 			handleToggleTaskActivity,
 			toggleRowExpansion,
 			modifiedMessages,

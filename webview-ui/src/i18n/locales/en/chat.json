@@ -502,6 +502,39 @@
 		"stepCount_other": "{{count}} steps",
 		"expand": "Expand task activity",
 		"collapse": "Collapse task activity",
-		"lastActivity": "Last: {{activity}}"
+		"lastActivity": "Last: {{activity}}",
+		"status": {
+			"thinking": "THINKING",
+			"reading": "READING",
+			"editing": "EDITING",
+			"writing": "WRITING",
+			"searching": "SEARCHING",
+			"browsing": "BROWSING",
+			"runningCommand": "RUNNING COMMAND",
+			"generatingImage": "GENERATING IMAGE",
+			"usingMcpServer": "USING MCP SERVER",
+			"usingTool": "USING TOOL",
+			"usingSkill": "USING SKILL",
+			"delegating": "DELEGATING",
+			"finishing": "FINISHING",
+			"updatingTodos": "UPDATING TODOS",
+			"condensingContext": "CONDENSING CONTEXT",
+			"retrying": "RETRYING",
+			"waiting": "WAITING",
+			"activity": "ACTIVE"
+		},
+		"summary": {
+			"filesRead_one": "{{count}} file read",
+			"filesRead_other": "{{count}} files read",
+			"filesEdited_one": "{{count}} edited",
+			"filesEdited_other": "{{count}} edited",
+			"filesCreated_one": "{{count}} created",
+			"filesCreated_other": "{{count}} created",
+			"searches_one": "{{count}} search",
+			"searches_other": "{{count}} searches",
+			"commands_one": "{{count}} command",
+			"commands_other": "{{count}} commands",
+			"toolUses": "{{count}} tool uses"
+		}
 	}
 }
