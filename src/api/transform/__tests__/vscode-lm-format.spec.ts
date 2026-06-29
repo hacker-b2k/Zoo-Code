@@ -211,7 +211,7 @@ describe("convertToVsCodeLmMessages", () => {
 
 		const result = convertToVsCodeLmMessages(messages)
 		const imagePlaceholder = result[0].content[0] as MockLanguageModelTextPart
-		expect(imagePlaceholder.value).toContain("[Image (url): not supported by VSCode LM API]")
+		expect(imagePlaceholder.value).toContain("[Image (url): unknown media-type not supported by VSCode LM API]")
 	})
 
 	it("should produce correct placeholder for URL image inside tool result", () => {
@@ -235,10 +235,11 @@ describe("convertToVsCodeLmMessages", () => {
 
 		const result = convertToVsCodeLmMessages(messages)
 		const toolResult = result[0].content[0] as any
-		expect(toolResult.content[0].value).toContain("[Image (url): not supported by VSCode LM API]")
+		expect(toolResult.content[0].value).toContain("[Image (url): unknown media-type not supported by VSCode LM API]")
 	})
 
-	it("should produce base64 image placeholder inside tool result", () => {
+	it("should produce base64 image data part inside tool result", () => {
+		const base64Data = Buffer.from("image-data").toString("base64")
 		const messages: Anthropic.Messages.MessageParam[] = [
 			{
 				role: "user",
@@ -249,7 +250,7 @@ describe("convertToVsCodeLmMessages", () => {
 						content: [
 							{
 								type: "image",
-								source: { type: "base64", media_type: "image/jpeg", data: "abc" },
+								source: { type: "base64", media_type: "image/jpeg", data: base64Data },
 							},
 						],
 					},
@@ -259,7 +260,9 @@ describe("convertToVsCodeLmMessages", () => {
 
 		const result = convertToVsCodeLmMessages(messages)
 		const toolResult = result[0].content[0] as any
-		expect(toolResult.content[0].value).toBe("[Image (base64): image/jpeg not supported by VSCode LM API]")
+		expect(toolResult.content[0].type).toBe("data")
+		expect(toolResult.content[0].mimeType).toBe("image/jpeg")
+		expect(Buffer.from(toolResult.content[0].data).toString()).toBe("image-data")
 	})
 
 	it("should return empty string for unknown block types inside tool result", () => {

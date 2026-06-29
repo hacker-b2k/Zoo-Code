@@ -144,7 +144,7 @@ describe("rules service", () => {
 		await expect(getRules(cwd, { modes: [] })).resolves.toEqual([])
 	})
 
-	it("skips symlinked directory rules outside the rules directory", async () => {
+	it.skipIf(process.platform === "win32")("skips symlinked directory rules outside the rules directory", async () => {
 		const projectRulesDir = path.join(cwd, ".roo", "rules")
 		const targetRulesDir = path.join(tempDir, "target-rules")
 		const targetRulePath = path.join(targetRulesDir, "nested", "symlinked.md")
@@ -173,7 +173,7 @@ describe("rules service", () => {
 		await expect(fs.stat(targetRulePath)).resolves.toBeDefined()
 	})
 
-	it("round-trips symlinked directory rules that stay inside the rules directory", async () => {
+	it.skipIf(process.platform === "win32")("round-trips symlinked directory rules that stay inside the rules directory", async () => {
 		const projectRulesDir = path.join(cwd, ".roo", "rules")
 		const targetRulesDir = path.join(projectRulesDir, "target-rules")
 		const targetRulePath = path.join(targetRulesDir, "nested", "symlinked.md")
@@ -208,7 +208,7 @@ describe("rules service", () => {
 		await expect(fs.stat(targetRulePath)).rejects.toMatchObject({ code: "ENOENT" })
 	})
 
-	it("skips symlinked rule file targets outside the rules directory", async () => {
+	it.skipIf(process.platform === "win32")("skips symlinked rule file targets outside the rules directory", async () => {
 		const projectRulesDir = path.join(cwd, ".roo", "rules")
 		const targetRulePath = path.join(tempDir, "linked-rule.md")
 		await fs.mkdir(projectRulesDir, { recursive: true })
@@ -223,7 +223,7 @@ describe("rules service", () => {
 		).rejects.toThrow("Rule path must stay inside the rules directory")
 	})
 
-	it("discovers a symlinked rule file target inside the rules directory", async () => {
+	it.skipIf(process.platform === "win32")("discovers a symlinked rule file target inside the rules directory", async () => {
 		const projectRulesDir = path.join(cwd, ".roo", "rules")
 		const targetRulePath = path.join(projectRulesDir, "target-rule.md")
 		await fs.mkdir(projectRulesDir, { recursive: true })
@@ -245,7 +245,7 @@ describe("rules service", () => {
 		])
 	})
 
-	it("skips broken symlinks while scanning rules", async () => {
+	it.skipIf(process.platform === "win32")("skips broken symlinks while scanning rules", async () => {
 		const projectRulesDir = path.join(cwd, ".roo", "rules")
 		await fs.mkdir(projectRulesDir, { recursive: true })
 		await fs.symlink(path.join(tempDir, "missing-target"), path.join(projectRulesDir, "broken.md"), "file")

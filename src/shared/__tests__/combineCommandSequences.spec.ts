@@ -10,7 +10,7 @@ describe("combineCommandSequences", () => {
 			const messages: ClineMessage[] = [
 				{ type: "ask", ask: "command", text: "ls", ts: 1625097600000 },
 				{ type: "ask", ask: "command_output", text: "file1.txt", ts: 1625097601000 },
-				{ type: "ask", ask: "command_output", text: "file2.txt", ts: 1625097602000 },
+				{ type: "ask", ask: "command_output", text: "file1.txt\nfile2.txt", ts: 1625097602000 },
 			]
 
 			const result = combineCommandSequences(messages)

@@ -116,9 +116,9 @@ export function consolidateCommands(messages: ClineMessage[]): ClineMessage[] {
 						if (hasOutput) {
 							// Replace everything after "Output:" with the new (superset) text.
 							consolidatedText =
-								consolidatedText.slice(0, outputStartIdx + COMMAND_OUTPUT_STRING.length) + "\n" + text
+								consolidatedText.slice(0, outputStartIdx + COMMAND_OUTPUT_STRING.length) + text
 						} else {
-							consolidatedText += "\n" + text
+							consolidatedText += text
 						}
 					}
 

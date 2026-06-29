@@ -10,7 +10,7 @@ describe("consolidateCommands", () => {
 			const messages: ClineMessage[] = [
 				{ type: "ask", ask: "command", text: "ls", ts: 1000 },
 				{ type: "ask", ask: "command_output", text: "file1.txt", ts: 1001 },
-				{ type: "ask", ask: "command_output", text: "file2.txt", ts: 1002 },
+				{ type: "ask", ask: "command_output", text: "file1.txt\nfile2.txt", ts: 1002 },
 			]
 
 			const result = consolidateCommands(messages)
