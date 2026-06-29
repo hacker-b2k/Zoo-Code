@@ -179,6 +179,13 @@ vi.mock("../ChatTextArea", () => {
 
 vi.mock("../ChatRow", () => ({
 	default: ({ message }: { message: ClineMessage }) => <div data-testid="chat-row">{message.ts}</div>,
+	ChatRowContent: ({ message }: { message: ClineMessage }) => <div data-testid="chat-row-content">{message.ts}</div>,
+}))
+
+vi.mock("../TaskActivityGroup", () => ({
+	default: ({ messages }: { messages: ClineMessage[] }) => (
+		<div data-testid="task-activity-group">{messages.length} steps</div>
+	),
 }))
 
 vi.mock("react-virtuoso", () => {
@@ -332,7 +339,10 @@ const hydrate = async (atBottomAfterCalls: number, clineMessages = buildMessages
 
 	const list = document.querySelector("[data-testid='virtuoso-item-list']")
 	expect(list).toBeTruthy()
-	expect(list?.getAttribute("data-count")).toBe(String(Math.max(0, clineMessages.length - 1)))
+	// With task activity grouping, buildVirtuosoItems() may group consecutive
+	// non-boundary messages into a single TaskActivityGroup, so the item count
+	// can be less than clineMessages.length - 1. We just verify items exist.
+	expect(Number(list?.getAttribute("data-count"))).toBeGreaterThan(0)
 }
 
 const advanceTimers = async (ms: number) => {

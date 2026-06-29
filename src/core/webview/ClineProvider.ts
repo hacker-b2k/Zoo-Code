@@ -2296,6 +2296,7 @@ export class ClineProvider
 			reasoningBlockCollapsed,
 			autoCollapseLongMessages,
 			longMessageCollapseThreshold,
+			autoCollapseTaskActivity,
 			chatFontSize,
 			enterBehavior,
 			cloudUserInfo,
@@ -2371,9 +2372,8 @@ export class ClineProvider
 		}
 
 		try {
-			const { isZooCodeAuthenticated, getCachedZooCodeUserInfo, getZooCodeBaseUrl } = await import(
-				"../../services/zoo-code-auth"
-			)
+			const { isZooCodeAuthenticated, getCachedZooCodeUserInfo, getZooCodeBaseUrl } =
+				await import("../../services/zoo-code-auth")
 			const userInfo = getCachedZooCodeUserInfo()
 			zooCodeState = {
 				zooCodeIsAuthenticated: await isZooCodeAuthenticated(),
@@ -2462,6 +2462,7 @@ export class ClineProvider
 			reasoningBlockCollapsed: reasoningBlockCollapsed ?? true,
 			autoCollapseLongMessages: autoCollapseLongMessages ?? true,
 			longMessageCollapseThreshold: longMessageCollapseThreshold ?? 10,
+			autoCollapseTaskActivity: autoCollapseTaskActivity ?? true,
 			chatFontSize,
 			enterBehavior: enterBehavior ?? "send",
 			cloudUserInfo,
@@ -2671,6 +2672,7 @@ export class ClineProvider
 			reasoningBlockCollapsed: stateValues.reasoningBlockCollapsed ?? true,
 			autoCollapseLongMessages: stateValues.autoCollapseLongMessages ?? true,
 			longMessageCollapseThreshold: stateValues.longMessageCollapseThreshold ?? 10,
+			autoCollapseTaskActivity: stateValues.autoCollapseTaskActivity ?? true,
 			chatFontSize: stateValues.chatFontSize,
 			enterBehavior: stateValues.enterBehavior ?? "send",
 			cloudUserInfo,

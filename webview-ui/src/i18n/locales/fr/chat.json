@@ -492,5 +492,13 @@
 		"title": "Fournisseur plus pris en charge",
 		"message": "Ce fournisseur n'est plus disponible. Choisis un fournisseur pris en charge pour continuer.",
 		"openSettings": "Ouvrir les paramètres"
+	},
+	"taskActivity": {
+		"label": "Activité de la tâche",
+		"stepCount_one": "{{count}} étape",
+		"stepCount_other": "{{count}} étapes",
+		"expand": "Développer l'activité de la tâche",
+		"collapse": "Réduire l'activité de la tâche",
+		"lastActivity": "Dernière : {{activity}}"
 	}
 }

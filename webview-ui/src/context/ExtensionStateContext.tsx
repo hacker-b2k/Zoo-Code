@@ -131,6 +131,8 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setAutoCollapseLongMessages: (value: boolean) => void
 	longMessageCollapseThreshold?: number
 	setLongMessageCollapseThreshold: (value: number) => void
+	autoCollapseTaskActivity?: boolean
+	setAutoCollapseTaskActivity: (value: boolean) => void
 	chatFontSize?: number
 	setChatFontSize: (value: number | undefined) => void
 	enterBehavior?: "send" | "newline"
@@ -264,6 +266,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		reasoningBlockCollapsed: true, // Default to collapsed
 		autoCollapseLongMessages: true, // Default to auto-collapse enabled
 		longMessageCollapseThreshold: 10, // Default user threshold; assistant uses 2×
+		autoCollapseTaskActivity: true, // Default to auto-collapse task activity groups on completion
 		enterBehavior: "send", // Default: Enter sends, Shift+Enter creates newline
 		cloudUserInfo: null,
 		cloudIsAuthenticated: false,
@@ -630,6 +633,8 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			setState((prevState) => ({ ...prevState, autoCollapseLongMessages: value })),
 		setLongMessageCollapseThreshold: (value) =>
 			setState((prevState) => ({ ...prevState, longMessageCollapseThreshold: value })),
+		setAutoCollapseTaskActivity: (value) =>
+			setState((prevState) => ({ ...prevState, autoCollapseTaskActivity: value })),
 		setChatFontSize: (value) => setState((prevState) => ({ ...prevState, chatFontSize: value })),
 		enterBehavior: state.enterBehavior ?? "send",
 		setEnterBehavior: (value) => setState((prevState) => ({ ...prevState, enterBehavior: value })),

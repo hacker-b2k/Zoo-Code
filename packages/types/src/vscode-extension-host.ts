@@ -315,6 +315,7 @@ export type ExtensionState = Pick<
 	| "reasoningBlockCollapsed"
 	| "autoCollapseLongMessages"
 	| "longMessageCollapseThreshold"
+	| "autoCollapseTaskActivity"
 	| "chatFontSize"
 	| "enterBehavior"
 	| "includeCurrentTime"

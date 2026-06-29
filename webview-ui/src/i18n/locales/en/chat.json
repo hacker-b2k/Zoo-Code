@@ -495,5 +495,13 @@
 		"copiedCommand": "Copied!",
 		"copyOutput": "Copy Output",
 		"copiedOutput": "Copied!"
+	},
+	"taskActivity": {
+		"label": "Task Activity",
+		"stepCount_one": "{{count}} step",
+		"stepCount_other": "{{count}} steps",
+		"expand": "Expand task activity",
+		"collapse": "Collapse task activity",
+		"lastActivity": "Last: {{activity}}"
 	}
 }

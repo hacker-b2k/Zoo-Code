@@ -9,6 +9,8 @@ import { useDebounceEffect } from "@src/utils/useDebounceEffect"
 import { appendImages } from "@src/utils/imageUtils"
 import { getCostBreakdownIfNeeded } from "@src/utils/costFormatting"
 import { batchConsecutive } from "@src/utils/batchConsecutive"
+import { buildVirtuosoItems, isTaskActivityGroup } from "@src/utils/taskActivityGrouping"
+import type { VirtuosoItem, TaskActivityGroupData } from "@src/utils/taskActivityGrouping"
 
 import type { ClineAsk, ClineSayTool, ClineMessage, ExtensionMessage, AudioType, SuggestionItem } from "@roo-code/types"
 import type { CollapseDecision } from "@src/utils/messageSize"
@@ -36,6 +38,7 @@ import VersionIndicator from "../common/VersionIndicator"
 import HistoryPreview from "../history/HistoryPreview"
 import Announcement from "./Announcement"
 import ChatRow from "./ChatRow"
+import TaskActivityGroup from "./TaskActivityGroup"
 import WarningRow from "./WarningRow"
 import { ChatTextArea } from "./ChatTextArea"
 import TaskHeader from "./TaskHeader"
@@ -64,6 +67,18 @@ const CHAT_VIEWPORT_BUFFER = {
 } as const
 
 const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0
+
+// Module-level cache for Task Activity group collapse state, keyed by task.ts.
+// Persists across chat switches within the same VS Code session.
+// Captured when leaving a task, restored when returning.
+// Cleared when VS Code restarts (webview recreated).
+const taskActivityGroupCache = new Map<
+	number,
+	{
+		groupState: Record<number, { isCollapsed: boolean }>
+		knownTimestamps: Set<number>
+	}
+>()
 
 const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewProps> = (
 	{ isHidden, showAnnouncement, hideAnnouncement },
@@ -94,6 +109,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		telemetrySetting,
 		autoCollapseLongMessages,
 		longMessageCollapseThreshold,
+		autoCollapseTaskActivity,
 	} = useExtensionState()
 
 	// Show a WarningRow when the user sends a message with a retired provider.
@@ -197,6 +213,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
 	const expandedRowsRef = useRef<Record<number, boolean>>({})
 	const prevExpandedRowsRef = useRef<Record<number, boolean>>()
+	const [taskActivityGroupState, setTaskActivityGroupState] = useState<Record<number, { isCollapsed: boolean }>>({})
+	const prevGroupTimestampsRef = useRef<Set<number>>(new Set())
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
 	const lastTtsRef = useRef<string>("")
 	const [wasStreaming, setWasStreaming] = useState<boolean>(false)
@@ -1311,15 +1329,21 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		return result
 	}, [isCondensing, visibleMessages])
 
+	// Build the Virtuoso item list by grouping consecutive intermediate
+	// (groupable) messages into TaskActivityGroupData wrappers.
+	// This sits between groupedMessages and Virtuoso's data prop.
+	const virtuosoItems = useMemo(() => buildVirtuosoItems(groupedMessages), [groupedMessages])
+
 	const checkpointIndices = useMemo(() => {
 		const indices: number[] = []
-		for (let i = 0; i < groupedMessages.length; i++) {
-			if (groupedMessages[i]?.say === "checkpoint_saved") {
+		for (let i = 0; i < virtuosoItems.length; i++) {
+			const item = virtuosoItems[i]
+			if (!isTaskActivityGroup(item) && item.say === "checkpoint_saved") {
 				indices.push(i)
 			}
 		}
 		return indices
-	}, [groupedMessages])
+	}, [virtuosoItems])
 
 	const hasLatestCheckpoint = checkpointIndices.length > 0
 	const checkpointJumpCursorRef = useRef<number | null>(null)
@@ -1376,9 +1400,9 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	// - When a new message arrives (groupedMessages.length changes), overrides reset
 	// - When the user changes auto-collapse settings, overrides reset
 	// - During streaming (same message count), overrides persist for good UX
-	const prevGroupedLengthRef = useRef(groupedMessages.length)
-	if (prevGroupedLengthRef.current !== groupedMessages.length) {
-		prevGroupedLengthRef.current = groupedMessages.length
+	const prevVirtuosoItemsLengthRef = useRef(virtuosoItems.length)
+	if (prevVirtuosoItemsLengthRef.current !== virtuosoItems.length) {
+		prevVirtuosoItemsLengthRef.current = virtuosoItems.length
 		// Schedule state reset using the "state adjustment during render" pattern.
 		// React 18 batches this with the current render for efficiency.
 		setExpandedRows({})
@@ -1387,6 +1411,91 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	useEffect(() => {
 		setExpandedRows({})
 	}, [autoCollapseLongMessages, longMessageCollapseThreshold])
+
+	// Persist task activity group state across chat switches.
+	// When the task changes, save current state to the module-level cache before switching.
+	// When returning to a previously-visited task, restore from cache to preserve manual
+	// expand/collapse choices. Only start fresh for a task with no cache entry (truly new task).
+	const prevTaskTsRef = useRef<number | undefined>(task?.ts)
+	if (task?.ts !== prevTaskTsRef.current) {
+		// Save the outgoing task's state before switching.
+		if (prevTaskTsRef.current !== undefined) {
+			taskActivityGroupCache.set(prevTaskTsRef.current, {
+				groupState: taskActivityGroupState,
+				knownTimestamps: prevGroupTimestampsRef.current,
+			})
+		}
+		prevTaskTsRef.current = task?.ts
+		// Restore state for the incoming task, or start fresh.
+		const cached = task?.ts !== undefined ? taskActivityGroupCache.get(task.ts) : undefined
+		if (cached) {
+			setTaskActivityGroupState(cached.groupState)
+			prevGroupTimestampsRef.current = new Set(cached.knownTimestamps)
+		} else {
+			setTaskActivityGroupState({})
+			prevGroupTimestampsRef.current = new Set()
+		}
+	}
+
+	// Auto-collapse older Task Activity groups when a new one is created.
+	// Triggered ONLY by the appearance of a new group, not by completion,
+	// streaming state, or any other event. Each old group is collapsed
+	// exactly once at the moment the next newer group appears. After that
+	// the user may freely expand or collapse it without the system overriding.
+	useEffect(() => {
+		if (!autoCollapseTaskActivity) return
+
+		// Collect the current set of Task Activity group timestamps.
+		const currentTimestamps = new Set<number>()
+		for (const item of virtuosoItems) {
+			if (isTaskActivityGroup(item)) {
+				currentTimestamps.add((item as TaskActivityGroupData).ts)
+			}
+		}
+
+		// Detect newly-created groups (present now but absent in previous render).
+		const newTimestamps: number[] = []
+		for (const ts of currentTimestamps) {
+			if (!prevGroupTimestampsRef.current.has(ts)) {
+				newTimestamps.push(ts)
+			}
+		}
+
+		// Always keep the ref in sync for the next render.
+		prevGroupTimestampsRef.current = currentTimestamps
+
+		if (newTimestamps.length > 0) {
+			// Collapse every group except the newest one.
+			const newestTs = Math.max(...currentTimestamps)
+
+			setTaskActivityGroupState((prev) => {
+				const next: Record<number, { isCollapsed: boolean }> = {}
+				for (const ts of currentTimestamps) {
+					if (ts === newestTs) {
+						// Newest group — expanded by default (no entry → isCollapsed ?? false).
+						if (prev[ts] !== undefined) {
+							// Preserve any existing explicit state for the newest group
+							// (e.g. user already toggled it in a previous render cycle).
+							next[ts] = prev[ts]
+						}
+					} else {
+						// Older group — collapse it. If the user later expands it,
+						// handleToggleTaskActivity will set isCollapsed: false.
+						next[ts] = { isCollapsed: true }
+					}
+				}
+				return next
+			})
+		}
+	}, [virtuosoItems, autoCollapseTaskActivity])
+
+	// Toggle collapse state for a task activity group.
+	const handleToggleTaskActivity = useCallback((groupTs: number) => {
+		setTaskActivityGroupState((prev) => ({
+			...prev,
+			[groupTs]: { isCollapsed: !(prev[groupTs]?.isCollapsed ?? false) },
+		}))
+	}, [])
 
 	// One-expanded-at-a-time: expanding a message replaces all overrides with just that entry.
 	// Collapsing clears everything (reverts to auto-collapse rules).
@@ -1567,36 +1676,66 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	}, [groupedMessages, expandedRows, autoCollapseLongMessages, longMessageCollapseThreshold])
 
 	const itemContent = useCallback(
-		(index: number, messageOrGroup: ClineMessage) => {
+		(index: number, item: VirtuosoItem) => {
 			const hasCheckpoint = modifiedMessages.some((message) => message.say === "checkpoint_saved")
-			const result = collapseDecisions.get(messageOrGroup.ts) ?? { isExpanded: true, collapseDecision: null }
 
-			// regular message
+			// Task activity group
+			if (isTaskActivityGroup(item)) {
+				const groupData = item as TaskActivityGroupData
+				const groupCollapse = taskActivityGroupState[groupData.ts]
+				return (
+					<TaskActivityGroup
+						key={`tag-${groupData.ts}`}
+						messages={groupData.messages}
+						isCollapsed={groupCollapse?.isCollapsed ?? false}
+						onToggleCollapse={() => handleToggleTaskActivity(groupData.ts)}
+						collapseDecisions={collapseDecisions}
+						lastModifiedMessage={modifiedMessages.at(-1)}
+						isStreamingForContent={isStreaming}
+						onToggleExpand={toggleRowExpansion}
+						onSuggestionClick={handleSuggestionClickInRow}
+						onBatchFileResponse={handleBatchFileResponse}
+						onFollowUpUnmount={handleFollowUpUnmount}
+						isFollowUpAutoApprovalPaused={isFollowUpAutoApprovalPaused}
+						enableButtons={enableButtons}
+						primaryButtonText={primaryButtonText}
+						hasCheckpoint={hasCheckpoint}
+						completionCheckpoint={completionCheckpoint}
+						completionResultTs={completionResultTs}
+						onJumpToPreviousCheckpoint={handleScrollToLatestCheckpoint}
+					/>
+				)
+			}
+
+			// Regular message
+			const message = item as ClineMessage
+			const result = collapseDecisions.get(message.ts) ?? { isExpanded: true, collapseDecision: null }
+
 			return (
 				<ChatRow
-					key={messageOrGroup.ts}
-					message={messageOrGroup}
+					key={message.ts}
+					message={message}
 					isExpanded={result.isExpanded}
 					collapseDecision={result.collapseDecision}
 					onToggleExpand={toggleRowExpansion} // This was already stabilized
 					lastModifiedMessage={modifiedMessages.at(-1)} // Original direct access
-					isLast={index === groupedMessages.length - 1} // Original direct access
+					isLast={index === virtuosoItems.length - 1} // Original direct access
 					onHeightChange={handleRowHeightChange}
 					isStreaming={isStreaming}
 					onSuggestionClick={handleSuggestionClickInRow} // This was already stabilized
 					onBatchFileResponse={handleBatchFileResponse}
 					onFollowUpUnmount={handleFollowUpUnmount}
-					isFollowUpAnswered={messageOrGroup.isAnswered === true || messageOrGroup.ts === currentFollowUpTs}
+					isFollowUpAnswered={message.isAnswered === true || message.ts === currentFollowUpTs}
 					isFollowUpAutoApprovalPaused={isFollowUpAutoApprovalPaused}
 					editable={
-						messageOrGroup.type === "ask" &&
-						messageOrGroup.ask === "tool" &&
+						message.type === "ask" &&
+						message.ask === "tool" &&
 						(() => {
 							let tool: any = {}
 							try {
-								tool = JSON.parse(messageOrGroup.text || "{}")
+								tool = JSON.parse(message.text || "{}")
 							} catch (_) {
-								if (messageOrGroup.text?.includes("updateTodoList")) {
+								if (message.text?.includes("updateTodoList")) {
 									tool = { tool: "updateTodoList" }
 								}
 							}
@@ -1604,20 +1743,21 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 						})()
 					}
 					hasCheckpoint={hasCheckpoint}
-					completionCheckpoint={messageOrGroup.ts === completionResultTs ? completionCheckpoint : undefined}
+					completionCheckpoint={message.ts === completionResultTs ? completionCheckpoint : undefined}
 					onJumpToPreviousCheckpoint={handleScrollToLatestCheckpoint}
 				/>
 			)
 		},
 		[
 			collapseDecisions,
+			taskActivityGroupState,
+			handleToggleTaskActivity,
 			toggleRowExpansion,
 			modifiedMessages,
-			groupedMessages.length,
+			virtuosoItems.length,
 			completionCheckpoint,
 			completionResultTs,
 			handleRowHeightChange,
-			isStreaming,
 			handleSuggestionClickInRow,
 			handleBatchFileResponse,
 			handleFollowUpUnmount,
@@ -1629,10 +1769,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		],
 	)
 
-	const computeMessageKey = useCallback(
-		(index: number, messageOrGroup: ClineMessage) => `${messageOrGroup.ts}-${index}`,
-		[],
-	)
+	const computeMessageKey = useCallback((index: number, item: VirtuosoItem) => {
+		if (isTaskActivityGroup(item)) {
+			return `tag-${(item as TaskActivityGroupData).ts}-${index}`
+		}
+		return `${(item as ClineMessage).ts}-${index}`
+	}, [])
 
 	// Function to handle mode switching
 	const switchToNextMode = useCallback(() => {
@@ -1796,7 +1938,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							computeItemKey={computeMessageKey}
 							defaultItemHeight={CHAT_DEFAULT_ITEM_HEIGHT}
 							increaseViewportBy={CHAT_VIEWPORT_BUFFER}
-							data={groupedMessages}
+							data={virtuosoItems}
 							itemContent={itemContent}
 							followOutput={followOutputCallback}
 							atBottomStateChange={atBottomStateChangeCallback}

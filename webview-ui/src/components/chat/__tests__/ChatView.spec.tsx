@@ -84,6 +84,21 @@ vi.mock("../ChatRow", () => ({
 
 		return <div data-testid="chat-row">{JSON.stringify(message)}</div>
 	},
+	ChatRowContent: function MockChatRowContent({ message }: { message: ClineMessage }) {
+		return <div data-testid="chat-row-content">{JSON.stringify(message)}</div>
+	},
+}))
+
+vi.mock("../TaskActivityGroup", () => ({
+	default: function MockTaskActivityGroup({ messages }: { messages: ClineMessage[] }) {
+		return (
+			<div data-testid="task-activity-group">
+				{messages.map((msg) => (
+					<div key={msg.ts}>{JSON.stringify(msg)}</div>
+				))}
+			</div>
+		)
+	},
 }))
 
 vi.mock("../AutoApproveMenu", () => ({
@@ -1281,16 +1296,19 @@ describe("ChatView - Context Condensing Indicator Tests", () => {
 		})
 
 		// Check that groupedMessages now includes a condensing message
-		// With Virtuoso mocked, items render directly and we can find the ChatRow with partial condense_context message
+		// With Virtuoso mocked, items render directly. Messages may be inside
+		// a TaskActivityGroup (if grouped with other non-boundary messages) or
+		// as standalone ChatRow elements.
 		await waitFor(
 			() => {
-				const rows = container.querySelectorAll('[data-testid="chat-row"]')
-				// Check for the actual message structure: partial condense_context message
-				const condensingRow = Array.from(rows).find((row) => {
-					const text = row.textContent || ""
+				const items = container.querySelectorAll(
+					'[data-testid="chat-row"], [data-testid="task-activity-group"]',
+				)
+				const condensingItem = Array.from(items).find((item) => {
+					const text = item.textContent || ""
 					return text.includes('"say":"condense_context"') && text.includes('"partial":true')
 				})
-				expect(condensingRow).toBeTruthy()
+				expect(condensingItem).toBeTruthy()
 			},
 			{ timeout: 2000 },
 		)
