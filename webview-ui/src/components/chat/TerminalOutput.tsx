@@ -1,6 +1,8 @@
 import React, { useMemo } from "react"
 import Convert from "ansi-to-html"
 
+import { cn } from "@src/lib/utils"
+
 interface TerminalOutputProps {
 	content: string
 	className?: string
@@ -55,7 +57,7 @@ export const TerminalOutput: React.FC<TerminalOutputProps> = ({ content, classNa
 
 	return (
 		<pre
-			className={className}
+			className={cn(className, "rounded-md zoo-scrollbar")}
 			style={{
 				fontFamily:
 					"var(--vscode-editor-font-family, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', monospace)",

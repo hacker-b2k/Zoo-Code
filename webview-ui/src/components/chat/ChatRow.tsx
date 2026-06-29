@@ -12,6 +12,7 @@ import type {
 	ClineAskUseMcpServer,
 	ClineSayTool,
 } from "@roo-code/types"
+import type { CollapseDecision } from "@src/utils/messageSize"
 
 import { Mode } from "@roo/modes"
 
@@ -43,7 +44,7 @@ import { BatchFilePermission } from "./BatchFilePermission"
 import { BatchDiffApproval } from "./BatchDiffApproval"
 import { ProgressIndicator } from "./ProgressIndicator"
 import { Markdown } from "./Markdown"
-import { CommandExecution } from "./CommandExecution"
+import { CommandExecution, parseCommandAndOutput } from "./CommandExecution"
 import { CommandExecutionError } from "./CommandExecutionError"
 import { AutoApprovedRequestLimitWarning } from "./AutoApprovedRequestLimitWarning"
 import { InProgressRow, CondensationResultRow, CondensationErrorRow, TruncationResultRow } from "./context-management"
@@ -109,10 +110,13 @@ function getPreviousTodos(messages: ClineMessage[], currentMessageTs: number): a
 	return []
 }
 
+import { MessageCollapsePreview } from "./MessageCollapsePreview"
+
 interface ChatRowProps {
 	message: ClineMessage
 	lastModifiedMessage?: ClineMessage
 	isExpanded: boolean
+	collapseDecision?: CollapseDecision | null
 	isLast: boolean
 	isStreaming: boolean
 	onToggleExpand: (ts: number) => void
@@ -138,7 +142,7 @@ const ChatRow = memo(
 		const prevHeightRef = useRef(0)
 
 		const [chatrow, { height }] = useSize(
-			<div className="px-[15px] py-[10px] pr-[6px]">
+			<div data-message-row={message.ts} className="px-[15px] py-[10px] pr-[6px]">
 				<ChatRowContent {...props} />
 			</div>,
 		)
@@ -170,6 +174,7 @@ export const ChatRowContent = ({
 	message,
 	lastModifiedMessage,
 	isExpanded,
+	collapseDecision,
 	isLast,
 	isStreaming,
 	onToggleExpand,
@@ -277,17 +282,41 @@ export const ChatRowContent = ({
 			case "error":
 			case "mistake_limit_reached":
 				return [null, null] // These will be handled by ErrorRow component
-			case "command":
+			case "command": {
+				const { exitCode } = parseCommandAndOutput(message.text)
+				const hasExited = !isCommandExecuting && exitCode !== undefined
+				const commandFailed = hasExited && exitCode !== 0
+				const commandSucceeded = hasExited && exitCode === 0
+
 				return [
 					isCommandExecuting ? (
 						<ProgressIndicator />
 					) : (
-						<TerminalSquare className="size-4" aria-label="Terminal icon" />
+						<TerminalSquare
+							className="size-4"
+							aria-label="Terminal icon"
+							style={{ color: commandFailed ? errorColor : commandSucceeded ? successColor : undefined }}
+						/>
 					),
-					<span style={{ color: normalColor, fontWeight: "bold" }}>
-						{t("chat:commandExecution.running")}
-					</span>,
+					isCommandExecuting ? (
+						<span style={{ color: normalColor, fontWeight: "bold" }}>
+							{t("chat:commandExecution.running")}
+						</span>
+					) : commandFailed ? (
+						<span style={{ color: errorColor, fontWeight: "bold" }}>
+							{t("chat:commandExecution.failed")}
+						</span>
+					) : commandSucceeded ? (
+						<span style={{ color: successColor, fontWeight: "bold" }}>
+							{t("chat:commandExecution.completed")}
+						</span>
+					) : (
+						<span style={{ color: normalColor, fontWeight: "bold" }}>
+							{t("chat:commandExecution.running")}
+						</span>
+					),
 				]
+			}
 			case "use_mcp_server":
 				const mcpServerUse = safeJsonParse<ClineAskUseMcpServer>(message.text)
 				if (mcpServerUse === undefined) {
@@ -1006,6 +1035,19 @@ export const ChatRowContent = ({
 			default:
 				return null
 		}
+	}
+
+	// Auto-collapse: when message is collapsed and has a collapse decision,
+	// render the preview instead of full content.
+	if (!isExpanded && collapseDecision) {
+		return (
+			<MessageCollapsePreview
+				message={message}
+				decision={collapseDecision}
+				onExpand={() => onToggleExpand(message.ts)}
+				isCommandExecuting={isCommandExecuting}
+			/>
+		)
 	}
 
 	switch (message.type) {

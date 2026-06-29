@@ -126,6 +126,10 @@ export interface ExtensionStateContextType extends ExtensionState {
 	togglePinnedApiConfig: (configName: string) => void
 	setHistoryPreviewCollapsed: (value: boolean) => void
 	setReasoningBlockCollapsed: (value: boolean) => void
+	autoCollapseLongMessages?: boolean
+	setAutoCollapseLongMessages: (value: boolean) => void
+	longMessageCollapseThreshold?: number
+	setLongMessageCollapseThreshold: (value: number) => void
 	chatFontSize?: number
 	setChatFontSize: (value: number | undefined) => void
 	enterBehavior?: "send" | "newline"
@@ -256,6 +260,8 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		terminalProfile: undefined, // Default VS Code terminal profile (use VS Code default)
 		historyPreviewCollapsed: false, // Initialize the new state (default to expanded)
 		reasoningBlockCollapsed: true, // Default to collapsed
+		autoCollapseLongMessages: true, // Default to auto-collapse enabled
+		longMessageCollapseThreshold: 10, // Default user threshold; assistant uses 2×
 		enterBehavior: "send", // Default: Enter sends, Shift+Enter creates newline
 		cloudUserInfo: null,
 		cloudIsAuthenticated: false,
@@ -613,6 +619,10 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			setState((prevState) => ({ ...prevState, historyPreviewCollapsed: value })),
 		setReasoningBlockCollapsed: (value) =>
 			setState((prevState) => ({ ...prevState, reasoningBlockCollapsed: value })),
+		setAutoCollapseLongMessages: (value) =>
+			setState((prevState) => ({ ...prevState, autoCollapseLongMessages: value })),
+		setLongMessageCollapseThreshold: (value) =>
+			setState((prevState) => ({ ...prevState, longMessageCollapseThreshold: value })),
 		setChatFontSize: (value) => setState((prevState) => ({ ...prevState, chatFontSize: value })),
 		enterBehavior: state.enterBehavior ?? "send",
 		setEnterBehavior: (value) => setState((prevState) => ({ ...prevState, enterBehavior: value })),

@@ -11,6 +11,8 @@ import { getCostBreakdownIfNeeded } from "@src/utils/costFormatting"
 import { batchConsecutive } from "@src/utils/batchConsecutive"
 
 import type { ClineAsk, ClineSayTool, ClineMessage, ExtensionMessage, AudioType, SuggestionItem } from "@roo-code/types"
+import type { CollapseDecision } from "@src/utils/messageSize"
+import { analyzeMessage, isUserMessage, shouldNeverCollapse } from "@src/utils/messageSize"
 import { getSuggestionMode, isRetiredProvider } from "@roo-code/types"
 
 import { findLast } from "@roo/array"
@@ -90,6 +92,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		messageQueue = [],
 		showWorktreesInHomeScreen,
 		telemetrySetting,
+		autoCollapseLongMessages,
+		longMessageCollapseThreshold,
 	} = useExtensionState()
 
 	// Show a WarningRow when the user sends a message with a retired provider.
@@ -172,6 +176,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const [_didClickCancel, setDidClickCancel] = useState(false)
 	const virtuosoRef = useRef<VirtuosoHandle>(null)
 	const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
+	const expandedRowsRef = useRef<Record<number, boolean>>({})
 	const prevExpandedRowsRef = useRef<Record<number, boolean>>()
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
 	const lastTtsRef = useRef<string>("")
@@ -1344,12 +1349,32 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		prevExpandedRowsRef.current = expandedRows
 	}, [enterUserBrowsingHistory, expandedRows])
 
+	// Clear ephemeral manual overrides when collapse-relevant inputs change.
+	// This ensures that expanding/collapsing a message is a temporary action:
+	// - When a new message arrives (groupedMessages.length changes), overrides reset
+	// - When the user changes auto-collapse settings, overrides reset
+	// - During streaming (same message count), overrides persist for good UX
+	const prevGroupedLengthRef = useRef(groupedMessages.length)
+	if (prevGroupedLengthRef.current !== groupedMessages.length) {
+		prevGroupedLengthRef.current = groupedMessages.length
+		// Schedule state reset using the "state adjustment during render" pattern.
+		// React 18 batches this with the current render for efficiency.
+		setExpandedRows({})
+	}
+
+	useEffect(() => {
+		setExpandedRows({})
+	}, [autoCollapseLongMessages, longMessageCollapseThreshold])
+
+	// One-expanded-at-a-time: expanding a message replaces all overrides with just that entry.
+	// Collapsing clears everything (reverts to auto-collapse rules).
 	const handleSetExpandedRow = useCallback(
 		(ts: number, expand?: boolean) => {
-			setExpandedRows((prev: Record<number, boolean>) => ({
-				...prev,
-				[ts]: expand === undefined ? !prev[ts] : expand,
-			}))
+			setExpandedRows((prev: Record<number, boolean>) => {
+				const isCurrentlyExpanded = prev[ts] === true
+				const shouldBeExpanded = expand === undefined ? !isCurrentlyExpanded : expand
+				return shouldBeExpanded ? { [ts]: true } : {}
+			})
 		},
 		[setExpandedRows], // setExpandedRows is stable
 	)
@@ -1363,6 +1388,31 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		},
 		[handleSetExpandedRow],
 	)
+
+	// Keep the ref in sync so the click-outside handler can read current state without re-subscribing.
+	useEffect(() => {
+		expandedRowsRef.current = expandedRows
+	}, [expandedRows])
+
+	// Click-outside detection: clicking outside any message row collapses all expanded messages.
+	// Uses mousedown (not click) so it fires before focus changes and other interactions.
+	// Listens on document (not scrollContainerRef) because the scroll container is conditionally
+	// rendered under {task && ...} and its ref is null when this effect first runs.
+	useEffect(() => {
+		const handleMouseDownOutside = (e: MouseEvent) => {
+			// Only act when there is at least one expanded message
+			if (Object.keys(expandedRowsRef.current).length === 0) return
+
+			const target = e.target as HTMLElement
+			// If the click is NOT inside a message row, collapse everything
+			if (!target.closest("[data-message-row]")) {
+				setExpandedRows({})
+			}
+		}
+
+		document.addEventListener("mousedown", handleMouseDownOutside)
+		return () => document.removeEventListener("mousedown", handleMouseDownOutside)
+	}, []) // empty deps — reads from ref, stable setExpandedRows
 
 	// Effect to clear checkpoint warning when messages appear or task changes
 	useEffect(() => {
@@ -1462,16 +1512,50 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		})
 	}, [checkpointIndices, enterUserBrowsingHistory])
 
+	// Pre-compute collapse decisions for all messages at the ChatView level.
+	// This avoids Rules-of-Hooks violations (itemContent is not a React component)
+	// and ensures O(1) lookup per Virtuoso item.
+	const collapseDecisions = useMemo(() => {
+		const decisions = new Map<number, { isExpanded: boolean; collapseDecision: CollapseDecision | null }>()
+		const totalMessages = groupedMessages.length
+		// Per-type thresholds: user messages collapse sooner than assistant messages.
+		// The slider value is the user threshold; assistant uses 2x.
+		// Default 10 → user at 10, assistant at 20.
+		const userThreshold = longMessageCollapseThreshold ?? 10
+		const assistantThreshold = userThreshold * 2
+		groupedMessages.forEach((msg, index) => {
+			const isLast = index === totalMessages - 1
+			if (shouldNeverCollapse(msg, isLast)) {
+				decisions.set(msg.ts, { isExpanded: true, collapseDecision: null })
+			} else if (!autoCollapseLongMessages) {
+				decisions.set(msg.ts, { isExpanded: true, collapseDecision: null })
+			} else if (expandedRows[msg.ts] !== undefined) {
+				// User override takes priority
+				decisions.set(msg.ts, { isExpanded: expandedRows[msg.ts], collapseDecision: null })
+			} else {
+				// Use per-type thresholds: user messages collapse sooner than assistant messages.
+				// isUserMessage() checks for all user-written subtypes (user_feedback, user_feedback_diff).
+				// (ask-type messages are all blocked by shouldNeverCollapse above.)
+				const threshold = isUserMessage(msg) ? userThreshold : assistantThreshold
+				const decision = analyzeMessage(msg, threshold)
+				decisions.set(msg.ts, { isExpanded: !decision.shouldCollapse, collapseDecision: decision })
+			}
+		})
+		return decisions
+	}, [groupedMessages, expandedRows, autoCollapseLongMessages, longMessageCollapseThreshold])
+
 	const itemContent = useCallback(
 		(index: number, messageOrGroup: ClineMessage) => {
 			const hasCheckpoint = modifiedMessages.some((message) => message.say === "checkpoint_saved")
+			const result = collapseDecisions.get(messageOrGroup.ts) ?? { isExpanded: true, collapseDecision: null }
 
 			// regular message
 			return (
 				<ChatRow
 					key={messageOrGroup.ts}
 					message={messageOrGroup}
-					isExpanded={expandedRows[messageOrGroup.ts] || false}
+					isExpanded={result.isExpanded}
+					collapseDecision={result.collapseDecision}
 					onToggleExpand={toggleRowExpansion} // This was already stabilized
 					lastModifiedMessage={modifiedMessages.at(-1)} // Original direct access
 					isLast={index === groupedMessages.length - 1} // Original direct access
@@ -1503,7 +1587,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			)
 		},
 		[
-			expandedRows,
+			collapseDecisions,
 			toggleRowExpansion,
 			modifiedMessages,
 			groupedMessages.length,
@@ -1683,7 +1767,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 						<Virtuoso
 							ref={virtuosoRef}
 							key={task.ts}
-							className="scrollable grow overflow-y-scroll mb-1"
+							className="zoo-scrollbar grow overflow-y-scroll mb-1"
 							computeItemKey={computeMessageKey}
 							defaultItemHeight={CHAT_DEFAULT_ITEM_HEIGHT}
 							increaseViewportBy={CHAT_VIEWPORT_BUFFER}

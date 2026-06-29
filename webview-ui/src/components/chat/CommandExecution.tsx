@@ -1,7 +1,7 @@
 import { useCallback, useState, memo, useMemo } from "react"
 import { useEvent } from "react-use"
 import { t } from "i18next"
-import { ChevronDown, OctagonX } from "lucide-react"
+import { ChevronDown, Copy, Check, OctagonX, Terminal } from "lucide-react"
 
 import { type ExtensionMessage, type CommandExecutionStatus, commandExecutionStatusSchema } from "@roo-code/types"
 
@@ -20,11 +20,96 @@ import CodeBlock from "@src/components/common/CodeBlock"
 import { CommandPatternSelector } from "./CommandPatternSelector"
 import { TerminalOutput } from "./TerminalOutput"
 
+// Regex to match persisted markers embedded in command_output text by ExecuteCommandTool.
+// The markers appear at the end of the output string in this order:
+//   \n[__START_TIME__:<epoch_ms>]
+//   \n[__END_TIME__:<epoch_ms>]
+//   \n[__EXIT_CODE__:<N>]
+// The last marker must match the end of the string ($).
+const EXIT_CODE_MARKER = /\n\[__EXIT_CODE__:(-?\d+)\]$/
+const END_TIME_MARKER = /\n\[__END_TIME__:(\d+)\]$/
+const START_TIME_MARKER = /\n\[__START_TIME__:(\d+)\]$/
+
 // Module-level cache of the most recent status for each executionId. Populated
 // by every onMessage handler so that a CommandExecution component that mounts
 // after the "started" event was already delivered can recover the status from
 // the cache rather than staying stuck at null.
 const statusCache = new Map<string, CommandExecutionStatus>()
+
+// Module-level cache of execution timing (start/end timestamps) per executionId.
+// Populated by onMessage handler so that MessageCollapsePreview can display
+// execution duration even after CommandExecution unmounts (auto-collapse).
+const executionTimingCache = new Map<string, { startTime: number; endTime?: number }>()
+
+/**
+ * Returns the execution duration in milliseconds for a given executionId,
+ * or undefined if timing data is not available.
+ */
+export function getExecutionTime(executionId: string): number | undefined {
+	const timing = executionTimingCache.get(executionId)
+	if (!timing || timing.endTime === undefined) return undefined
+	return timing.endTime - timing.startTime
+}
+
+/**
+ * Parses a consolidated command message text into the original command and output.
+ * The consolidated format is: `<command>\nOutput:\n<output>`.
+ * If no `Output:` separator is found, the entire text is treated as the command.
+ */
+export function parseCommandAndOutput(text: string | undefined): {
+	command: string
+	output: string
+	exitCode?: number
+	startTime?: number
+	endTime?: number
+} {
+	if (!text) {
+		return { command: "", output: "" }
+	}
+
+	const index = text.indexOf(COMMAND_OUTPUT_STRING)
+
+	if (index === -1) {
+		return { command: text, output: "" }
+	}
+
+	let output = text.slice(index + COMMAND_OUTPUT_STRING.length)
+	let exitCode: number | undefined
+	let startTime: number | undefined
+	let endTime: number | undefined
+
+	// Strip persisted markers from the end of the output (in reverse order).
+	// ExecuteCommandTool onCompleted appends them as:
+	//   \n[__START_TIME__:<epoch_ms>]
+	//   \n[__END_TIME__:<epoch_ms>]
+	//   \n[__EXIT_CODE__:<N>]
+	// Each marker is stripped from the displayed output so the user sees clean text.
+	const exitMatch = output.match(EXIT_CODE_MARKER)
+	if (exitMatch) {
+		output = output.slice(0, -exitMatch[0].length)
+		exitCode = parseInt(exitMatch[1]!, 10)
+	}
+
+	const endMatch = output.match(END_TIME_MARKER)
+	if (endMatch) {
+		output = output.slice(0, -endMatch[0].length)
+		endTime = parseInt(endMatch[1]!, 10)
+	}
+
+	const startMatch = output.match(START_TIME_MARKER)
+	if (startMatch) {
+		output = output.slice(0, -startMatch[0].length)
+		startTime = parseInt(startMatch[1]!, 10)
+	}
+
+	return {
+		command: text.slice(0, index),
+		output,
+		exitCode,
+		startTime,
+		endTime,
+	}
+}
 
 interface CommandPattern {
 	pattern: string
@@ -47,7 +132,11 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 		setDeniedCommands,
 	} = useExtensionState()
 
-	const { command, output: parsedOutput } = useMemo(() => parseCommandAndOutput(text), [text])
+	const {
+		command,
+		output: parsedOutput,
+		exitCode: persistedExitCode,
+	} = useMemo(() => parseCommandAndOutput(text), [text])
 
 	// If we aren't opening the VSCode terminal for this command then we default
 	// to expanding the command execution output.
@@ -61,6 +150,14 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 	// task message (this is the case for completed commands) or from the
 	// streaming output (this is the case for running commands).
 	const output = streamingOutput || parsedOutput
+
+	const isFailed =
+		status?.status === "error" ||
+		status?.status === "timeout" ||
+		(status?.status === "exited" && status.exitCode !== 0) ||
+		// Fallback to persisted exit code when live status is unavailable
+		// (e.g. after chat switch and remount).
+		(status === null && persistedExitCode !== undefined && persistedExitCode !== 0)
 
 	// Extract command patterns from the actual command that was executed
 	const commandPatterns = useMemo<CommandPattern[]>(() => {
@@ -141,6 +238,8 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 							// fast remount) can recover the running indicator.
 							statusCache.set(executionId, data)
 							setStatus(data)
+							// Record execution start time for duration tracking.
+							executionTimingCache.set(executionId, { startTime: Date.now() })
 							break
 						case "exited":
 						case "error":
@@ -152,6 +251,19 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 							// deletes (e.g. error followed by exited) are safe.
 							statusCache.delete(executionId)
 							setStatus(data)
+							// Clear streaming output so the component switches to
+							// parsedOutput (from persisted command_output text).
+							// The streaming buffer is cumulative and can drift from
+							// the final persisted output; using parsedOutput after
+							// completion prevents stale or duplicated content.
+							setStreamingOutput("")
+							// Record execution end time for duration display.
+							{
+								const existing = executionTimingCache.get(executionId)
+								if (existing) {
+									existing.endTime = Date.now()
+								}
+							}
 							break
 						case "fallback":
 							// Not a terminal state -- signals a mid-execution retry
@@ -205,6 +317,22 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 							</StandardTooltip>
 						</div>
 					)}
+					{/* Persisted exit code indicator — visible after remount (e.g. chat switch)
+					    when live status is no longer available but the exit code was embedded
+					    in the persisted command_output text by the backend. */}
+					{status === null && persistedExitCode !== undefined && (
+						<div className="flex flex-row items-center gap-2 font-mono text-xs">
+							<StandardTooltip
+								content={t("chat.commandExecution.exitStatus", { exitStatus: persistedExitCode })}>
+								<div
+									className={cn(
+										"rounded-full size-2",
+										persistedExitCode === 0 ? "bg-green-600" : "bg-red-600",
+									)}
+								/>
+							</StandardTooltip>
+						</div>
+					)}
 				</div>
 				<div className=" flex flex-row items-center justify-between gap-2 px-1">
 					<div className="flex flex-row items-center gap-1">
@@ -240,10 +368,14 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 				</div>
 			</div>
 
-			<div className="bg-vscode-editor-background border border-vscode-border rounded-xs ml-6 mt-2">
+			<div
+				className={cn(
+					"bg-vscode-editor-background border rounded-md ml-6 mt-2",
+					isFailed ? "border-red-500/30" : "border-vscode-border",
+				)}>
 				<div className="p-2">
 					<CodeBlock source={command} language="shell" />
-					<OutputContainer isExpanded={isExpanded} output={output} />
+					<OutputContainer isExpanded={isExpanded} output={output} command={command} isFailed={isFailed} />
 				</div>
 				{command && command.trim() && (
 					<CommandPatternSelector
@@ -261,31 +393,92 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 
 CommandExecution.displayName = "CommandExecution"
 
-const OutputContainerInternal = ({ isExpanded, output }: { isExpanded: boolean; output: string }) => (
-	<div
-		className={cn("overflow-hidden", {
-			"max-h-0": !isExpanded,
-			"max-h-[100%] mt-1 pt-1 border-t border-border/25": isExpanded,
-		})}>
-		{output.length > 0 && <TerminalOutput content={output} />}
-	</div>
-)
+const OutputContainerInternal = ({
+	isExpanded,
+	output,
+	command,
+	isFailed,
+}: {
+	isExpanded: boolean
+	output: string
+	command: string
+	isFailed: boolean
+}) => {
+	const [copyFeedback, setCopyFeedback] = useState(false)
+
+	const handleCopyOutput = useCallback(
+		async (e: React.MouseEvent) => {
+			e.stopPropagation()
+			if (!output) return
+			try {
+				await navigator.clipboard.writeText(output)
+				setCopyFeedback(true)
+				setTimeout(() => setCopyFeedback(false), 2000)
+			} catch {
+				// Silently ignore clipboard errors.
+			}
+		},
+		[output],
+	)
+
+	const lineCount = output ? output.split("\n").length : 0
+
+	return (
+		<div
+			className={cn("zoo-scrollbar", {
+				"max-h-0 overflow-hidden": !isExpanded,
+				"max-h-[100px] overflow-y-auto mt-1 pt-1 border-t border-border/25": isExpanded && !isFailed,
+				"max-h-[100px] overflow-y-auto mt-1 pt-1 border-t border-red-500/40": isExpanded && isFailed,
+			})}>
+			{output.length > 0 && (
+				<>
+					<div className="flex items-center gap-2 px-2 py-1 sticky top-0 z-10 bg-vscode-editor-background">
+						<Terminal
+							className={cn(
+								"size-3.5",
+								isFailed ? "text-vscode-errorForeground" : "text-vscode-descriptionForeground",
+							)}
+						/>
+						<span
+							className={cn(
+								"text-xs font-medium",
+								isFailed ? "text-vscode-errorForeground" : "text-vscode-descriptionForeground",
+							)}>
+							{t("chat:autoCollapse.terminalOutput")}
+						</span>
+						<span
+							className={cn(
+								"text-xs",
+								isFailed
+									? "text-vscode-errorForeground opacity-70"
+									: "text-vscode-descriptionForeground",
+							)}>
+							{t("chat:autoCollapse.lineCount", { count: lineCount })}
+						</span>
+						<div className="ml-auto">
+							<button
+								className={cn(
+									"flex items-center gap-1 text-xs transition-colors px-1 py-0.5 rounded cursor-pointer",
+									isFailed
+										? "text-vscode-errorForeground hover:opacity-80"
+										: "text-vscode-textLink-foreground hover:text-vscode-textLink-activeForeground",
+								)}
+								onClick={handleCopyOutput}
+								aria-label={t("chat:autoCollapse.copyOutput")}>
+								{copyFeedback ? <Check className="size-3" /> : <Copy className="size-3" />}
+								<span>
+									{copyFeedback
+										? t("chat:autoCollapse.copiedOutput")
+										: t("chat:autoCollapse.copyOutput")}
+								</span>
+							</button>
+						</div>
+					</div>
+					<TerminalOutput content={output} />
+				</>
+			)}
+		</div>
+	)
+}
 
 const OutputContainer = memo(OutputContainerInternal)
-
-const parseCommandAndOutput = (text: string | undefined) => {
-	if (!text) {
-		return { command: "", output: "" }
-	}
-
-	const index = text.indexOf(COMMAND_OUTPUT_STRING)
-
-	if (index === -1) {
-		return { command: text, output: "" }
-	}
-
-	return {
-		command: text.slice(0, index),
-		output: text.slice(index + COMMAND_OUTPUT_STRING.length),
-	}
-}

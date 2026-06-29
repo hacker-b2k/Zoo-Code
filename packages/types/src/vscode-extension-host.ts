@@ -310,6 +310,8 @@ export type ExtensionState = Pick<
 	| "openRouterImageGenerationSelectedModel"
 	| "includeTaskHistoryInEnhance"
 	| "reasoningBlockCollapsed"
+	| "autoCollapseLongMessages"
+	| "longMessageCollapseThreshold"
 	| "chatFontSize"
 	| "enterBehavior"
 	| "includeCurrentTime"

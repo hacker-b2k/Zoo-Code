@@ -195,6 +195,14 @@
 		"autoCloseZooOpenedNewFiles": {
 			"label": "Auto-close newly created files",
 			"description": "When enabled, tabs for files that Zoo created (rather than modified) will also be closed automatically after the edit is accepted."
+		},
+		"autoCollapseLongMessages": {
+			"label": "Auto-collapse long messages",
+			"description": "Automatically collapse long messages in the chat to improve readability. Messages containing large code blocks, terminal output, and stack traces are collapsed at lower thresholds.",
+			"threshold": {
+				"label": "Collapse threshold",
+				"description": "Base line-count threshold for user messages (default: 10, range: 5–500). Assistant messages use 2× this value."
+			}
 		}
 	},
 	"prompts": {

@@ -381,7 +381,7 @@ export function useScrollLifecycle({
 			}
 
 			const scroller =
-				(pointerTarget.closest(".scrollable") as HTMLElement | null) ??
+				(pointerTarget.closest(".scrollable, .zoo-scrollbar") as HTMLElement | null) ??
 				(pointerTarget.scrollHeight > pointerTarget.clientHeight ? pointerTarget : null)
 
 			pointerScrollActiveRef.current = scroller !== null

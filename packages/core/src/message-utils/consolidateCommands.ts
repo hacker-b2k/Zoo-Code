@@ -103,15 +103,23 @@ export function consolidateCommands(messages: ClineMessage[]): ClineMessage[] {
 					const isDuplicate = previous && previous.type !== type && previous.text === text
 
 					if (text.length > 0 && !isDuplicate) {
-						// Add a newline before adding the text if there's already content
-						if (
-							previous &&
-							consolidatedText.length >
-								consolidatedText.indexOf(COMMAND_OUTPUT_STRING) + COMMAND_OUTPUT_STRING.length
-						) {
-							consolidatedText += "\n"
+						// command_output messages are cumulative — each streaming
+						// partial contains the full output so far.  Replace the
+						// output portion after COMMAND_OUTPUT_STRING rather than
+						// appending so that repeated cumulative snapshots don't
+						// duplicate content.
+						const outputStartIdx = consolidatedText.lastIndexOf(COMMAND_OUTPUT_STRING)
+						const hasOutput =
+							outputStartIdx !== -1 &&
+							consolidatedText.length > outputStartIdx + COMMAND_OUTPUT_STRING.length
+
+						if (hasOutput) {
+							// Replace everything after "Output:" with the new (superset) text.
+							consolidatedText =
+								consolidatedText.slice(0, outputStartIdx + COMMAND_OUTPUT_STRING.length) + "\n" + text
+						} else {
+							consolidatedText += "\n" + text
 						}
-						consolidatedText += text
 					}
 
 					previous = { type, text }

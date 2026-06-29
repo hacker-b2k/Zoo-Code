@@ -220,6 +220,8 @@ export const globalSettingsSchema = z.object({
 	includeTaskHistoryInEnhance: z.boolean().optional(),
 	historyPreviewCollapsed: z.boolean().optional(),
 	reasoningBlockCollapsed: z.boolean().optional(),
+	autoCollapseLongMessages: z.boolean().optional(),
+	longMessageCollapseThreshold: z.number().int().min(5).max(500).optional(),
 	/**
 	 * Font size (in pixels) for the Zoo Code chat/webview UI.
 	 * When unset (or `null`), the webview inherits VS Code's `--vscode-font-size`.

@@ -91,7 +91,54 @@ vi.mock("./QueuedMessages", () => ({ QueuedMessages: () => null }))
 vi.mock("./WorktreeSelector", () => ({ WorktreeSelector: () => null }))
 
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
-	VSCodeLink: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+	VSCodeLink: ({ children, href, ...props }: any) => (
+		<a href={href} {...props}>
+			{children}
+		</a>
+	),
+	VSCodeButton: ({ children, onClick, appearance, ...props }: any) => (
+		<button onClick={onClick} data-appearance={appearance} {...props}>
+			{children}
+		</button>
+	),
+	VSCodeTextField: ({ value, onInput, placeholder, ...props }: any) => (
+		<input
+			type="text"
+			value={value ?? ""}
+			onChange={(e) => onInput?.({ target: { value: e.target.value } })}
+			placeholder={placeholder}
+			{...props}
+		/>
+	),
+	VSCodeCheckbox: ({ children, checked, onChange, ...props }: any) => (
+		<label>
+			<input
+				type="checkbox"
+				checked={checked ?? false}
+				onChange={(e) => onChange?.({ target: { checked: e.target.checked } })}
+				{...props}
+			/>
+			{children}
+		</label>
+	),
+	VSCodeDropdown: ({ children, value, ...props }: any) => (
+		<select value={value} {...props}>
+			{children}
+		</select>
+	),
+	VSCodeOption: ({ children, value, ...props }: any) => (
+		<option value={value} {...props}>
+			{children}
+		</option>
+	),
+	VSCodeBadge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
+	VSCodeProgressRing: (props: any) => <div data-testid="progress-ring" {...props} />,
+	VSCodeRadio: ({ children, ...props }: any) => <input type="radio" {...props} />,
+	VSCodeRadioGroup: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+	VSCodeTextArea: ({ value, onChange, ...props }: any) => <textarea value={value} onChange={onChange} {...props} />,
+	VSCodePanels: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+	VSCodePanelTab: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+	VSCodePanelView: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 }))
 
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -334,7 +381,7 @@ const waitForCallsSettled = async () => {
 }
 
 const getScrollable = (): HTMLElement => {
-	const scrollable = document.querySelector(".scrollable")
+	const scrollable = document.querySelector(".zoo-scrollbar")
 	if (!(scrollable instanceof HTMLElement)) {
 		throw new Error("Expected ChatView scrollable container")
 	}

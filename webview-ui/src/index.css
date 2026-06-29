@@ -57,6 +57,7 @@
 	--radius-lg: var(--radius);
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-sm: calc(var(--radius) - 4px);
+	--radius-card: var(--radius-md);
 
 	/**
 	 * Allow VSCode colors to be used with Tailwind.
@@ -355,6 +356,51 @@ body:focus-within .code-block-scrollable {
 
 .scrollbar-hide::-webkit-scrollbar {
 	display: none; /* Chrome, Safari and Opera */
+}
+
+/**
+ * Reusable slim scrollbar for all chat scrollable surfaces.
+ * Apply the .zoo-scrollbar class to any scrollable container that needs
+ * consistent, theme-compatible, slim scrollbars (terminal output, message
+ * previews, chat list, code blocks, etc.).
+ *
+ * The thumb uses border + background-clip:content-box to create a visual
+ * inset so it appears flush inside rounded containers rather than detached
+ * at the edge.  The track has a small margin so the scrollbar respects the
+ * container's border-radius.
+ */
+.zoo-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+}
+
+.zoo-scrollbar::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+.zoo-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+	margin: 2px;
+}
+
+.zoo-scrollbar::-webkit-scrollbar-thumb {
+	background-color: var(--vscode-scrollbarSlider-background);
+	border-radius: 100px;
+	border: 2px solid transparent;
+	background-clip: content-box;
+}
+
+.zoo-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.zoo-scrollbar::-webkit-scrollbar-thumb:active {
+	background-color: var(--vscode-scrollbarSlider-activeBackground);
+}
+
+.zoo-scrollbar::-webkit-scrollbar-corner {
+	background-color: transparent;
 }
 
 /**

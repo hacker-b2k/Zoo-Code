@@ -21,6 +21,8 @@ interface UISettingsProps extends HTMLAttributes<HTMLDivElement> {
 	autoCloseZooOpenedFiles?: boolean
 	autoCloseZooOpenedFilesAfterUserEdited?: boolean
 	autoCloseZooOpenedNewFiles?: boolean
+	autoCollapseLongMessages?: boolean
+	longMessageCollapseThreshold?: number
 	setCachedStateField: SetCachedStateField<keyof ExtensionStateContextType>
 }
 
@@ -31,6 +33,8 @@ export const UISettings = ({
 	autoCloseZooOpenedFiles,
 	autoCloseZooOpenedFilesAfterUserEdited,
 	autoCloseZooOpenedNewFiles,
+	autoCollapseLongMessages,
+	longMessageCollapseThreshold,
 	setCachedStateField,
 	...props
 }: UISettingsProps) => {
@@ -75,6 +79,24 @@ export const UISettings = ({
 
 		// Track telemetry event
 		telemetryClient.capture("ui_settings_chat_font_size_reset")
+	}
+
+	const handleAutoCollapseChange = (checked: boolean) => {
+		setCachedStateField("autoCollapseLongMessages", checked)
+	}
+
+	const handleThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const raw = e.target.value
+		if (raw === "") {
+			setCachedStateField("longMessageCollapseThreshold", undefined)
+			return
+		}
+		const value = parseInt(raw, 10)
+		if (!isNaN(value)) {
+			// Clamp to valid range
+			const clamped = Math.max(5, Math.min(500, value))
+			setCachedStateField("longMessageCollapseThreshold", clamped)
+		}
 	}
 
 	return (
@@ -210,6 +232,48 @@ export const UISettings = ({
 							<div className="text-vscode-descriptionForeground text-sm ml-5 mt-1">
 								{t("settings:ui.autoCloseZooOpenedNewFiles.description")}
 							</div>
+						</div>
+					</SearchableSetting>
+
+					{/* Auto-collapse long messages */}
+					<SearchableSetting
+						settingId="ui-auto-collapse-long-messages"
+						section="ui"
+						label={t("settings:ui.autoCollapseLongMessages.label")}>
+						<div className="flex flex-col gap-1">
+							<VSCodeCheckbox
+								checked={autoCollapseLongMessages ?? true}
+								onChange={(e: any) => handleAutoCollapseChange(e.target.checked)}
+								data-testid="auto-collapse-long-messages-checkbox">
+								<span className="font-medium">{t("settings:ui.autoCollapseLongMessages.label")}</span>
+							</VSCodeCheckbox>
+							<div className="text-vscode-descriptionForeground text-sm ml-5 mt-1">
+								{t("settings:ui.autoCollapseLongMessages.description")}
+							</div>
+							{(autoCollapseLongMessages ?? true) && (
+								<div className="ml-5 mt-2 flex items-center gap-2">
+									<label
+										htmlFor="auto-collapse-threshold"
+										className="text-sm text-vscode-descriptionForeground">
+										{t("settings:ui.autoCollapseLongMessages.threshold.label")}
+									</label>
+									<input
+										id="auto-collapse-threshold"
+										type="number"
+										min={5}
+										max={500}
+										value={longMessageCollapseThreshold ?? 10}
+										onChange={handleThresholdChange}
+										className="w-20 bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border rounded px-2 py-0.5 text-sm"
+										data-testid="auto-collapse-threshold-input"
+									/>
+								</div>
+							)}
+							{(autoCollapseLongMessages ?? true) && (
+								<div className="text-vscode-descriptionForeground text-sm ml-5 mt-1">
+									{t("settings:ui.autoCollapseLongMessages.threshold.description")}
+								</div>
+							)}
 						</div>
 					</SearchableSetting>
 				</div>

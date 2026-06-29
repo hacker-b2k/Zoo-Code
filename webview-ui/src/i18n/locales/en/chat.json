@@ -262,6 +262,8 @@
 	"commandExecution": {
 		"abort": "Abort",
 		"running": "Running",
+		"failed": "Failed",
+		"completed": "Completed",
 		"pid": "PID: {{pid}}",
 		"exitStatus": "Exited with status {{exitCode}}",
 		"malformedCommand": "Malformed command: shell syntax error",
@@ -472,5 +474,18 @@
 		"title": "Provider no longer supported",
 		"message": "This provider is no longer available. Select a supported provider to continue.",
 		"openSettings": "Open Settings"
+	},
+	"autoCollapse": {
+		"showMore": "Show {{count}} more lines",
+		"showLess": "Collapse",
+		"ariaLabel": "Collapsed {{reason}}, {{count}} lines",
+		"lineCount": "{{count}} lines",
+		"expand": "Expand",
+		"collapse": "Collapse",
+		"terminalOutput": "Terminal Output",
+		"copyCommand": "Copy Command",
+		"copiedCommand": "Copied!",
+		"copyOutput": "Copy Output",
+		"copiedOutput": "Copied!"
 	}
 }

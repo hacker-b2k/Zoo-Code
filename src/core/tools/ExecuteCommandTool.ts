@@ -281,6 +281,9 @@ export async function executeCommandInTerminal(
 	}
 
 	let accumulatedOutput = ""
+	// Record the epoch-ms when the shell execution starts so we can persist
+	// timing markers alongside the exit code marker in the final command_output.
+	let commandStartTime = 0
 	// Bound accumulated output buffer size to prevent unbounded memory growth for long-running commands.
 	// The interceptor preserves full output; this buffer is only for UI display (100KB limit).
 	const maxAccumulatedOutputSize = 100_000
@@ -394,10 +397,31 @@ export async function executeCommandInTerminal(
 				result = Terminal.compressTerminalOutput(output ?? "")
 				latestCompressedOutput = result
 
+				// Embed exit code in the persisted command_output text so the webview
+				// can derive command failure/success status after remount (e.g. chat
+				// switch).  `exitDetails` is always set before onCompleted fires
+				// because shell_execution_complete always precedes the completed event
+				// in both the VSCode and Execa terminal implementations.
+				// The marker is appended to the *persisted* output only — `result`
+				// (used for the LLM tool result) stays clean.
+				let persistedOutput = result
+				const commandEndTime = Date.now()
+				// Embed timing markers so the webview can compute duration after
+				// remount (e.g. chat switch, extension reload).  The markers are
+				// appended to the *persisted* output only — `result` (used for the
+				// LLM tool result) stays clean.
+				if (commandStartTime > 0) {
+					persistedOutput += `\n[__START_TIME__:${commandStartTime}]`
+					persistedOutput += `\n[__END_TIME__:${commandEndTime}]`
+				}
+				if (exitDetails?.exitCode !== undefined) {
+					persistedOutput += `\n[__EXIT_CODE__:${exitDetails.exitCode}]`
+				}
+
 				// Preserve order: wait for queued partial updates, then emit the final
 				// non-partial command_output update.
 				await commandOutputSayChain
-				await queueCommandOutputMessage(result, false, true)
+				await queueCommandOutputMessage(persistedOutput, false, true)
 				completed = true
 			} finally {
 				// Signal that onCompleted has finished, so the main code can safely use persistedResult
@@ -405,6 +429,7 @@ export async function executeCommandInTerminal(
 			}
 		},
 		onShellExecutionStarted: (pid: number | undefined) => {
+			commandStartTime = Date.now()
 			const status: CommandExecutionStatus = { executionId, status: "started", pid, command }
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 		},
