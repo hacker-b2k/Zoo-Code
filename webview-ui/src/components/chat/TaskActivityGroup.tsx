@@ -22,6 +22,8 @@ export interface TaskActivityGroupProps {
 	// Pass-through props for each ChatRowContent
 	lastModifiedMessage?: ClineMessage
 	isStreamingForContent: boolean
+	/** Whether this group is the last Virtuoso item in the list */
+	isLastInList: boolean
 	onToggleExpand: (ts: number) => void
 	onSuggestionClick?: (suggestion: SuggestionItem, event?: React.MouseEvent) => void
 	onBatchFileResponse?: (response: { [key: string]: boolean }) => void
@@ -81,6 +83,7 @@ const TaskActivityGroup = memo(
 		collapseDecisions,
 		lastModifiedMessage,
 		isStreamingForContent,
+		isLastInList,
 		onToggleExpand,
 		onSuggestionClick,
 		onBatchFileResponse,
@@ -141,11 +144,14 @@ const TaskActivityGroup = memo(
 				{/* Expanded content — each contained message rendered via ChatRowContent */}
 				{!effectivelyCollapsed && (
 					<div className="px-[15px] py-[2px]">
-						{messages.map((msg) => {
+						{messages.map((msg, msgIdx) => {
 							const decision = collapseDecisions.get(msg.ts)
 							const isExpanded = decision?.isExpanded ?? true
 							const collapseDecision = decision?.collapseDecision ?? null
-
+							// The last message in the group is "last" only if this group
+							// is also the last Virtuoso item in the list.
+							const isLastMessage = isLastInList && msgIdx === messages.length - 1
+	
 							return (
 								<div key={msg.ts} data-message-row={msg.ts} className="py-[4px]">
 									<ChatRowContent
@@ -154,7 +160,7 @@ const TaskActivityGroup = memo(
 										collapseDecision={collapseDecision}
 										onToggleExpand={onToggleExpand}
 										lastModifiedMessage={lastModifiedMessage}
-										isLast={false}
+										isLast={isLastMessage}
 										isStreaming={isStreamingForContent}
 										onSuggestionClick={onSuggestionClick}
 										onBatchFileResponse={onBatchFileResponse}

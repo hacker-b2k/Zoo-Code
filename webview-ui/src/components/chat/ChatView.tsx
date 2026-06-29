@@ -1692,6 +1692,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 						collapseDecisions={collapseDecisions}
 						lastModifiedMessage={modifiedMessages.at(-1)}
 						isStreamingForContent={isStreaming}
+						isLastInList={index === virtuosoItems.length - 1}
 						onToggleExpand={toggleRowExpansion}
 						onSuggestionClick={handleSuggestionClickInRow}
 						onBatchFileResponse={handleBatchFileResponse}
