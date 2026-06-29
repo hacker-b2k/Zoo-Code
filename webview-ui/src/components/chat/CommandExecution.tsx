@@ -396,7 +396,7 @@ CommandExecution.displayName = "CommandExecution"
 const OutputContainerInternal = ({
 	isExpanded,
 	output,
-	command,
+	command: _command,
 	isFailed,
 }: {
 	isExpanded: boolean

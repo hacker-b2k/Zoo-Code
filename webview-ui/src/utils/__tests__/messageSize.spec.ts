@@ -26,6 +26,7 @@ function makeSayMessage(text: string, overrides?: Partial<ClineMessage>): ClineM
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function makeAskMessage(text: string, overrides?: Partial<ClineMessage>): ClineMessage {
 	return {
 		type: "ask",

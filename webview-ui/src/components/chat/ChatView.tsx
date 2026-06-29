@@ -1765,6 +1765,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			currentFollowUpTs,
 			isFollowUpAutoApprovalPaused,
 			enableButtons,
+			isStreaming,
 			primaryButtonText,
 			handleScrollToLatestCheckpoint,
 		],

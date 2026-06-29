@@ -91,6 +91,7 @@ export function isTerminalOutput(text: string): boolean {
 			matchCount++
 		}
 		// ANSI escape sequences
+		// eslint-disable-next-line no-control-regex
 		else if (/\x1b\[[0-9;]*m/.test(line)) {
 			matchCount++
 		}

@@ -6,6 +6,21 @@ import MarkdownBlock from "../common/MarkdownBlock"
 import { Lightbulb, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 
+/**
+ * Module-level cache that preserves the elapsed thinking time across
+ * unmount/remount cycles caused by Virtuoso key changes.
+ *
+ * When a partial reasoning message transitions from a standalone Virtuoso item
+ * to being wrapped inside a TaskActivityGroup, the Virtuoso item key format
+ * changes (`${ts}-${index}` → `tag-${ts}-${index}`), causing React to unmount
+ * the old ChatRow and mount a new TaskActivityGroup. This destroys the
+ * ReasoningBlock's local state (elapsed timer).
+ *
+ * The cache is keyed by message timestamp and stores the final elapsed
+ * milliseconds so a remounted ReasoningBlock can restore the display.
+ */
+const reasoningElapsedCache = new Map<number, number>()
+
 interface ReasoningBlockProps {
 	content: string
 	ts: number
@@ -14,14 +29,17 @@ interface ReasoningBlockProps {
 	metadata?: any
 }
 
-export const ReasoningBlock = ({ content, isStreaming, isLast }: ReasoningBlockProps) => {
+export const ReasoningBlock = ({ content, isStreaming, isLast, ts }: ReasoningBlockProps) => {
 	const { t } = useTranslation()
 	const { reasoningBlockCollapsed } = useExtensionState()
 
 	const [isCollapsed, setIsCollapsed] = useState(reasoningBlockCollapsed)
 
-	const startTimeRef = useRef<number>(Date.now())
-	const [elapsed, setElapsed] = useState<number>(0)
+	// Restore elapsed time from cache if this component remounted after a
+	// Virtuoso key change (standalone → grouped transition).
+	const cachedElapsed = reasoningElapsedCache.get(ts) ?? 0
+	const startTimeRef = useRef<number>(Date.now() - cachedElapsed)
+	const [elapsed, setElapsed] = useState<number>(cachedElapsed)
 	const contentRef = useRef<HTMLDivElement>(null)
 
 	useEffect(() => {
@@ -30,12 +48,22 @@ export const ReasoningBlock = ({ content, isStreaming, isLast }: ReasoningBlockP
 
 	useEffect(() => {
 		if (isLast && isStreaming) {
-			const tick = () => setElapsed(Date.now() - startTimeRef.current)
+			const start = startTimeRef.current
+			const tick = () => {
+				const newElapsed = Date.now() - start
+				setElapsed(newElapsed)
+				reasoningElapsedCache.set(ts, newElapsed)
+			}
 			tick()
 			const id = setInterval(tick, 1000)
-			return () => clearInterval(id)
+			return () => {
+				clearInterval(id)
+				// Persist the final elapsed time so a remounted component can
+				// restore the display instead of resetting to zero.
+				reasoningElapsedCache.set(ts, Date.now() - start)
+			}
 		}
-	}, [isLast, isStreaming])
+	}, [isLast, isStreaming, ts])
 
 	const seconds = Math.floor(elapsed / 1000)
 	const secondsLabel = t("chat:reasoning.seconds", { count: seconds })
