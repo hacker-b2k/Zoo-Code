@@ -215,6 +215,9 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const prevExpandedRowsRef = useRef<Record<number, boolean>>()
 	const [taskActivityGroupState, setTaskActivityGroupState] = useState<Record<number, { isCollapsed: boolean }>>({})
 	const prevGroupTimestampsRef = useRef<Set<number>>(new Set())
+	// Track which groups the user has manually toggled, so completion auto-collapse
+	// does not override an explicit expand/collapse decision.
+	const manualToggleRef = useRef<Set<number>>(new Set())
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
 	const lastTtsRef = useRef<string>("")
 	const [wasStreaming, setWasStreaming] = useState<boolean>(false)
@@ -1435,6 +1438,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			setTaskActivityGroupState({})
 			prevGroupTimestampsRef.current = new Set()
 		}
+		// Reset manual-toggle tracking for the new task.
+		manualToggleRef.current = new Set()
 	}
 
 	// Auto-collapse older Task Activity groups when a new one is created.
@@ -1489,8 +1494,56 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		}
 	}, [virtuosoItems, autoCollapseTaskActivity])
 
+	// Auto-collapse the latest Task Activity group when the agent stops streaming.
+	// Lifecycle-based: triggers on isStreaming transitioning from true → false,
+	// regardless of how the task ends (completion, followup, error, cancel, etc.).
+	// Skips task-switch transitions to avoid false triggers. Respects manual user
+	// interaction — if the user has explicitly toggled a group, its state is preserved.
+	const prevIsStreamingRef = useRef<boolean>(isStreaming)
+	const prevTaskTsForStreamingRef = useRef<number | undefined>(task?.ts)
+	useEffect(() => {
+		const taskChanged = task?.ts !== prevTaskTsForStreamingRef.current
+		const wasStreaming = prevIsStreamingRef.current
+
+		// Update refs for next render.
+		prevTaskTsForStreamingRef.current = task?.ts
+		prevIsStreamingRef.current = isStreaming
+
+		// Skip auto-collapse on task switch — the cache persistence logic
+		// (above) already handles restoring the correct state.
+		if (taskChanged) return
+
+		if (!autoCollapseTaskActivity) return
+
+		// Only trigger when streaming transitions from active to inactive.
+		if (!(wasStreaming && !isStreaming)) return
+
+		// Find the latest (newest) Task Activity group timestamp.
+		let latestGroupTs: number | undefined
+		for (const item of virtuosoItems) {
+			if (isTaskActivityGroup(item)) {
+				const ts = (item as TaskActivityGroupData).ts
+				if (latestGroupTs === undefined || ts > latestGroupTs) {
+					latestGroupTs = ts
+				}
+			}
+		}
+		if (latestGroupTs === undefined) return
+
+		// Don't override explicit user interaction.
+		if (manualToggleRef.current.has(latestGroupTs)) return
+
+		setTaskActivityGroupState((prev) => ({
+			...prev,
+			[latestGroupTs!]: { isCollapsed: true },
+		}))
+	}, [isStreaming, task?.ts, virtuosoItems, autoCollapseTaskActivity])
+
 	// Toggle collapse state for a task activity group.
 	const handleToggleTaskActivity = useCallback((groupTs: number) => {
+		// Record the manual interaction so completion auto-collapse
+		// does not override the user's explicit choice.
+		manualToggleRef.current.add(groupTs)
 		setTaskActivityGroupState((prev) => ({
 			...prev,
 			[groupTs]: { isCollapsed: !(prev[groupTs]?.isCollapsed ?? false) },
