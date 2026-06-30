@@ -1335,7 +1335,16 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	// Build the Virtuoso item list by grouping consecutive intermediate
 	// (groupable) messages into TaskActivityGroupData wrappers.
 	// This sits between groupedMessages and Virtuoso's data prop.
-	const virtuosoItems = useMemo(() => buildVirtuosoItems(groupedMessages), [groupedMessages])
+	// Command boundary uses the same assistant threshold as collapseDecisions
+	// so small completed commands are absorbed into the Task Activity.
+	const commandCollapseThreshold = (longMessageCollapseThreshold ?? 10) * 2
+	const virtuosoItems = useMemo(
+		() =>
+			buildVirtuosoItems(groupedMessages, {
+				commandCollapseThreshold: autoCollapseLongMessages ? commandCollapseThreshold : undefined,
+			}),
+		[groupedMessages, commandCollapseThreshold, autoCollapseLongMessages],
+	)
 
 	const checkpointIndices = useMemo(() => {
 		const indices: number[] = []

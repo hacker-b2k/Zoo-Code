@@ -9,9 +9,18 @@
  * retry/resume dialogs, completion) are boundaries. All intermediate execution
  * activity (tool calls, command output, API requests, thinking, file reads, etc.)
  * stays inside the group.
+ *
+ * Command cards are boundary-aware based on output size: small command cards
+ * (no internal collapse/expand needed) are absorbed into the Task Activity,
+ * while large command cards (with their own collapse/expand UI) remain as
+ * standalone boundary items. The same `analyzeMessage()` heuristic used for
+ * auto-collapse determines this boundary.
  */
 
 import type { ClineAsk, ClineMessage, ClineSay } from "@roo-code/types"
+
+import { COMMAND_OUTPUT_STRING } from "@roo/combineCommandSequences"
+import { analyzeMessage } from "./messageSize"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,7 +68,7 @@ export function isTaskActivityGroup(item: VirtuosoItem): item is TaskActivityGro
  */
 const BOUNDARY_ASK_TYPES: ReadonlySet<ClineAsk> = new Set<ClineAsk>([
 	"followup",
-	"command",
+	// "command" is handled separately with size-aware logic — see isCommandBoundary()
 	"completion_result",
 	"api_req_failed",
 	"resume_task",
@@ -95,6 +104,31 @@ const BOUNDARY_SAY_TYPES: ReadonlySet<ClineSay> = new Set<ClineSay>([
 ])
 
 /**
+ * Determines whether a command ask message should be a boundary based on
+ * its output size. Reuses the same `analyzeMessage()` heuristic that drives
+ * the auto-collapse system.
+ *
+ * Decision logic:
+ * - Pending commands (no output yet) → boundary (user must approve/reject)
+ * - Commands with large output (analyzeMessage says shouldCollapse) → boundary
+ *   (card has its own collapse/expand UI, stays outside Task Activity)
+ * - Commands with small output (analyzeMessage says don't collapse) → groupable
+ *   (no internal collapse/expand needed, absorbed into Task Activity)
+ */
+function isCommandBoundary(msg: ClineMessage, collapseThreshold: number): boolean {
+	// Pending commands — no output yet, user must approve/reject.
+	// These are genuine user decision points and must be standalone.
+	if (!msg.text || !msg.text.includes(COMMAND_OUTPUT_STRING)) {
+		return true
+	}
+	// Completed command with output: use the same size analysis as auto-collapse.
+	// If the message is large enough to warrant collapse/expand UI, it stays
+	// as a standalone boundary. Otherwise it's absorbed into the Task Activity.
+	const decision = analyzeMessage(msg, collapseThreshold)
+	return decision.shouldCollapse
+}
+
+/**
  * Determines whether a message should be rendered as a standalone boundary item
  * (outside any Task Activity group).
  *
@@ -102,9 +136,16 @@ const BOUNDARY_SAY_TYPES: ReadonlySet<ClineSay> = new Set<ClineSay>([
  * important visible content. Intermediate execution activity (tool calls,
  * command output, API requests, thinking, file reads, etc.) is NOT a boundary
  * and will be grouped into a Task Activity block.
+ *
+ * Command messages use size-aware boundary logic: small completed commands
+ * are absorbed into the Task Activity, while large commands and pending
+ * approvals remain as standalone boundary items.
  */
-export function isBoundaryMessage(msg: ClineMessage): boolean {
+export function isBoundaryMessage(msg: ClineMessage, commandCollapseThreshold?: number): boolean {
 	if (msg.type === "ask") {
+		if (msg.ask === "command") {
+			return isCommandBoundary(msg, commandCollapseThreshold ?? Infinity)
+		}
 		// Only asks that require user interaction are boundaries.
 		// Intermediate asks (tool, command_output) are groupable.
 		return msg.ask !== undefined && BOUNDARY_ASK_TYPES.has(msg.ask)
@@ -130,7 +171,21 @@ export function isBoundaryMessage(msg: ClineMessage): boolean {
  *
  * O(n) time complexity, single pass through the array.
  */
-export function buildVirtuosoItems(groupedMessages: ClineMessage[]): VirtuosoItem[] {
+/**
+ * Options for boundary classification during Virtuoso item construction.
+ */
+export interface BoundaryOptions {
+	/**
+	 * Collapse threshold for command boundary decisions.
+	 * When set, small completed commands (whose output doesn't meet this
+	 * threshold for auto-collapse) are absorbed into the Task Activity group
+	 * instead of being rendered as standalone boundary items.
+	 * When omitted (or Infinity), all commands remain boundaries (backward compat).
+	 */
+	commandCollapseThreshold?: number
+}
+
+export function buildVirtuosoItems(groupedMessages: ClineMessage[], options?: BoundaryOptions): VirtuosoItem[] {
 	const result: VirtuosoItem[] = []
 	const buffer: ClineMessage[] = []
 
@@ -154,7 +209,7 @@ export function buildVirtuosoItems(groupedMessages: ClineMessage[]): VirtuosoIte
 
 	for (let i = 0; i < groupedMessages.length; i++) {
 		const msg = groupedMessages[i]
-		if (isBoundaryMessage(msg)) {
+		if (isBoundaryMessage(msg, options?.commandCollapseThreshold)) {
 			// Flush any buffered groupable messages first
 			flushBuffer()
 			// Emit the boundary message as standalone
