@@ -6,7 +6,8 @@ import { ExportButton } from "./ExportButton"
 import { DeleteButton } from "./DeleteButton"
 import { StandardTooltip } from "../ui/standard-tooltip"
 import { useAppTranslation } from "@/i18n/TranslationContext"
-import { Split } from "lucide-react"
+import { Split, Pencil } from "lucide-react"
+import { Button } from "@/components/ui"
 
 export interface TaskItemFooterProps {
 	item: HistoryItem
@@ -14,6 +15,7 @@ export interface TaskItemFooterProps {
 	isSelectionMode?: boolean
 	isSubtask?: boolean
 	onDelete?: (taskId: string) => void
+	onStartRename?: () => void
 }
 
 const TaskItemFooter: React.FC<TaskItemFooterProps> = ({
@@ -22,6 +24,7 @@ const TaskItemFooter: React.FC<TaskItemFooterProps> = ({
 	isSelectionMode = false,
 	isSubtask = false,
 	onDelete,
+	onStartRename,
 }) => {
 	const { t } = useAppTranslation()
 
@@ -56,6 +59,20 @@ const TaskItemFooter: React.FC<TaskItemFooterProps> = ({
 			{!isSelectionMode && (
 				<div className="flex flex-row gap-0 -mx-1.5 items-center text-vscode-descriptionForeground/60 hover:text-vscode-descriptionForeground opacity-0 group-hover:opacity-100">
 					<CopyButton itemTask={item.task} />
+					{variant === "full" && onStartRename && (
+						<StandardTooltip content={t("history:renameTask")}>
+							<Button
+								variant="ghost"
+								size="icon"
+								onClick={(e) => {
+									e.stopPropagation()
+									onStartRename()
+								}}
+								data-testid="rename-task-button">
+								<Pencil className="size-3.5" />
+							</Button>
+						</StandardTooltip>
+					)}
 					{variant === "full" && <ExportButton itemId={item.id} />}
 					{onDelete && <DeleteButton itemId={item.id} onDelete={onDelete} />}
 				</div>

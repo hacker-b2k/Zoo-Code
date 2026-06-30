@@ -47,5 +47,7 @@
 	"subtaskTag": "子工作",
 	"deleteWithSubtasks": "這也將刪除 {{count}} 個子工作。您確定嗎？",
 	"expandSubtasks": "展開子工作",
-	"collapseSubtasks": "收起子工作"
+	"collapseSubtasks": "收起子工作",
+	"renameTask": "重新命名任務",
+	"renamePlaceholder": "輸入任務名稱..."
 }

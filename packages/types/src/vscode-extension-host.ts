@@ -623,6 +623,8 @@ export interface WebviewMessage {
 		| "deleteRule"
 		| "openRuleFile"
 		| "openRulesDirectory"
+		// Task history messages
+		| "renameTask"
 	text?: string
 	taskId?: string
 	editedMessageContent?: string

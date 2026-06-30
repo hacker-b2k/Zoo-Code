@@ -19,7 +19,7 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 vi.mock("@src/context/ExtensionStateContext", () => ({
 	useExtensionState: vi.fn(() => ({
 		apiConfiguration: { apiProvider: "openai" },
-		currentTaskItem: { id: "test-id", number: 1, size: 1024 },
+		currentTaskItem: { id: "test-id", task: "Test task", number: 1, size: 1024 },
 	})),
 }))
 

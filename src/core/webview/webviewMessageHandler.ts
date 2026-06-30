@@ -22,6 +22,7 @@ import {
 	checkoutDiffPayloadSchema,
 	checkoutRestorePayloadSchema,
 	getCompletionCheckpoint,
+	validateTaskCustomTitle,
 } from "@roo-code/types"
 import { customToolRegistry } from "@roo-code/core"
 import { CloudService } from "@roo-code/cloud"
@@ -880,6 +881,31 @@ export const webviewMessageHandler = async (
 		case "exportTaskWithId":
 			provider.exportTaskWithId(message.text!)
 			break
+		case "renameTask": {
+			const taskId = message.taskId
+			const proposedTitle = message.text ?? ""
+
+			if (!taskId) {
+				break
+			}
+
+			// Look up original task text for validation context.
+			const existingItem = provider.getTaskHistoryItem(taskId)
+
+			if (!existingItem) {
+				break
+			}
+
+			const validation = validateTaskCustomTitle(proposedTitle, existingItem.task)
+
+			if (!validation.ok) {
+				provider.log(`renameTask validation failed: ${validation.error}`)
+				break
+			}
+
+			await provider.renameTask(taskId, validation.normalized)
+			break
+		}
 		case "getTaskWithAggregatedCosts": {
 			try {
 				const taskId = message.text

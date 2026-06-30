@@ -105,6 +105,7 @@ export type View = "UserInput" | "AgentResponse" | "ToolUse" | "Default"
 export interface TaskHistoryItem {
 	id: string
 	task: string
+	customTitle?: string
 	ts: number
 	totalCost?: number
 	workspace?: string

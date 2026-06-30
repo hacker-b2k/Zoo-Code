@@ -1,10 +1,14 @@
-import { memo } from "react"
+import { memo, useState, useCallback } from "react"
 import { ArrowRight, Folder } from "lucide-react"
+
+import { getTaskDisplayTitle, validateTaskCustomTitle, CUSTOM_TITLE_MAX_LENGTH } from "@roo-code/types"
+
 import type { DisplayHistoryItem } from "./types"
 
 import { vscode } from "@/utils/vscode"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useAppTranslation } from "@/i18n/TranslationContext"
 
 import TaskItemFooter from "./TaskItemFooter"
 import { StandardTooltip } from "../ui"
@@ -19,6 +23,12 @@ interface TaskItemProps {
 	onToggleSelection?: (taskId: string, isSelected: boolean) => void
 	onDelete?: (taskId: string) => void
 	className?: string
+	/** Currently being renamed task id (only one at a time). */
+	renamingTaskId?: string | null
+	/** Called when the rename button is clicked. */
+	onStartRename?: (taskId: string) => void
+	/** Called when inline rename is submitted or cancelled. */
+	onFinishRename?: () => void
 }
 
 const TaskItem = ({
@@ -31,8 +41,44 @@ const TaskItem = ({
 	onToggleSelection,
 	onDelete,
 	className,
+	renamingTaskId,
+	onStartRename,
+	onFinishRename,
 }: TaskItemProps) => {
+	const { t } = useAppTranslation()
+	const [renameValue, setRenameValue] = useState("")
+	const [renameError, setRenameError] = useState<string | null>(null)
+
+	const isRenaming = renamingTaskId === item.id
+
+	const handleStartRename = useCallback(() => {
+		setRenameValue(getTaskDisplayTitle(item))
+		setRenameError(null)
+		onStartRename?.(item.id)
+	}, [item, onStartRename])
+
+	const handleSaveRename = useCallback(() => {
+		const validation = validateTaskCustomTitle(renameValue, item.task)
+		if (!validation.ok) {
+			setRenameError(validation.error)
+			return
+		}
+
+		setRenameError(null)
+		vscode.postMessage({ type: "renameTask", taskId: item.id, text: validation.normalized })
+		onFinishRename?.()
+	}, [item.id, item.task, renameValue, onFinishRename])
+
+	const handleCancelRename = useCallback(() => {
+		setRenameValue("")
+		setRenameError(null)
+		onFinishRename?.()
+	}, [onFinishRename])
+
 	const handleClick = () => {
+		if (isRenaming) {
+			return // Don't navigate while renaming
+		}
 		if (isSelectionMode && onToggleSelection) {
 			onToggleSelection(item.id, !isSelected)
 		} else {
@@ -41,6 +87,8 @@ const TaskItem = ({
 	}
 
 	const isCompact = variant === "compact"
+	const displayTitle = getTaskDisplayTitle(item)
+	const hasCustomTitle = !!item.customTitle?.trim()
 
 	return (
 		<div
@@ -71,7 +119,42 @@ const TaskItem = ({
 
 				<div className="flex-1 min-w-0">
 					<div className="flex items-start gap-1">
-						{item.highlight ? (
+						{isRenaming ? (
+							<div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+								<input
+									type="text"
+									value={renameValue}
+									onChange={(e) => {
+										setRenameValue(e.target.value)
+										if (renameError) {
+											setRenameError(null)
+										}
+									}}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") {
+											handleSaveRename()
+										} else if (e.key === "Escape") {
+											handleCancelRename()
+										}
+									}}
+									onBlur={handleSaveRename}
+									autoFocus
+									maxLength={CUSTOM_TITLE_MAX_LENGTH}
+									aria-label={t("history:renameTask")}
+									placeholder={t("history:renamePlaceholder")}
+									className="w-full bg-vscode-input-background text-vscode-foreground border border-vscode-input-border rounded px-1.5 py-0.5 text-sm outline-none"
+									data-testid="task-rename-input"
+								/>
+								{renameError && (
+									<div
+										className="text-vscode-errorForeground text-xs mt-1"
+										role="alert"
+										data-testid="task-rename-error">
+										{renameError}
+									</div>
+								)}
+							</div>
+						) : item.highlight ? (
 							<div
 								className={cn(
 									"flex-1 min-w-0 overflow-hidden whitespace-pre-wrap font-light text-ellipsis line-clamp-3",
@@ -93,8 +176,8 @@ const TaskItem = ({
 									!isCompact && isSelectionMode ? "mb-1" : "",
 								)}
 								data-testid="task-content">
-								<StandardTooltip content={item.task}>
-									<span>{item.task}</span>
+								<StandardTooltip content={hasCustomTitle ? item.task : displayTitle}>
+									<span>{displayTitle}</span>
 								</StandardTooltip>
 							</div>
 						)}
@@ -115,6 +198,7 @@ const TaskItem = ({
 						isSelectionMode={isSelectionMode}
 						isSubtask={item.isSubtask}
 						onDelete={onDelete}
+						onStartRename={handleStartRename}
 					/>
 				</div>
 			</div>

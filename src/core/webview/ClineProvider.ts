@@ -47,6 +47,7 @@ import {
 	DEFAULT_CHECKPOINT_TIMEOUT_SECONDS,
 	getModelId,
 	isRetiredProvider,
+	validateTaskCustomTitle,
 } from "@roo-code/types"
 import { RateLimitClock, createRateLimitClock } from "../task/RateLimitClock"
 import { aggregateTaskCostsRecursive, type AggregatedCosts } from "./aggregateTaskCosts"
@@ -2744,6 +2745,54 @@ export class ClineProvider
 		}
 
 		return history
+	}
+
+	/**
+	 * Returns a single history item from the task history store, or `undefined`
+	 * if no item with the given id exists.
+	 */
+	public getTaskHistoryItem(taskId: string): HistoryItem | undefined {
+		return this.taskHistoryStore.get(taskId)
+	}
+
+	/**
+	 * Rename a task by setting (or clearing) its `customTitle`.
+	 *
+	 * Persistence goes through `TaskHistoryStore.atomicReadAndUpdate()` so that
+	 * concurrent saves from `taskMetadata()` never race and `customTitle` is
+	 * never accidentally overwritten.
+	 */
+	public async renameTask(taskId: string, normalizedTitle: string): Promise<void> {
+		await this.taskHistoryStore.atomicReadAndUpdate(taskId, (current) => {
+			const updated: HistoryItem = { ...current }
+
+			if (normalizedTitle.length === 0) {
+				// Clear custom title — assign undefined so the spread merge in
+				// _upsertUnlocked properly overwrites any existing value.
+				// Setting to undefined (rather than deleting) ensures the key
+				// is present in the spread source, which correctly overrides
+				// the existing entry. JSON.stringify omits undefined values,
+				// so the persisted file stays clean.
+				updated.customTitle = undefined
+			} else {
+				updated.customTitle = normalizedTitle
+			}
+
+			return updated
+		})
+
+		this.recentTasksCache = undefined
+
+		// Broadcast only the updated item — no full state reload.
+		if (this.isViewLaunched) {
+			const updatedItem = this.taskHistoryStore.get(taskId)
+			if (updatedItem) {
+				await this.postMessageToWebview({
+					type: "taskHistoryItemUpdated",
+					taskHistoryItem: updatedItem,
+				})
+			}
+		}
 	}
 
 	/**

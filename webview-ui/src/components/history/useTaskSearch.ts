@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { Fzf } from "fzf"
 
+import { getTaskSearchText, getTaskDisplayTitle } from "@roo-code/types"
 import { highlightFzfMatch } from "@/utils/highlight"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 
@@ -33,7 +34,7 @@ export const useTaskSearch = () => {
 
 	const fzf = useMemo(() => {
 		return new Fzf(presentableTasks, {
-			selector: (item) => item.task,
+			selector: (item) => getTaskSearchText(item),
 		})
 	}, [presentableTasks])
 
@@ -43,15 +44,22 @@ export const useTaskSearch = () => {
 		if (searchQuery) {
 			const searchResults = fzf.find(searchQuery)
 			results = searchResults.map((result) => {
-				const positions = Array.from(result.positions)
-				const taskEndIndex = result.item.task.length
+				// The display title is what the user sees.
+				// Search text (from getTaskSearchText) may include hidden original
+				// prompt for matching, but highlight positions must map to the
+				// visible display title only.
+				const displayTitle = getTaskDisplayTitle(result.item)
+				const displayLength = displayTitle.length
+				const allPositions = Array.from(result.positions)
+				// Filter: only keep positions that fall within the visible
+				// display title portion of the search text.
+				const visiblePositions = result.item.customTitle?.trim()
+					? allPositions.filter((p) => p < displayLength)
+					: allPositions
 
 				return {
 					...result.item,
-					highlight: highlightFzfMatch(
-						result.item.task,
-						positions.filter((p) => p < taskEndIndex),
-					),
+					highlight: highlightFzfMatch(displayTitle, visiblePositions),
 					workspace: result.item.workspace,
 				}
 			})

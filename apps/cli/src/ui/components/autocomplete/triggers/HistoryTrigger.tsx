@@ -1,5 +1,6 @@
 import { Box, Text } from "ink"
 import fuzzysort from "fuzzysort"
+import { getTaskDisplayTitle, getTaskSearchText } from "@roo-code/types"
 
 import type { AutocompleteTrigger, AutocompleteItem, TriggerDetectionResult } from "../types.js"
 
@@ -12,6 +13,8 @@ export interface HistoryResult extends AutocompleteItem {
 	id: string
 	/** Task prompt/description */
 	task: string
+	/** Optional user-defined display title */
+	customTitle?: string
 	/** Timestamp when task was created */
 	ts: number
 	/** Total cost of the task */
@@ -121,14 +124,18 @@ export function createHistoryTrigger(config: HistoryTriggerConfig): Autocomplete
 				return allHistory.sort((a, b) => b.ts - a.ts).slice(0, maxResults)
 			}
 
-			// Fuzzy search by task description
-			const results = fuzzysort.go(query, allHistory, {
-				key: "task",
+			const searchableHistory = allHistory.map((item) => ({
+				item,
+				searchText: getTaskSearchText(item),
+			}))
+
+			const results = fuzzysort.go(query, searchableHistory, {
+				key: "searchText",
 				limit: maxResults,
 				threshold: -10000, // Be lenient with matching
 			})
 
-			return results.map((result) => result.obj)
+			return results.map((result) => result.obj.item)
 		},
 
 		renderItem: (item: HistoryResult, isSelected: boolean) => {
@@ -142,8 +149,8 @@ export function createHistoryTrigger(config: HistoryTriggerConfig): Autocomplete
 			// Time ago
 			const timeAgo = formatRelativeTime(item.ts)
 
-			// Truncate task to fit in picker
-			const truncatedTask = truncate(item.task.replace(/\n/g, " "), 50)
+			// Truncate display title to fit in picker
+			const truncatedTask = truncate(getTaskDisplayTitle(item).replace(/\n/g, " "), 50)
 
 			return (
 				<Box paddingLeft={2} flexDirection="row">
@@ -174,6 +181,7 @@ export function createHistoryTrigger(config: HistoryTriggerConfig): Autocomplete
 export function toHistoryResult(item: {
 	id: string
 	task: string
+	customTitle?: string
 	ts: number
 	totalCost?: number
 	workspace?: string
@@ -184,6 +192,7 @@ export function toHistoryResult(item: {
 		key: item.id, // Use task ID as the unique key
 		id: item.id,
 		task: item.task,
+		customTitle: item.customTitle,
 		ts: item.ts,
 		totalCost: item.totalCost,
 		workspace: item.workspace,

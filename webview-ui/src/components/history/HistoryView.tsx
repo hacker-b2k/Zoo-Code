@@ -52,6 +52,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 	const [isSelectionMode, setIsSelectionMode] = useState(false)
 	const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([])
 	const [showBatchDeleteDialog, setShowBatchDeleteDialog] = useState<boolean>(false)
+	const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null)
 
 	// Get subtask count for a task (recursive total)
 	const getSubtaskCount = useMemo(() => {
@@ -275,6 +276,9 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 								onToggleSelection={toggleTaskSelection}
 								onDelete={handleDelete}
 								className="m-2"
+								renamingTaskId={renamingTaskId}
+								onStartRename={setRenamingTaskId}
+								onFinishRename={() => setRenamingTaskId(null)}
 							/>
 						)}
 					/>
@@ -303,6 +307,9 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 								onToggleExpand={() => toggleExpand(group.parent.id)}
 								onToggleSubtaskExpand={toggleExpand}
 								className="m-2"
+								renamingTaskId={renamingTaskId}
+								onStartRename={setRenamingTaskId}
+								onFinishRename={() => setRenamingTaskId(null)}
 							/>
 						)}
 					/>

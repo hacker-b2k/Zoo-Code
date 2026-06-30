@@ -27,6 +27,12 @@ interface TaskGroupItemProps {
 	onToggleSubtaskExpand: (taskId: string) => void
 	/** Optional className for styling */
 	className?: string
+	/** Currently being renamed task id */
+	renamingTaskId?: string | null
+	/** Called when the rename button is clicked */
+	onStartRename?: (taskId: string) => void
+	/** Called when inline rename is submitted or cancelled */
+	onFinishRename?: () => void
 }
 
 /**
@@ -44,6 +50,9 @@ const TaskGroupItem = ({
 	onToggleExpand,
 	onToggleSubtaskExpand,
 	className,
+	renamingTaskId,
+	onStartRename,
+	onFinishRename,
 }: TaskGroupItemProps) => {
 	const { parent, subtasks, isExpanded } = group
 	const hasSubtasks = subtasks.length > 0
@@ -66,6 +75,9 @@ const TaskGroupItem = ({
 				onToggleSelection={onToggleSelection}
 				onDelete={onDelete}
 				hasSubtasks={hasSubtasks}
+				renamingTaskId={renamingTaskId}
+				onStartRename={onStartRename}
+				onFinishRename={onFinishRename}
 			/>
 
 			{/* Subtask collapsible row — shows total recursive count */}

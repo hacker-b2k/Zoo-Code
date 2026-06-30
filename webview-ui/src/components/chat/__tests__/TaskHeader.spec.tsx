@@ -38,7 +38,7 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 // Create a variable to hold the mock state
 const mockExtensionState: {
 	apiConfiguration: ProviderSettings
-	currentTaskItem: { id: string } | null
+	currentTaskItem: { id: string; task: string; customTitle?: string } | null
 	clineMessages: any[]
 } = {
 	apiConfiguration: {
@@ -46,7 +46,7 @@ const mockExtensionState: {
 		apiKey: "test-api-key",
 		apiModelId: "claude-3-opus-20240229",
 	} as ProviderSettings,
-	currentTaskItem: { id: "test-task-id" },
+	currentTaskItem: { id: "test-task-id", task: "Test task" },
 	clineMessages: [],
 }
 

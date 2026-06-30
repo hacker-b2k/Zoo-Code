@@ -4,6 +4,7 @@ import { ChevronUp, ChevronDown, HardDriveDownload, HardDriveUpload, FoldVertica
 import prettyBytes from "pretty-bytes"
 
 import type { ClineMessage } from "@roo-code/types"
+import { getTaskDisplayTitle } from "@roo-code/types"
 
 import { getModelMaxOutputTokens } from "@roo/api"
 
@@ -152,7 +153,9 @@ const TaskHeader = ({
 							{isTaskExpanded && <span className="font-bold">{t("chat:task.title")}</span>}
 							{!isTaskExpanded && (
 								<div className="flex items-center gap-2 whitespace-nowrap overflow-hidden text-ellipsis">
-									<Mention text={task.text} />
+									<Mention
+										text={currentTaskItem ? getTaskDisplayTitle(currentTaskItem) : task.text}
+									/>
 								</div>
 							)}
 						</div>
@@ -290,7 +293,7 @@ const TaskHeader = ({
 									WebkitLineClamp: "unset",
 									WebkitBoxOrient: "vertical",
 								}}>
-								<Mention text={task.text} />
+								<Mention text={currentTaskItem ? getTaskDisplayTitle(currentTaskItem) : task.text} />
 							</div>
 						</div>
 						{task.images && task.images.length > 0 && <Thumbnails images={task.images} />}

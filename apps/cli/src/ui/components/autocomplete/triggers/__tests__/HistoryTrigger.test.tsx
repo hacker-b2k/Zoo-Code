@@ -30,6 +30,16 @@ const mockHistoryItems: HistoryResult[] = [
 		status: "delegated",
 		workspace: "/projects/other-app",
 	},
+	{
+		key: "task-4",
+		id: "task-4",
+		task: "Fix authentication flow",
+		customTitle: "Auth Overhaul",
+		ts: Date.now() - 1000 * 60 * 60 * 4, // 4 hours ago
+		mode: "code",
+		status: "completed",
+		workspace: "/projects/my-app",
+	},
 ]
 
 describe("HistoryTrigger", () => {
@@ -75,12 +85,13 @@ describe("HistoryTrigger", () => {
 
 			const results = trigger.search("") as HistoryResult[]
 
-			// Should return all 3 items
-			expect(results.length).toBe(3)
+			// Should return all 4 items
+			expect(results.length).toBe(4)
 			// Should be sorted by timestamp (newest first)
 			expect(results[0]?.id).toBe("task-1") // 30 mins ago
 			expect(results[1]?.id).toBe("task-2") // 2 hours ago
-			expect(results[2]?.id).toBe("task-3") // 1 day ago
+			expect(results[2]?.id).toBe("task-4") // 4 hours ago
+			expect(results[3]?.id).toBe("task-3") // 1 day ago
 		})
 
 		it("should filter history items by fuzzy search on task", () => {
@@ -95,10 +106,11 @@ describe("HistoryTrigger", () => {
 		it("should handle partial matching", () => {
 			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
 
-			// Fuzzy search for "unit" should match "Add unit tests for the user service"
+			// Fuzzy search for "unit" matches task-2 via the shared getTaskSearchText resolver.
 			const results = trigger.search("unit") as HistoryResult[]
-			expect(results.length).toBe(1)
-			expect(results[0]?.id).toBe("task-2")
+			const ids = results.map((r) => r.id)
+			expect(ids).toContain("task-2")
+			expect(results.length).toBeGreaterThanOrEqual(1)
 		})
 
 		it("should return empty array for non-matching query", () => {
@@ -180,7 +192,7 @@ describe("HistoryTrigger", () => {
 		it("should render delegated status with correct indicator", () => {
 			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
 
-			const delegatedItem = mockHistoryItems[2]! // status: "delegated"
+			const delegatedItem = mockHistoryItems.find((i) => i.status === "delegated")!
 			const { lastFrame } = render(trigger.renderItem(delegatedItem, false) as React.ReactElement)
 
 			const output = lastFrame()
@@ -270,6 +282,62 @@ describe("HistoryTrigger", () => {
 			expect(result.workspace).toBeUndefined()
 			expect(result.mode).toBeUndefined()
 			expect(result.status).toBeUndefined()
+			expect(result.customTitle).toBeUndefined()
+		})
+
+		it("should preserve customTitle when converting", () => {
+			const item = {
+				id: "custom-task",
+				task: "Original task description",
+				customTitle: "My Custom Title",
+				ts: 1704067200000,
+			}
+
+			const result = toHistoryResult(item)
+
+			expect(result.customTitle).toBe("My Custom Title")
+			expect(result.task).toBe("Original task description")
+		})
+	})
+
+	describe("custom title search and display", () => {
+		it("should find tasks by customTitle in fuzzy search", () => {
+			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
+
+			// "Auth Overhaul" is the customTitle of task-4
+			const results = trigger.search("Auth Overhaul") as HistoryResult[]
+			const ids = results.map((r) => r.id)
+			expect(ids).toContain("task-4")
+		})
+
+		it("should find tasks by original task text even when customTitle is set", () => {
+			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
+
+			// "authentication" appears in task-4's original task text
+			const results = trigger.search("authentication flow") as HistoryResult[]
+			const ids = results.map((r) => r.id)
+			expect(ids).toContain("task-4")
+		})
+
+		it("should render display title (customTitle) for items with customTitle", () => {
+			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
+
+			const itemWithCustomTitle = mockHistoryItems.find((i) => i.id === "task-4")!
+			const { lastFrame } = render(trigger.renderItem(itemWithCustomTitle, false) as React.ReactElement)
+
+			const output = lastFrame()
+			// Should show customTitle "Auth Overhaul", not the original task text
+			expect(output).toContain("Auth Overhaul")
+		})
+
+		it("should render original task text for items without customTitle", () => {
+			const trigger = createHistoryTrigger({ getHistory: () => mockHistoryItems })
+
+			const itemWithoutCustomTitle = mockHistoryItems.find((i) => i.id === "task-1")!
+			const { lastFrame } = render(trigger.renderItem(itemWithoutCustomTitle, false) as React.ReactElement)
+
+			const output = lastFrame()
+			expect(output).toContain("login")
 		})
 	})
 })

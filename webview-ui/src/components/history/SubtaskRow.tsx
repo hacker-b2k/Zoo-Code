@@ -1,5 +1,8 @@
 import { memo } from "react"
 import { ArrowRight } from "lucide-react"
+
+import { getTaskDisplayTitle } from "@roo-code/types"
+
 import { vscode } from "@/utils/vscode"
 import { cn } from "@/lib/utils"
 import type { SubtaskTreeNode } from "./types"
@@ -49,8 +52,8 @@ const SubtaskRow = ({ node, depth, onToggleExpand, className }: SubtaskRowProps)
 						handleClick()
 					}
 				}}>
-				<StandardTooltip content={item.task} delay={600}>
-					<span className="text-sm line-clamp-1">{item.task}</span>
+				<StandardTooltip content={getTaskDisplayTitle(item)} delay={600}>
+					<span className="text-sm line-clamp-1">{getTaskDisplayTitle(item)}</span>
 				</StandardTooltip>
 				<ArrowRight className="size-3 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
 			</div>

@@ -94,4 +94,30 @@ describe("TaskItemFooter", () => {
 
 		expect(screen.queryByText("history:subtaskTag")).not.toBeInTheDocument()
 	})
+
+	describe("rename button", () => {
+		it("shows rename button when onStartRename is provided and variant is full", () => {
+			render(<TaskItemFooter item={mockItem} variant="full" onStartRename={vi.fn()} />)
+
+			expect(screen.getByTestId("rename-task-button")).toBeInTheDocument()
+		})
+
+		it("does not show rename button when onStartRename is not provided", () => {
+			render(<TaskItemFooter item={mockItem} variant="full" />)
+
+			expect(screen.queryByTestId("rename-task-button")).not.toBeInTheDocument()
+		})
+
+		it("does not show rename button in compact variant even with onStartRename", () => {
+			render(<TaskItemFooter item={mockItem} variant="compact" onStartRename={vi.fn()} />)
+
+			expect(screen.queryByTestId("rename-task-button")).not.toBeInTheDocument()
+		})
+
+		it("does not show rename button in selection mode", () => {
+			render(<TaskItemFooter item={mockItem} variant="full" isSelectionMode={true} onStartRename={vi.fn()} />)
+
+			expect(screen.queryByTestId("rename-task-button")).not.toBeInTheDocument()
+		})
+	})
 })
