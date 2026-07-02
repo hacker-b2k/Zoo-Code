@@ -1,5 +1,5 @@
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { vi, describe, it, expect, beforeEach } from "vitest"
+import { act, cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import React from "react"
 
@@ -333,13 +333,18 @@ describe("SettingsView - Change Detection Fix", () => {
 	})
 
 	beforeEach(() => {
-		vi.clearAllMocks()
+		vi.resetAllMocks()
 		queryClient = new QueryClient({
 			defaultOptions: {
 				queries: { retry: false },
 				mutations: { retry: false },
 			},
 		})
+	})
+
+	afterEach(() => {
+		cleanup()
+		queryClient.clear()
 	})
 
 	it("should not show unsaved changes when no changes are made", async () => {
@@ -372,29 +377,9 @@ describe("SettingsView - Change Detection Fix", () => {
 		expect(onDone).toHaveBeenCalled()
 	})
 
-	// These tests are passing for the basic case but failing due to vi.doMock limitations
-	// The core fix has been verified - when no actual changes are made, no unsaved changes dialog appears
-
-	it("verifies the fix: empty string should not be treated as a change", () => {
-		// This test verifies the core logic of our fix
-		// When a field is initialized from empty string to a value with isUserAction=false
-		// it should NOT trigger change detection
-
-		// Our fix in SettingsView.tsx lines 245-247:
-		// const isInitialSync = !isUserAction &&
-		//     (previousValue === undefined || previousValue === "" || previousValue === null) &&
-		//     value !== undefined && value !== "" && value !== null
-
-		// This logic correctly handles:
-		// - undefined -> value (initialization)
-		// - "" -> value (initialization from empty string)
-		// - null -> value (initialization from null)
-
-		expect(true).toBe(true) // Placeholder - the real test is the running system
-	})
-
 	it("preserves a DeepSeek provider edit after saving Baseten when the same import timestamp replays", async () => {
 		const onDone = vi.fn()
+		const rerenderOnDone = vi.fn()
 		let extensionState = createExtensionState({
 			settingsImportedAt: 123,
 			apiConfiguration: {
@@ -445,7 +430,7 @@ describe("SettingsView - Change Detection Fix", () => {
 
 		rerender(
 			<QueryClientProvider client={queryClient}>
-				<SettingsView onDone={onDone} />
+				<SettingsView onDone={rerenderOnDone} />
 			</QueryClientProvider>,
 		)
 
@@ -471,6 +456,7 @@ describe("SettingsView - Change Detection Fix", () => {
 
 	it("resets cached provider state when a new import timestamp arrives", async () => {
 		const onDone = vi.fn()
+		const rerenderOnDone = vi.fn()
 		let extensionState = createExtensionState({
 			settingsImportedAt: 100,
 			apiConfiguration: {
@@ -503,11 +489,13 @@ describe("SettingsView - Change Detection Fix", () => {
 			},
 		})
 
-		rerender(
-			<QueryClientProvider client={queryClient}>
-				<SettingsView onDone={onDone} />
-			</QueryClientProvider>,
-		)
+		await act(async () => {
+			rerender(
+				<QueryClientProvider client={queryClient}>
+					<SettingsView onDone={rerenderOnDone} />
+				</QueryClientProvider>,
+			)
+		})
 
 		await waitFor(() => {
 			expect(screen.getByTestId("provider-value")).toHaveTextContent("baseten")
