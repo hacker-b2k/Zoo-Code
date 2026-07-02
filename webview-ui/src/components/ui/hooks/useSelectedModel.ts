@@ -333,7 +333,7 @@ function getSelectedModel({
 				...openAiModelInfoSaneDefaults,
 				...baseInfo,
 				contextWindow: listedModel.maxInputTokens,
-				supportsImages: false, // VSCode LM API currently doesn't support images.
+				supportsImages: selector?.info?.supportsImages ?? false,
 			}
 			return { id, info }
 		}
