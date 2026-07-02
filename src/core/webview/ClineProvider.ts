@@ -100,7 +100,13 @@ import { Task } from "../task/Task"
 
 import { webviewMessageHandler } from "./webviewMessageHandler"
 import type { ClineMessage, TodoItem } from "@roo-code/types"
-import { readApiMessages, saveApiMessages, saveTaskMessages, TaskHistoryStore } from "../task-persistence"
+import {
+	readApiMessages,
+	saveApiMessages,
+	saveTaskMessages,
+	TaskHistoryStore,
+	assertValidTransition,
+} from "../task-persistence"
 import { readTaskMessages } from "../task-persistence/taskMessages"
 import { getNonce } from "./getNonce"
 import { getUri } from "./getUri"
@@ -538,10 +544,12 @@ export class ClineProvider
 						const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
 
 						if (parentHistory?.status === "delegated" && parentHistory?.awaitingChildId === childTaskId) {
+							assertValidTransition(parentHistory.status, "active")
 							await this.updateTaskHistory({
 								...parentHistory,
 								status: "active",
 								awaitingChildId: undefined,
+								delegatedToId: undefined,
 							})
 							const repairMsg =
 								`[ClineProvider#removeClineFromStack] Repaired parent ${parentTaskId} metadata: delegated → active (child ${childTaskId} removed). ` +
@@ -3290,10 +3298,12 @@ export class ClineProvider
 					const { historyItem: parentHistory } = await this.getTaskWithId(task.parentTaskId!)
 
 					if (parentHistory?.status === "delegated" && parentHistory?.awaitingChildId === task.taskId) {
+						assertValidTransition(parentHistory.status, "active")
 						await this.updateTaskHistory({
 							...parentHistory,
 							status: "active",
 							awaitingChildId: undefined,
+							delegatedToId: undefined,
 						})
 
 						this.log(
@@ -3606,6 +3616,7 @@ export class ClineProvider
 		//    Broadcast and cache invalidation happen outside the lock after it releases.
 		try {
 			await this.taskHistoryStore.atomicReadAndUpdate(parentTaskId, (historyItem) => {
+				assertValidTransition(historyItem.status, "delegated")
 				const childIds = Array.from(new Set([...(historyItem.childIds ?? []), child.taskId]))
 				return {
 					...historyItem,
@@ -3629,7 +3640,11 @@ export class ClineProvider
 				}`,
 			)
 			try {
-				await this.removeClineFromStack({ skipDelegationRepair: true })
+				// Only pop the stack if the child we just created is still on top.
+				// A concurrent delegation could have pushed another child since we created ours.
+				if (this.getCurrentTask()?.taskId === child.taskId) {
+					await this.removeClineFromStack({ skipDelegationRepair: true })
+				}
 			} catch (cleanupError) {
 				this.log(
 					`[delegateParentAndOpenChild] Failed to close paused child ${child.taskId} during rollback: ${
@@ -3851,8 +3866,14 @@ export class ClineProvider
 			await this.taskHistoryStore.atomicUpdatePair(
 				childTaskId,
 				parentTaskId,
-				(child) => ({ ...child, status: "completed" as const }),
+				(child) => {
+					assertValidTransition(child.status, "completed")
+					return { ...child, status: "completed" as const, completionResultSummary }
+				},
 				(parent) => {
+					if (parent.status !== "active") {
+						assertValidTransition(parent.status, "active")
+					}
 					const childIds = Array.from(new Set([...(parent.childIds ?? []), childTaskId]))
 					updatedHistory = {
 						...parent,
@@ -3860,6 +3881,7 @@ export class ClineProvider
 						completedByChildId: childTaskId,
 						completionResultSummary,
 						awaitingChildId: undefined,
+						delegatedToId: undefined,
 						childIds,
 					}
 					return updatedHistory
