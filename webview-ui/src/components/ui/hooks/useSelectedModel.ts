@@ -321,11 +321,21 @@ function getSelectedModel({
 					? [selector.vendor, selector.family, selector.version].filter(Boolean).join("/")
 					: vscodeLlmDefaultModelId)
 			const modelFamily = selector?.family ?? vscodeLlmDefaultModelId
-			const info = selector?.info ?? vscodeLlmModels[modelFamily as keyof typeof vscodeLlmModels]
-			// Always default supportsImages to true for VS Code LM models.
-			// The backend's getVsCodeLmImageSupport() defaults to true for unknown/custom models,
-			// so we must not let stale stored selector.info values override this.
-			return { id, info: { ...openAiModelInfoSaneDefaults, ...info, supportsImages: true } }
+			// On a family miss, fall back to the default model entry, not openAiModelInfoSaneDefaults
+			// (whose 128K contextWindow would diverge from the gate and skew the bar).
+			const listedModel =
+				vscodeLlmModels[modelFamily as keyof typeof vscodeLlmModels] ?? vscodeLlmModels[vscodeLlmDefaultModelId]
+			const baseInfo = selector?.info ?? listedModel
+			// Set contextWindow = maxInputTokens so the UI bar shares one source of truth with the gate,
+			// whose primary window is getCondenseContextWindow() (static-table maxInputTokens); this
+			// info.contextWindow is only the gate's fallback.
+			const info: ModelInfo = {
+				...openAiModelInfoSaneDefaults,
+				...baseInfo,
+				contextWindow: listedModel.maxInputTokens,
+				supportsImages: false, // VSCode LM API currently doesn't support images.
+			}
+			return { id, info }
 		}
 		case "sambanova": {
 			const id = apiConfiguration.apiModelId ?? defaultModelId
