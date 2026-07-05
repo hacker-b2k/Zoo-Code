@@ -1,6 +1,11 @@
 import React from "react"
 
-import { type ProviderSettings, openAiCodexDefaultModelId, openAiCodexModels } from "@roo-code/types"
+import {
+	type ProviderSettings,
+	type ResolvedModelCapabilities,
+	openAiCodexDefaultModelId,
+	openAiCodexModels,
+} from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Button } from "@src/components/ui"
@@ -12,6 +17,7 @@ import { OpenAICodexRateLimitDashboard } from "./OpenAICodexRateLimitDashboard"
 interface OpenAICodexProps {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	simplifySettings?: boolean
 	openAiCodexIsAuthenticated?: boolean
 }
@@ -19,6 +25,7 @@ interface OpenAICodexProps {
 export const OpenAICodex: React.FC<OpenAICodexProps> = ({
 	apiConfiguration,
 	setApiConfigurationField,
+	selectedModelCapabilities,
 	simplifySettings,
 	openAiCodexIsAuthenticated = false,
 }) => {
@@ -58,6 +65,7 @@ export const OpenAICodex: React.FC<OpenAICodexProps> = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={openAiCodexDefaultModelId}
 				models={openAiCodexModels}
 				modelIdKey="apiModelId"

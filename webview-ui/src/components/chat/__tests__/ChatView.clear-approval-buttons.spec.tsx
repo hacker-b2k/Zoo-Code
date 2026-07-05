@@ -138,16 +138,17 @@ const defaultProps: ChatViewProps = {
 	hideAnnouncement: () => {},
 }
 
-const queryClient = new QueryClient()
+const renderChatView = (props: Partial<ChatViewProps> = {}) => {
+	const queryClient = new QueryClient()
 
-const renderChatView = (props: Partial<ChatViewProps> = {}) =>
-	render(
+	return render(
 		<ExtensionStateContextProvider>
 			<QueryClientProvider client={queryClient}>
 				<ChatView {...defaultProps} {...props} />
 			</QueryClientProvider>
 		</ExtensionStateContextProvider>,
 	)
+}
 
 const commandAsk = (): ClineMessage[] => [
 	{ type: "say", say: "task", ts: 1, text: "Initial task" },

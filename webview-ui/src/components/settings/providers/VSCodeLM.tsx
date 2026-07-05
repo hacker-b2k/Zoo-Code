@@ -1,6 +1,12 @@
 import { useState, useCallback, useMemo } from "react"
 import { useEvent } from "react-use"
-import type { ProviderSettings, ExtensionMessage, ModelInfo, LanguageModelChatSelector } from "@roo-code/types"
+import type {
+	ProviderSettings,
+	ExtensionMessage,
+	ModelInfo,
+	LanguageModelChatSelector,
+	ResolvedModelCapabilities,
+} from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 
@@ -9,9 +15,10 @@ import { ModelPicker } from "../ModelPicker"
 type VSCodeLMProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
+	selectedModelCapabilities?: ResolvedModelCapabilities
 }
 
-export const VSCodeLM = ({ apiConfiguration, setApiConfigurationField }: VSCodeLMProps) => {
+export const VSCodeLM = ({ apiConfiguration, setApiConfigurationField, selectedModelCapabilities }: VSCodeLMProps) => {
 	const { t } = useAppTranslation()
 
 	const [vsCodeLmModels, setVsCodeLmModels] = useState<LanguageModelChatSelector[]>([])
@@ -81,6 +88,7 @@ export const VSCodeLM = ({ apiConfiguration, setApiConfigurationField }: VSCodeL
 				<ModelPicker
 					apiConfiguration={apiConfiguration}
 					setApiConfigurationField={setApiConfigurationField}
+					selectedModelCapabilities={selectedModelCapabilities}
 					defaultModelId=""
 					models={modelsRecord}
 					modelIdKey="vsCodeLmModelSelector"

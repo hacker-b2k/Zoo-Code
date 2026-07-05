@@ -95,8 +95,8 @@ export const ErrorRow = memo(
 		const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false)
 		const [showDetailsCopySuccess, setShowDetailsCopySuccess] = useState(false)
 		const { copyWithFeedback } = useCopyToClipboard()
-		const { version, apiConfiguration } = useExtensionState()
-		const { provider, id: modelId } = useSelectedModel(apiConfiguration)
+		const { version, apiConfiguration, selectedModelCapabilities } = useExtensionState()
+		const { provider, id: modelId } = useSelectedModel(apiConfiguration, selectedModelCapabilities)
 
 		const usesProxy = PROVIDERS.find((p) => p.value === provider)?.proxy ?? false
 

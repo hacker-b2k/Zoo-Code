@@ -6,6 +6,7 @@ import {
 	type OrganizationAllowList,
 	type RouterModels,
 	type ExtensionMessage,
+	type ResolvedModelCapabilities,
 	opencodeGoDefaultModelId,
 } from "@roo-code/types"
 
@@ -24,6 +25,7 @@ type OpenCodeGoProps = {
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -33,6 +35,7 @@ export const OpenCodeGo = ({
 	setApiConfigurationField,
 	routerModels,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: OpenCodeGoProps) => {
@@ -135,6 +138,7 @@ export const OpenCodeGo = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={opencodeGoDefaultModelId}
 				models={routerModels?.["opencode-go"] ?? {}}
 				modelIdKey="opencodeGoModelId"

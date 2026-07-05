@@ -5,6 +5,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	unboundDefaultModelId,
 } from "@roo-code/types"
 
@@ -19,6 +20,7 @@ type UnboundProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	refetchRouterModels: () => void
 	organizationAllowList: OrganizationAllowList
 	modelValidationError?: string
@@ -29,6 +31,7 @@ export const Unbound = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	routerModels,
+	selectedModelCapabilities,
 	organizationAllowList,
 	modelValidationError,
 	simplifySettings,
@@ -87,6 +90,7 @@ export const Unbound = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={unboundDefaultModelId}
 				models={routerModels?.unbound ?? {}}
 				modelIdKey="unboundModelId"

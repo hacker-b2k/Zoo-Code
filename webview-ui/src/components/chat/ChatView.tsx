@@ -98,6 +98,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		currentTaskTodos,
 		taskHistory,
 		apiConfiguration,
+		selectedModelCapabilities,
 		organizationAllowList,
 		mode,
 		setMode,
@@ -919,7 +920,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		[clineAsk, startNewTask, isStreaming, setDidClickCancel, clearApprovalButtons],
 	)
 
-	const { info: model } = useSelectedModel(apiConfiguration)
+	const { info: model } = useSelectedModel(apiConfiguration, selectedModelCapabilities)
 
 	const selectImages = useCallback(() => vscode.postMessage({ type: "selectImages" }), [])
 

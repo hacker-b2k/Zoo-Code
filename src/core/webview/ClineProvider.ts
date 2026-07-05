@@ -36,6 +36,7 @@ import {
 	type ToolUsage,
 	type ExtensionMessage,
 	type ExtensionState,
+	type ResolvedModelCapabilities,
 	type MarketplaceInstalledMetadata,
 	RooCodeEventName,
 	requestyDefaultModelId,
@@ -97,6 +98,7 @@ import { ContextProxy } from "../config/ContextProxy"
 import { ProviderSettingsManager } from "../config/ProviderSettingsManager"
 import { CustomModesManager } from "../config/CustomModesManager"
 import { Task } from "../task/Task"
+import { ModelCapabilityResolver } from "../model-capabilities"
 
 import { webviewMessageHandler } from "./webviewMessageHandler"
 import type { ClineMessage, TodoItem } from "@roo-code/types"
@@ -2240,6 +2242,35 @@ export class ClineProvider
 		}
 	}
 
+	private resolveSelectedModelCapabilities(
+		apiConfiguration: ProviderSettings,
+	): ResolvedModelCapabilities | undefined {
+		try {
+			const apiHandler = buildApiHandler(apiConfiguration)
+			const { id: modelId, info: modelInfo } = apiHandler.getModel()
+			const selectedModelCapabilities = new ModelCapabilityResolver().resolve({
+				settings: apiConfiguration,
+				model: modelInfo,
+				modelId,
+				condenseContextWindow: apiHandler.getCondenseContextWindow?.(),
+			})
+
+			if (vscode.workspace.getConfiguration(Package.name).get<boolean>("debug", false)) {
+				this.log(
+					`[ModelCapabilityResolver] provider=${selectedModelCapabilities.provider ?? "unknown"} model=${selectedModelCapabilities.modelId} contextWindow=${selectedModelCapabilities.contextWindow} source=${selectedModelCapabilities.contextWindowSource} condenseContextWindow=${selectedModelCapabilities.condenseContextWindow} condenseSource=${selectedModelCapabilities.condenseContextWindowSource} warnings=${selectedModelCapabilities.warnings.join(",") || "none"}`,
+				)
+			}
+
+			return selectedModelCapabilities
+		} catch (error) {
+			if (vscode.workspace.getConfiguration(Package.name).get<boolean>("debug", false)) {
+				this.log(`[ModelCapabilityResolver] failed to resolve selected model capabilities: ${String(error)}`)
+			}
+
+			return undefined
+		}
+	}
+
 	async getStateToPostToWebview(): Promise<ExtensionState> {
 		// Ensure the store is initialized before reading task history
 		await this.taskHistoryStore.initialized
@@ -2364,6 +2395,7 @@ export class ClineProvider
 		const mergedDeniedCommands = this.mergeDeniedCommands(deniedCommands)
 		const cwd = this.cwd
 		const currentTask = this.getCurrentTask()
+		const selectedModelCapabilities = this.resolveSelectedModelCapabilities(apiConfiguration)
 		let zooCodeState: {
 			zooCodeIsAuthenticated: boolean
 			zooCodeUserName: string | undefined
@@ -2399,6 +2431,7 @@ export class ClineProvider
 		return {
 			version: this.context.extension?.packageJSON?.version ?? "",
 			apiConfiguration,
+			selectedModelCapabilities,
 			customInstructions,
 			alwaysAllowReadOnly: alwaysAllowReadOnly ?? false,
 			alwaysAllowReadOnlyOutsideWorkspace: alwaysAllowReadOnlyOutsideWorkspace ?? false,

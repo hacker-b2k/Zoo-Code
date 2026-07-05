@@ -8,6 +8,7 @@ import type { Mock } from "vitest"
 import {
 	ProviderSettings,
 	ModelInfo,
+	type ResolvedModelCapabilities,
 	BEDROCK_1M_CONTEXT_MODEL_IDS,
 	litellmDefaultModelInfo,
 	openAiModelInfoSaneDefaults,
@@ -404,6 +405,84 @@ describe("useSelectedModel", () => {
 		})
 	})
 
+	describe("host-resolved model capabilities", () => {
+		beforeEach(() => {
+			mockUseRouterModels.mockReturnValue({
+				data: undefined,
+				isLoading: false,
+				isError: false,
+			} as any)
+
+			mockUseOpenRouterModelProviders.mockReturnValue({
+				data: undefined,
+				isLoading: false,
+				isError: false,
+			} as any)
+		})
+
+		const apiConfiguration: ProviderSettings = {
+			apiProvider: "anthropic",
+			apiModelId: "claude-3-5-sonnet-20241022",
+		}
+
+		const selectedModelCapabilities: ResolvedModelCapabilities = {
+			provider: "anthropic",
+			modelId: "claude-3-5-sonnet-20241022",
+			protocol: "anthropic",
+			modelInfo: {
+				maxTokens: 4096,
+				contextWindow: 123_456,
+				supportsImages: false,
+				supportsPromptCache: false,
+			},
+			contextWindow: 123_456,
+			contextWindowSource: "provider_adapter",
+			condenseContextWindow: 100_000,
+			condenseContextWindowSource: "provider_adapter",
+			warnings: [],
+		}
+
+		it("prefers host-resolved capabilities when provider and model match", () => {
+			const wrapper = createWrapper()
+			const { result } = renderHook(() => useSelectedModel(apiConfiguration, selectedModelCapabilities), {
+				wrapper,
+			})
+
+			expect(result.current.id).toBe("claude-3-5-sonnet-20241022")
+			expect(result.current.info?.contextWindow).toBe(123_456)
+			expect(result.current.info?.supportsImages).toBe(false)
+			expect(result.current.info?.supportsPromptCache).toBe(false)
+		})
+
+		it("ignores host-resolved capabilities when provider does not match", () => {
+			const wrapper = createWrapper()
+			const mismatchedCapabilities: ResolvedModelCapabilities = {
+				...selectedModelCapabilities,
+				provider: "bedrock",
+			}
+			const { result } = renderHook(() => useSelectedModel(apiConfiguration, mismatchedCapabilities), { wrapper })
+
+			expect(result.current.id).toBe("claude-3-5-sonnet-20241022")
+			expect(result.current.info?.contextWindow).toBe(200_000)
+			expect(result.current.info?.supportsImages).toBe(true)
+			expect(result.current.info?.supportsPromptCache).toBe(true)
+		})
+
+		it("ignores host-resolved capabilities when model does not match", () => {
+			const wrapper = createWrapper()
+			const mismatchedCapabilities: ResolvedModelCapabilities = {
+				...selectedModelCapabilities,
+				modelId: "claude-3-5-haiku-20241022",
+			}
+			const { result } = renderHook(() => useSelectedModel(apiConfiguration, mismatchedCapabilities), { wrapper })
+
+			expect(result.current.id).toBe("claude-3-5-sonnet-20241022")
+			expect(result.current.info?.contextWindow).toBe(200_000)
+			expect(result.current.info?.supportsImages).toBe(true)
+			expect(result.current.info?.supportsPromptCache).toBe(true)
+		})
+	})
+
 	describe("anthropic provider with 1M context", () => {
 		beforeEach(() => {
 			mockUseRouterModels.mockReturnValue({
@@ -517,7 +596,7 @@ describe("useSelectedModel", () => {
 			} as any)
 		})
 
-		it("should enable supportsPromptCache for custom-arn model", () => {
+		it("should not synthesize a hardcoded context window for custom-arn model", () => {
 			const apiConfiguration: ProviderSettings = {
 				apiProvider: "bedrock",
 				apiModelId: "custom-arn",
@@ -527,20 +606,7 @@ describe("useSelectedModel", () => {
 			const { result } = renderHook(() => useSelectedModel(apiConfiguration), { wrapper })
 
 			expect(result.current.id).toBe("custom-arn")
-			expect(result.current.info?.supportsPromptCache).toBe(true)
-		})
-
-		it("should enable supportsImages for custom-arn model", () => {
-			const apiConfiguration: ProviderSettings = {
-				apiProvider: "bedrock",
-				apiModelId: "custom-arn",
-			}
-
-			const wrapper = createWrapper()
-			const { result } = renderHook(() => useSelectedModel(apiConfiguration), { wrapper })
-
-			expect(result.current.id).toBe("custom-arn")
-			expect(result.current.info?.supportsImages).toBe(true)
+			expect(result.current.info).toBeUndefined()
 		})
 	})
 
@@ -807,7 +873,7 @@ describe("useSelectedModel", () => {
 			} as any)
 		})
 
-		it("should use openAiModelInfoSaneDefaults when no custom model info is provided", () => {
+		it("should use openAiModelInfoSaneDefaults (contextWindow=0 unknown) when no custom model info is provided", () => {
 			const apiConfiguration: ProviderSettings = {
 				apiProvider: "openai",
 				openAiModelId: "gpt-4o",
@@ -819,6 +885,8 @@ describe("useSelectedModel", () => {
 			expect(result.current.provider).toBe("openai")
 			expect(result.current.id).toBe("gpt-4o")
 			expect(result.current.info).toEqual(openAiModelInfoSaneDefaults)
+			// Context window is 0 (unknown), NOT a synthetic 128k default
+			expect(result.current.info?.contextWindow).toBe(0)
 		})
 
 		it("should return custom model info when provided", () => {

@@ -12,12 +12,13 @@ import { formatLargeNumber } from "@src/utils/format"
 import { cn } from "@src/lib/utils"
 import { StandardTooltip, Button, Table, TableBody, TableRow, TableCell, CircularProgress } from "@src/components/ui"
 import { useExtensionState } from "@src/context/ExtensionStateContext"
-import { useSelectedModel } from "@/components/ui/hooks/useSelectedModel"
 import { vscode } from "@src/utils/vscode"
 
 import Thumbnails from "../common/Thumbnails"
 
 import { TaskActions } from "./TaskActions"
+import { useSelectedModel } from "../ui/hooks/useSelectedModel"
+
 import { ContextWindowProgress } from "./ContextWindowProgress"
 import { Mention } from "./Mention"
 import { TodoListDisplay } from "./TodoListDisplay"
@@ -57,13 +58,20 @@ const TaskHeader = ({
 	todos,
 }: TaskHeaderProps) => {
 	const { t } = useTranslation()
-	const { apiConfiguration, currentTaskItem } = useExtensionState()
-	const { id: modelId, info: model } = useSelectedModel(apiConfiguration)
+	const { apiConfiguration, currentTaskItem, selectedModelCapabilities } = useExtensionState()
+	const selectedModel = useSelectedModel(apiConfiguration, selectedModelCapabilities)
+	const modelId = selectedModel.id
+	const model = selectedModel.info
+	const hasMatchingHostCapabilities =
+		selectedModelCapabilities?.provider === selectedModel.provider &&
+		selectedModelCapabilities.modelId === selectedModel.id
 	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
 
 	const textContainerRef = useRef<HTMLDivElement>(null)
 	const textRef = useRef<HTMLDivElement>(null)
-	const contextWindow = model?.contextWindow || 1
+	const contextWindow = hasMatchingHostCapabilities
+		? selectedModelCapabilities.condenseContextWindow
+		: (model?.contextWindow ?? 0)
 
 	// Calculate maxTokens (reserved for output) once for reuse in percentage and tooltip
 	const maxTokens = useMemo(

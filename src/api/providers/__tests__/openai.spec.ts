@@ -9,10 +9,10 @@ import { Package } from "../../../shared/package"
 import axios from "axios"
 
 vitest.mock("../utils/timeout-config", () => ({
-	getApiRequestTimeout: vitest.fn().mockReturnValue(300_000),
+	getApiRequestTimeout: vitest.fn().mockReturnValue(600_000),
 }))
 
-const MOCK_TIMEOUT_MS = 300_000
+const MOCK_TIMEOUT_MS = 600_000
 
 const mockCreate = vitest.fn()
 
@@ -113,6 +113,58 @@ describe("OpenAiHandler", () => {
 			expect(handlerWithCustomUrl).toBeInstanceOf(OpenAiHandler)
 		})
 
+		it.each([
+			["root URL", "https://custom.openai.com", "https://custom.openai.com/v1"],
+			["root URL with slash", "https://custom.openai.com/", "https://custom.openai.com/v1"],
+			["provider root path", "https://custom.openai.com/openai", "https://custom.openai.com/openai/v1"],
+			[
+				"nested provider root path",
+				"https://custom.openai.com/api/openai",
+				"https://custom.openai.com/api/openai/v1",
+			],
+			["existing version path", "https://custom.openai.com/v1", "https://custom.openai.com/v1"],
+			["operation endpoint", "  https://custom.openai.com/v1/chat/completions  ", "https://custom.openai.com/v1"],
+			[
+				"operation endpoint without version",
+				"https://custom.openai.com/chat/completions",
+				"https://custom.openai.com",
+			],
+			[
+				"nested operation endpoint without version",
+				"https://custom.openai.com/openai/chat/completions?ignored=true#hash",
+				"https://custom.openai.com/openai",
+			],
+		])("should normalize OpenAI-compatible %s to a base URL", (_label, inputBaseUrl, expectedBaseUrl) => {
+			vi.mocked(OpenAI).mockClear()
+
+			new OpenAiHandler({
+				...mockOptions,
+				openAiBaseUrl: inputBaseUrl,
+			})
+
+			expect(vi.mocked(OpenAI)).toHaveBeenCalledWith(
+				expect.objectContaining({
+					baseURL: expectedBaseUrl,
+				}),
+			)
+		})
+
+		it("should preserve Azure AI Inference handling for operation endpoint URLs", () => {
+			vi.mocked(OpenAI).mockClear()
+
+			new OpenAiHandler({
+				...mockOptions,
+				openAiBaseUrl: "https://custom.services.ai.azure.com/models/chat/completions",
+			})
+
+			expect(vi.mocked(OpenAI)).toHaveBeenCalledWith(
+				expect.objectContaining({
+					baseURL: "https://custom.services.ai.azure.com",
+					defaultQuery: { "api-version": "2024-05-01-preview" },
+				}),
+			)
+		})
+
 		it("should set default headers correctly", () => {
 			// Check that the OpenAI constructor was called with correct parameters
 			expect(vi.mocked(OpenAI)).toHaveBeenCalledWith({
@@ -120,8 +172,8 @@ describe("OpenAiHandler", () => {
 				apiKey: expect.any(String),
 				defaultHeaders: {
 					"HTTP-Referer": "https://github.com/Zoo-Code-Org/Zoo-Code",
-					"X-Title": "Zoo Code",
-					"User-Agent": `ZooCode/${Package.version}`,
+					"X-Title": "Roo Code",
+					"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
 				},
 				timeout: MOCK_TIMEOUT_MS,
 			})
@@ -225,6 +277,49 @@ describe("OpenAiHandler", () => {
 			const textChunks = chunks.filter((chunk) => chunk.type === "text")
 			expect(textChunks).toHaveLength(1)
 			expect(textChunks[0].text).toBe("Test response")
+		})
+
+		it("uses non-streaming fallback when streaming yields no assistant content", async () => {
+			mockCreate.mockImplementationOnce(async () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield {
+						choices: [{ delta: { reasoning_content: "thinking only" }, index: 0 }],
+						usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+					}
+				},
+			}))
+			mockCreate.mockResolvedValueOnce({
+				choices: [
+					{ message: { role: "assistant", content: "fallback answer" }, finish_reason: "stop", index: 0 },
+				],
+				usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+			})
+
+			const chunks: any[] = []
+			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
+				chunks.push(chunk)
+			}
+
+			expect(mockCreate).toHaveBeenCalledTimes(2)
+			expect(mockCreate).toHaveBeenNthCalledWith(2, expect.objectContaining({ stream: false }))
+			expect(chunks).toContainEqual({ type: "reasoning", text: "thinking only" })
+			expect(chunks).toContainEqual({ type: "text", text: "fallback answer" })
+		})
+
+		it("accepts OpenAI-compatible output_text deltas as assistant text", async () => {
+			mockCreate.mockImplementationOnce(async () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield { choices: [{ delta: { output_text: "proxy text" }, index: 0 }] }
+				},
+			}))
+
+			const chunks: any[] = []
+			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
+				chunks.push(chunk)
+			}
+
+			expect(mockCreate).toHaveBeenCalledTimes(1)
+			expect(chunks).toContainEqual({ type: "text", text: "proxy text" })
 		})
 
 		it("streams reasoning chunks from delta.reasoning_content", async () => {
@@ -876,11 +971,11 @@ describe("OpenAiHandler", () => {
 	})
 
 	describe("getModel", () => {
-		it("should return model info with sane defaults", () => {
+		it("should return model info with sane defaults (contextWindow unknown = 0)", () => {
 			const model = handler.getModel()
 			expect(model.id).toBe(mockOptions.openAiModelId)
 			expect(model.info).toBeDefined()
-			expect(model.info.contextWindow).toBe(128_000)
+			expect(model.info.contextWindow).toBe(0)
 			expect(model.info.supportsImages).toBe(true)
 		})
 
@@ -1053,6 +1148,27 @@ describe("OpenAiHandler", () => {
 				}),
 				{},
 			)
+
+			const mockCalls = mockCreate.mock.calls
+			const lastCall = mockCalls[mockCalls.length - 1]
+			expect(lastCall[0]).not.toHaveProperty("stream_options")
+		})
+
+		it("should preserve Grok xAI handling when given a chat completions endpoint URL", async () => {
+			const grokHandler = new OpenAiHandler({
+				...grokOptions,
+				openAiBaseUrl: "https://api.x.ai/v1/chat/completions",
+			})
+			const systemPrompt = "You are a helpful assistant."
+			const messages: Anthropic.Messages.MessageParam[] = [
+				{
+					role: "user",
+					content: "Hello!",
+				},
+			]
+
+			const stream = grokHandler.createMessage(systemPrompt, messages)
+			await stream.next()
 
 			const mockCalls = mockCreate.mock.calls
 			const lastCall = mockCalls[mockCalls.length - 1]
@@ -1478,6 +1594,62 @@ describe("getOpenAiModels", () => {
 
 		expect(axios.get).toHaveBeenCalledWith("https://api.openai.com/v1/models", expect.any(Object))
 		expect(result).toEqual(["gpt-4", "gpt-3.5-turbo"])
+	})
+
+	it.each([
+		["root URL", "https://api.example.com", "https://api.example.com/v1/models"],
+		["root URL with slash", "https://api.example.com/", "https://api.example.com/v1/models"],
+		["provider root path", "https://api.example.com/openai", "https://api.example.com/openai/v1/models"],
+		[
+			"nested provider root path",
+			"https://api.example.com/api/openai",
+			"https://api.example.com/api/openai/v1/models",
+		],
+		["existing version path", "https://api.example.com/v1", "https://api.example.com/v1/models"],
+		[
+			"versioned chat completions endpoint",
+			"https://api.example.com/v1/chat/completions",
+			"https://api.example.com/v1/models",
+		],
+		[
+			"unversioned chat completions endpoint",
+			"https://api.example.com/chat/completions",
+			"https://api.example.com/models",
+		],
+		[
+			"nested unversioned chat completions endpoint with query and hash",
+			"https://api.example.com/openai/chat/completions?ignored=true#hash",
+			"https://api.example.com/openai/models",
+		],
+	])(
+		"should normalize OpenAI-compatible %s when fetching models",
+		async (_label, inputBaseUrl, expectedModelsUrl) => {
+			const mockResponse = {
+				data: {
+					data: [{ id: "model-1" }, { id: "model-2" }],
+				},
+			}
+			vi.mocked(axios.get).mockResolvedValueOnce(mockResponse)
+
+			const result = await getOpenAiModels(inputBaseUrl, "test-key")
+
+			expect(axios.get).toHaveBeenCalledWith(expectedModelsUrl, expect.any(Object))
+			expect(result).toEqual(["model-1", "model-2"])
+		},
+	)
+
+	it("should normalize Azure AI inference endpoint URLs when fetching models", async () => {
+		const mockResponse = {
+			data: {
+				data: [{ id: "deepseek-v3" }],
+			},
+		}
+		vi.mocked(axios.get).mockResolvedValueOnce(mockResponse)
+
+		const result = await getOpenAiModels("https://custom.services.ai.azure.com/models/chat/completions", "test-key")
+
+		expect(axios.get).toHaveBeenCalledWith("https://custom.services.ai.azure.com/models", expect.any(Object))
+		expect(result).toEqual(["deepseek-v3"])
 	})
 
 	it("should handle baseUrl with trailing spaces", async () => {

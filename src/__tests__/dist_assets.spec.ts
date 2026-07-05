@@ -5,7 +5,8 @@ import * as path from "path"
 import * as yaml from "yaml"
 
 describe("dist assets", () => {
-	const distPath = path.join(__dirname, "../dist")
+	const extensionRootPath = path.join(__dirname, "..")
+	const distPath = path.join(extensionRootPath, "dist")
 	const marketplaceAssetsPath = path.join(distPath, "assets/marketplace")
 
 	describe("tiktoken", () => {
@@ -69,6 +70,37 @@ describe("dist assets", () => {
 			const parsed = yaml.parse(fs.readFileSync(assetPath, "utf-8"))
 			expect(Array.isArray(parsed?.items)).toBe(true)
 			expect(parsed.items.length).toBeGreaterThan(1)
+		})
+	})
+
+	describe("activity bar icon", () => {
+		const activityBarIconPath = "assets/icons/icon.svg"
+
+		it("should use the packaged SVG icon for the Activity Bar view container", () => {
+			const packageJson = JSON.parse(fs.readFileSync(path.join(extensionRootPath, "package.json"), "utf-8"))
+			const activityBarContainers = packageJson.contributes?.viewsContainers?.activitybar
+
+			expect(activityBarContainers).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: "zoo-code-ActivityBar",
+						icon: activityBarIconPath,
+					}),
+				]),
+			)
+			expect(fs.existsSync(path.join(extensionRootPath, activityBarIconPath))).toBe(true)
+		})
+
+		it("should keep the upstream Activity Bar SVG so VS Code can render the icon mask", () => {
+			const iconStats = fs.statSync(path.join(extensionRootPath, activityBarIconPath))
+
+			expect(iconStats.size).toBe(285_674)
+		})
+
+		it("should include Activity Bar icon assets in the packaged VSIX", () => {
+			const vscodeIgnore = fs.readFileSync(path.join(extensionRootPath, ".vscodeignore"), "utf-8")
+
+			expect(vscodeIgnore).toContain("!assets/icons/**")
 		})
 	})
 })

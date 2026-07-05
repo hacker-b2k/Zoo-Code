@@ -114,7 +114,7 @@ const ApiOptions = ({
 	setErrorMessage,
 }: ApiOptionsProps) => {
 	const { t } = useAppTranslation()
-	const { organizationAllowList, openAiCodexIsAuthenticated } = useExtensionState()
+	const { organizationAllowList, openAiCodexIsAuthenticated, selectedModelCapabilities } = useExtensionState()
 
 	const [customHeaders, setCustomHeaders] = useState<[string, string][]>(() => {
 		const headers = apiConfiguration?.openAiHeaders || {}
@@ -164,7 +164,7 @@ const ApiOptions = ({
 		provider: selectedProvider,
 		id: selectedModelId,
 		info: selectedModelInfo,
-	} = useSelectedModel(apiConfiguration)
+	} = useSelectedModel(apiConfiguration, selectedModelCapabilities)
 	const activeSelectedProvider: ProviderName | undefined = isRetiredProvider(selectedProvider)
 		? undefined
 		: selectedProvider
@@ -435,6 +435,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
+							selectedModelCapabilities={selectedModelCapabilities}
 							selectedModelId={selectedModelId}
 							uriScheme={uriScheme}
 							simplifySettings={fromWelcomeView}
@@ -449,6 +450,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
+							selectedModelCapabilities={selectedModelCapabilities}
 							refetchRouterModels={refetchRouterModels}
 							organizationAllowList={organizationAllowList}
 							modelValidationError={modelValidationError}
@@ -461,6 +463,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
+							selectedModelCapabilities={selectedModelCapabilities}
 							refetchRouterModels={refetchRouterModels}
 							organizationAllowList={organizationAllowList}
 							modelValidationError={modelValidationError}
@@ -480,6 +483,7 @@ const ApiOptions = ({
 						<OpenAICodex
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
+							selectedModelCapabilities={selectedModelCapabilities}
 							simplifySettings={fromWelcomeView}
 							openAiCodexIsAuthenticated={openAiCodexIsAuthenticated}
 						/>
@@ -538,6 +542,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -547,6 +552,7 @@ const ApiOptions = ({
 						<LMStudio
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
+							selectedModelCapabilities={selectedModelCapabilities}
 						/>
 					)}
 
@@ -588,6 +594,7 @@ const ApiOptions = ({
 						<VSCodeLM
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
+							selectedModelCapabilities={selectedModelCapabilities}
 						/>
 					)}
 
@@ -595,6 +602,7 @@ const ApiOptions = ({
 						<Ollama
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
+							selectedModelCapabilities={selectedModelCapabilities}
 						/>
 					)}
 
@@ -607,6 +615,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -629,6 +638,7 @@ const ApiOptions = ({
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -640,6 +650,7 @@ const ApiOptions = ({
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -651,6 +662,7 @@ const ApiOptions = ({
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -668,6 +680,7 @@ const ApiOptions = ({
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
 							modelValidationError={modelValidationError}
 							simplifySettings={fromWelcomeView}
 						/>
@@ -679,6 +692,7 @@ const ApiOptions = ({
 							<ModelPicker
 								apiConfiguration={apiConfiguration}
 								setApiConfigurationField={setApiConfigurationField}
+								selectedModelCapabilities={selectedModelCapabilities}
 								defaultModelId={getDefaultModelIdForProvider(activeSelectedProvider, apiConfiguration)}
 								models={getStaticModelsForProvider(
 									activeSelectedProvider,

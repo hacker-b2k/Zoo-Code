@@ -4,7 +4,7 @@ import { Trans } from "react-i18next"
 import { Checkbox } from "vscrui"
 import { VSCodeLink, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 
-import type { ProviderSettings, ExtensionMessage, ModelRecord } from "@roo-code/types"
+import type { ProviderSettings, ExtensionMessage, ModelRecord, ResolvedModelCapabilities } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { requestLmStudioModels } from "@src/components/ui/hooks/useLmStudioModels"
@@ -16,9 +16,10 @@ import { ModelPicker } from "../ModelPicker"
 type LMStudioProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
+	selectedModelCapabilities?: ResolvedModelCapabilities
 }
 
-export const LMStudio = ({ apiConfiguration, setApiConfigurationField }: LMStudioProps) => {
+export const LMStudio = ({ apiConfiguration, setApiConfigurationField, selectedModelCapabilities }: LMStudioProps) => {
 	const { t } = useAppTranslation()
 
 	const [lmStudioModels, setLmStudioModels] = useState<ModelRecord>({})
@@ -116,6 +117,7 @@ export const LMStudio = ({ apiConfiguration, setApiConfigurationField }: LMStudi
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId=""
 				models={lmStudioModels}
 				modelIdKey="lmStudioModelId"

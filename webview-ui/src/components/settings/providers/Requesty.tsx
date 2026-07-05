@@ -5,6 +5,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	requestyDefaultModelId,
 } from "@roo-code/types"
 
@@ -22,6 +23,7 @@ type RequestyProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	refetchRouterModels: () => void
 	organizationAllowList: OrganizationAllowList
 	modelValidationError?: string
@@ -33,6 +35,7 @@ export const Requesty = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	routerModels,
+	selectedModelCapabilities,
 	organizationAllowList,
 	modelValidationError,
 	uriScheme,
@@ -139,6 +142,7 @@ export const Requesty = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={requestyDefaultModelId}
 				models={routerModels?.requesty ?? {}}
 				modelIdKey="requestyModelId"

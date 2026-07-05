@@ -6,6 +6,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	openRouterDefaultModelId,
 } from "@roo-code/types"
 
@@ -22,6 +23,7 @@ type OpenRouterProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	selectedModelId: string
 	uriScheme: string | undefined
 	simplifySettings?: boolean
@@ -33,6 +35,7 @@ export const OpenRouter = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	routerModels,
+	selectedModelCapabilities,
 	uriScheme,
 	simplifySettings,
 	organizationAllowList,
@@ -106,6 +109,7 @@ export const OpenRouter = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={openRouterDefaultModelId}
 				models={routerModels?.openrouter ?? {}}
 				modelIdKey="openRouterModelId"

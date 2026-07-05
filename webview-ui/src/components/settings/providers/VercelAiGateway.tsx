@@ -5,6 +5,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	vercelAiGatewayDefaultModelId,
 } from "@roo-code/types"
 
@@ -19,6 +20,7 @@ type VercelAiGatewayProps = {
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -28,6 +30,7 @@ export const VercelAiGateway = ({
 	setApiConfigurationField,
 	routerModels,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: VercelAiGatewayProps) => {
@@ -68,6 +71,7 @@ export const VercelAiGateway = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={vercelAiGatewayDefaultModelId}
 				models={routerModels?.["vercel-ai-gateway"] ?? {}}
 				modelIdKey="vercelAiGatewayModelId"

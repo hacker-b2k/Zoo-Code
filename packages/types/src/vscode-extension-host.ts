@@ -13,6 +13,7 @@ import type { SerializedCustomToolDefinition } from "./custom-tool.js"
 import type { GitCommit } from "./git.js"
 import type { McpServer } from "./mcp.js"
 import type { ModelInfo, ModelRecord, RouterModels } from "./model.js"
+import type { ResolvedModelCapabilities } from "./model-capabilities.js"
 import type { OpenAiCodexRateLimitInfo } from "./providers/openai-codex-rate-limits.js"
 import type { SkillMetadata } from "./skills.js"
 import type { RuleMetadata } from "./rules.js"
@@ -332,6 +333,7 @@ export type ExtensionState = Pick<
 	currentTaskItem?: HistoryItem
 	currentTaskTodos?: TodoItem[] // Initial todos for the current task
 	apiConfiguration: ProviderSettings
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	uriScheme?: string
 	shouldShowAnnouncement: boolean
 

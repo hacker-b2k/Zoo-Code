@@ -6,6 +6,9 @@
 			"dependsOn": ["^build", "@roo-code/vscode-webview#build"],
 			"outputs": ["dist/**"]
 		},
+		"test": {
+			"dependsOn": ["@roo-code/vscode-webview#test"]
+		},
 		"vsix": {
 			"dependsOn": ["bundle"],
 			"inputs": ["dist/**"],

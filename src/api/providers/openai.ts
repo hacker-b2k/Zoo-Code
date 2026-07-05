@@ -11,6 +11,7 @@ import {
 } from "@roo-code/types"
 
 import type { ApiHandlerOptions } from "../../shared/api"
+import { Package } from "../../shared/package"
 
 import { TagMatcher } from "../../utils/tag-matcher"
 
@@ -24,6 +25,7 @@ import { BaseProvider } from "./base-provider"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 import { handleOpenAIError } from "./utils/openai-error-handler"
 import { extractReasoningFromDelta } from "./utils/extract-reasoning"
+import { analyzeOpenAiCompatibleBaseUrl, getOpenAiCompatibleModelsUrl } from "./utils/openai-base-url"
 
 // TODO: Rename this to OpenAICompatibleHandler. Also, I think the
 // `OpenAINativeHandler` can subclass from this, since it's obviously
@@ -37,14 +39,16 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		super()
 		this.options = options
 
-		const baseURL = this.options.openAiBaseUrl || "https://api.openai.com/v1"
+		const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
+		const baseURL = analyzedBaseUrl.baseUrl || this.options.openAiBaseUrl || "https://api.openai.com/v1"
 		const apiKey = this.options.openAiApiKey ?? "not-provided"
-		const isAzureAiInference = this._isAzureAiInference(this.options.openAiBaseUrl)
-		const urlHost = this._getUrlHost(this.options.openAiBaseUrl)
-		const isAzureOpenAi = urlHost === "azure.com" || urlHost.endsWith(".azure.com") || options.openAiUseAzure
+		const isAzureAiInference = analyzedBaseUrl.isAzureAiInference
+		const isAzureOpenAi = analyzedBaseUrl.isAzureOpenAi || options.openAiUseAzure
 
 		const headers = {
 			...DEFAULT_HEADERS,
+			"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
+			"X-Title": "Roo Code",
 			...(this.options.openAiHeaders || {}),
 		}
 
@@ -194,26 +198,109 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 			let lastUsage
 			const activeToolCallIds = new Set<string>()
+			let yieldedAssistantContent = false
+			let streamedReasoningText = ""
+			let streamFailure: any
 
-			for await (const chunk of stream) {
-				const delta = chunk.choices?.[0]?.delta ?? {}
-				const finishReason = chunk.choices?.[0]?.finish_reason
+			try {
+				for await (const chunk of stream) {
+					const delta = chunk.choices?.[0]?.delta ?? {}
+					const finishReason = chunk.choices?.[0]?.finish_reason
+					const text = extractOpenAiText(delta)
 
-				if (delta.content) {
-					for (const chunk of matcher.update(delta.content)) {
-						yield chunk
+					if (text) {
+						yieldedAssistantContent = true
+						for (const chunk of matcher.update(text)) {
+							yield chunk
+						}
+					}
+
+					const reasoningText = extractReasoningFromDelta(delta)
+					if (reasoningText) {
+						streamedReasoningText += reasoningText
+						yield { type: "reasoning", text: reasoningText }
+					}
+
+					yield* this.processToolCalls(delta, finishReason, activeToolCallIds)
+					if (delta.tool_calls?.length) {
+						yieldedAssistantContent = true
+					}
+
+					if (chunk.usage) {
+						lastUsage = chunk.usage
 					}
 				}
-
-				const reasoningText = extractReasoningFromDelta(delta)
-				if (reasoningText) {
-					yield { type: "reasoning", text: reasoningText }
+			} catch (streamError: any) {
+				if (yieldedAssistantContent) {
+					throw handleOpenAIError(streamError, this.providerName)
 				}
+				streamFailure = streamError
+			}
 
-				yield* this.processToolCalls(delta, finishReason, activeToolCallIds)
+			// If streaming completed but yielded no assistant text/tool content, the proxy may
+			// be non-standard or reasoning-only. Try non-streaming before surfacing an error.
+			if (!yieldedAssistantContent) {
+				try {
+					const nonStreamOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+						...requestOptions,
+						stream: false,
+					}
+					delete (nonStreamOptions as any).stream_options
 
-				if (chunk.usage) {
-					lastUsage = chunk.usage
+					const response = await this.client.chat.completions.create(nonStreamOptions)
+					const message = response.choices?.[0]?.message
+					const content = extractOpenAiText(message) || streamedReasoningText.trim()
+					let yieldedFallbackContent = false
+
+					if (message?.tool_calls) {
+						for (const toolCall of message.tool_calls) {
+							if (toolCall.type === "function") {
+								yieldedFallbackContent = true
+								yield {
+									type: "tool_call",
+									id: toolCall.id,
+									name: toolCall.function.name,
+									arguments: toolCall.function.arguments,
+								}
+							}
+						}
+					}
+
+					if (content) {
+						yieldedFallbackContent = true
+						for (const chunk of matcher.update(content)) {
+							yield chunk
+						}
+						for (const chunk of matcher.final()) {
+							yield chunk
+						}
+					}
+
+					if (response.usage) {
+						lastUsage = response.usage
+					}
+
+					if (yieldedFallbackContent) {
+						if (lastUsage) {
+							yield this.processUsageMetrics(lastUsage, modelInfo)
+						}
+						return
+					}
+
+					const streamErrorMessage = streamFailure?.message ? ` Stream error: ${streamFailure.message}` : ""
+					throw new Error(
+						`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
+							`The model "${modelId}" may not be available on this endpoint, ` +
+							`or the server may require different authentication/client headers.` +
+							streamErrorMessage +
+							` Response: ${JSON.stringify(message ?? "empty")}`,
+					)
+				} catch (fallbackError: any) {
+					// If the non-streaming fallback also fails, report the combined error
+					if (fallbackError.message?.includes("API at")) {
+						throw fallbackError
+					}
+					throw handleOpenAIError(fallbackError, this.providerName)
 				}
 			}
 
@@ -250,10 +337,12 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			}
 
 			const message = response.choices?.[0]?.message
+			let yieldedContent = false
 
 			if (message?.tool_calls) {
 				for (const toolCall of message.tool_calls) {
 					if (toolCall.type === "function") {
+						yieldedContent = true
 						yield {
 							type: "tool_call",
 							id: toolCall.id,
@@ -264,9 +353,20 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				}
 			}
 
-			yield {
-				type: "text",
-				text: message?.content || "",
+			const content = extractOpenAiText(message)
+			if (content) {
+				yieldedContent = true
+				yield {
+					type: "text",
+					text: content,
+				}
+			}
+
+			if (!yieldedContent) {
+				throw new Error(
+					`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
+						`Response: ${JSON.stringify(message ?? "empty")}`,
+				)
 			}
 
 			yield this.processUsageMetrics(response.usage, modelInfo)
@@ -501,21 +601,15 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 	}
 
 	protected _getUrlHost(baseUrl?: string): string {
-		try {
-			return new URL(baseUrl ?? "").host
-		} catch (error) {
-			return ""
-		}
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).host
 	}
 
 	private _isGrokXAI(baseUrl?: string): boolean {
-		const urlHost = this._getUrlHost(baseUrl)
-		return urlHost.includes("x.ai")
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isGrokXAI
 	}
 
 	protected _isAzureAiInference(baseUrl?: string): boolean {
-		const urlHost = this._getUrlHost(baseUrl)
-		return urlHost.endsWith(".services.ai.azure.com")
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isAzureAiInference
 	}
 
 	/**
@@ -538,22 +632,68 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 	}
 }
 
+function extractOpenAiText(message: any): string {
+	const values = [message?.content, message?.output_text, message?.text, message?.refusal]
+
+	for (const value of values) {
+		const text = normalizeOpenAiText(value)
+		if (text) {
+			return text
+		}
+	}
+
+	return ""
+}
+
+function normalizeOpenAiText(value: unknown): string {
+	if (typeof value === "string") {
+		return value.trim() ? value : ""
+	}
+
+	if (!Array.isArray(value)) {
+		return ""
+	}
+
+	return value
+		.map((part) => {
+			if (typeof part === "string") {
+				return part
+			}
+			if (!part || typeof part !== "object") {
+				return ""
+			}
+
+			const objectPart = part as Record<string, unknown>
+			if (typeof objectPart.text === "string") {
+				return objectPart.text
+			}
+			if (typeof objectPart.content === "string") {
+				return objectPart.content
+			}
+			if (typeof objectPart.refusal === "string") {
+				return objectPart.refusal
+			}
+			return ""
+		})
+		.join("")
+}
+
 export async function getOpenAiModels(baseUrl?: string, apiKey?: string, openAiHeaders?: Record<string, string>) {
 	try {
 		if (!baseUrl) {
 			return []
 		}
 
-		// Trim whitespace from baseUrl to handle cases where users accidentally include spaces
-		const trimmedBaseUrl = baseUrl.trim()
-
-		if (!URL.canParse(trimmedBaseUrl)) {
+		const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(baseUrl)
+		if (!analyzedBaseUrl.isValid || !analyzedBaseUrl.baseUrl) {
 			return []
 		}
 
 		const config: Record<string, any> = {}
 		const headers: Record<string, string> = {
 			...DEFAULT_HEADERS,
+			"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
+			"X-Title": "Roo Code",
 			...(openAiHeaders || {}),
 		}
 
@@ -565,7 +705,7 @@ export async function getOpenAiModels(baseUrl?: string, apiKey?: string, openAiH
 			config["headers"] = headers
 		}
 
-		const response = await axios.get(`${trimmedBaseUrl}/models`, config)
+		const response = await axios.get(getOpenAiCompatibleModelsUrl(analyzedBaseUrl.baseUrl), config)
 		const modelsArray = response.data?.data?.map((model: any) => model.id) || []
 		return [...new Set<string>(modelsArray)]
 	} catch (error) {

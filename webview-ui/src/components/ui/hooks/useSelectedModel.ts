@@ -4,6 +4,7 @@ import {
 	type ModelInfo,
 	type ModelRecord,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	anthropicModels,
 	bedrockModels,
 	deepSeekModels,
@@ -52,7 +53,10 @@ function getValidatedModelId(
 	return configuredId && availableModels?.[configuredId] ? configuredId : defaultModelId
 }
 
-export const useSelectedModel = (apiConfiguration?: ProviderSettings) => {
+export const useSelectedModel = (
+	apiConfiguration?: ProviderSettings,
+	selectedModelCapabilities?: ResolvedModelCapabilities,
+) => {
 	const provider = apiConfiguration?.apiProvider || "openrouter"
 	const activeProvider: ProviderName | undefined = isRetiredProvider(provider) ? undefined : provider
 	const dynamicProvider = activeProvider && isDynamicProvider(activeProvider) ? activeProvider : undefined
@@ -102,11 +106,12 @@ export const useSelectedModel = (apiConfiguration?: ProviderSettings) => {
 					ollamaModels: (ollamaModels.data || undefined) as ModelRecord | undefined,
 				})
 			: { id: getProviderDefaultModelId(activeProvider ?? "openrouter"), info: undefined }
+	const resolvedInfo = getHostResolvedModelInfo({ provider: activeProvider, id, info, selectedModelCapabilities })
 
 	return {
 		provider,
 		id,
-		info,
+		info: resolvedInfo,
 		isLoading:
 			(needRouterModels && routerModels.isLoading) ||
 			(needOpenRouterProviders && openRouterModelProviders.isLoading) ||
@@ -118,6 +123,28 @@ export const useSelectedModel = (apiConfiguration?: ProviderSettings) => {
 			(needLmStudio && lmStudioModels!.isError) ||
 			(needOllama && ollamaModels!.isError),
 	}
+}
+
+function getHostResolvedModelInfo({
+	provider,
+	id,
+	info,
+	selectedModelCapabilities,
+}: {
+	provider: ProviderName | undefined
+	id: string
+	info: ModelInfo | undefined
+	selectedModelCapabilities: ResolvedModelCapabilities | undefined
+}): ModelInfo | undefined {
+	if (
+		!selectedModelCapabilities ||
+		selectedModelCapabilities.provider !== provider ||
+		selectedModelCapabilities.modelId !== id
+	) {
+		return info
+	}
+
+	return selectedModelCapabilities.modelInfo
 }
 
 function getSelectedModel({
@@ -193,12 +220,15 @@ function getSelectedModel({
 			const id = apiConfiguration.apiModelId ?? defaultModelId
 			const baseInfo = bedrockModels[id as keyof typeof bedrockModels]
 
-			// Special case for custom ARN.
 			if (id === "custom-arn") {
-				return {
-					id,
-					info: { maxTokens: 5000, contextWindow: 128_000, supportsPromptCache: true, supportsImages: true },
-				}
+				const info = baseInfo
+					? {
+							...baseInfo,
+							supportsPromptCache: true,
+							supportsImages: true,
+						}
+					: undefined
+				return { id, info }
 			}
 
 			// Apply 1M context for supported Claude 4 models when enabled
@@ -321,8 +351,8 @@ function getSelectedModel({
 					? [selector.vendor, selector.family, selector.version].filter(Boolean).join("/")
 					: vscodeLlmDefaultModelId)
 			const modelFamily = selector?.family ?? vscodeLlmDefaultModelId
-			// On a family miss, fall back to the default model entry, not openAiModelInfoSaneDefaults
-			// (whose 128K contextWindow would diverge from the gate and skew the bar).
+			// On a family miss, fall back to the default model entry, not openAiModelInfoSaneDefaults,
+			// whose generic contextWindow would diverge from the gate and skew the bar.
 			const listedModel =
 				vscodeLlmModels[modelFamily as keyof typeof vscodeLlmModels] ?? vscodeLlmModels[vscodeLlmDefaultModelId]
 			const baseInfo = selector?.info ?? listedModel

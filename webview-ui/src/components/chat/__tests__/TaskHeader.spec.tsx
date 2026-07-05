@@ -100,6 +100,11 @@ describe("TaskHeader", () => {
 
 	const queryClient = new QueryClient()
 
+	beforeEach(() => {
+		mockModelInfo = { contextWindow: 1000, maxTokens: 200 }
+		mockMaxOutputTokens = 200
+	})
+
 	const renderTaskHeader = (props: Partial<TaskHeaderProps> = {}) => {
 		return render(
 			<QueryClientProvider client={queryClient}>

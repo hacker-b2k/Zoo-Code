@@ -3,6 +3,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type RouterModels,
+	type ResolvedModelCapabilities,
 	zooGatewayDefaultModelId,
 } from "@roo-code/types"
 
@@ -19,6 +20,7 @@ type ZooGatewayProps = {
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	routerModels?: RouterModels
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -53,6 +55,7 @@ export const ZooGateway = ({
 	setApiConfigurationField,
 	routerModels,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: ZooGatewayProps) => {
@@ -111,6 +114,7 @@ export const ZooGateway = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={resolvedDefaultModelId}
 				models={zooModels}
 				modelIdKey="zooGatewayModelId"

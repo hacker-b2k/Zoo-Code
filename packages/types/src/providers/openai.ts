@@ -616,9 +616,15 @@ export const openAiNativeModels = {
 	},
 } as const satisfies Record<string, ModelInfo>
 
+/**
+ * Structural defaults for OpenAI-compatible custom model info.
+ * NOTE: contextWindow is intentionally 0 (unknown) — the resolver's safe
+ * fallback and contextWindowState metadata handle runtime display.
+ * NEVER set this to a synthetic value like 128k.
+ */
 export const openAiModelInfoSaneDefaults: ModelInfo = {
 	maxTokens: -1,
-	contextWindow: 128_000,
+	contextWindow: 0,
 	supportsImages: true,
 	supportsPromptCache: false,
 	inputPrice: 0,

@@ -53,26 +53,34 @@ export function sourcemapPlugin(): Plugin {
 					const jsPath = path.join(assetsDir, jsFile)
 					const mapPath = jsPath + ".map"
 
+					// Concurrent package scripts can trigger another webview build that clears the output
+					// directory while this post-build pass is iterating. If that happens, skip the
+					// stale entry instead of failing the build after Vite already emitted assets.
+					if (!fs.existsSync(jsPath)) {
+						console.warn(`Skipping source map processing for missing JS asset: ${jsFile}`)
+						continue
+					}
+
 					// If source map exists, ensure it's properly referenced in the JS file
 					if (fs.existsSync(mapPath)) {
 						console.log(`Source map found for ${jsFile}`)
 
-						// Read the JS file
-						let jsContent = fs.readFileSync(jsPath, "utf8")
-
-						// Check if the source map is already referenced
-						if (!jsContent.includes("//# sourceMappingURL=")) {
-							console.log(`Adding source map reference to ${jsFile}`)
-
-							// Add source map reference
-							jsContent += `\n//# sourceMappingURL=${jsFile}.map\n`
-
-							// Write the updated JS file
-							fs.writeFileSync(jsPath, jsContent)
-						}
-
-						// Make sure map file is in the correct format and has proper sourceRoot
 						try {
+							// Read the JS file
+							let jsContent = fs.readFileSync(jsPath, "utf8")
+
+							// Check if the source map is already referenced
+							if (!jsContent.includes("//# sourceMappingURL=")) {
+								console.log(`Adding source map reference to ${jsFile}`)
+
+								// Add source map reference
+								jsContent += `\n//# sourceMappingURL=${jsFile}.map\n`
+
+								// Write the updated JS file
+								fs.writeFileSync(jsPath, jsContent)
+							}
+
+							// Make sure map file is in the correct format and has proper sourceRoot
 							const mapContent = JSON.parse(fs.readFileSync(mapPath, "utf8"))
 
 							// Ensure the sourceRoot is set correctly for VSCode webview
@@ -92,6 +100,15 @@ export function sourcemapPlugin(): Plugin {
 							fs.writeFileSync(mapPath, JSON.stringify(mapContent, null, 2))
 							console.log(`Updated source map for ${jsFile}`)
 						} catch (error) {
+							if (isMissingFileError(error)) {
+								console.warn(`Skipping source map processing for stale JS asset: ${jsFile}`)
+								continue
+							}
+
+							function isMissingFileError(error: unknown): boolean {
+								return error instanceof Error && "code" in error && error.code === "ENOENT"
+							}
+
 							console.error(`Error processing source map for ${jsFile}:`, error)
 						}
 					} else {

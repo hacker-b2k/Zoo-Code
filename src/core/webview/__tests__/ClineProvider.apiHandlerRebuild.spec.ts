@@ -391,7 +391,7 @@ describe("ClineProvider - API Handler Rebuild Guard", () => {
 			)
 		})
 
-		test("does nothing when no task is running", async () => {
+		test("does not update a task API handler when no task is running", async () => {
 			// Don't add any task to stack
 			buildApiHandlerMock.mockClear()
 
@@ -404,8 +404,15 @@ describe("ClineProvider - API Handler Rebuild Guard", () => {
 				true,
 			)
 
-			// Should not call buildApiHandler when there's no task
-			expect(buildApiHandlerMock).not.toHaveBeenCalled()
+			// No task is running, so no task API handler is updated. The only buildApiHandler call
+			// comes from selected model capability resolution while posting state to the webview.
+			expect(buildApiHandlerMock).toHaveBeenCalledTimes(1)
+			expect(buildApiHandlerMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					apiProvider: "openrouter",
+					openRouterModelId: "openai/gpt-4",
+				}),
+			)
 		})
 	})
 

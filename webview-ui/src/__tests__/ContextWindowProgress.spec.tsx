@@ -15,14 +15,6 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeBadge: ({ children }: { children: React.ReactNode }) => <div data-testid="vscode-badge">{children}</div>,
 }))
 
-// Mock ExtensionStateContext since we use useExtensionState
-vi.mock("@src/context/ExtensionStateContext", () => ({
-	useExtensionState: vi.fn(() => ({
-		apiConfiguration: { apiProvider: "openai" },
-		currentTaskItem: { id: "test-id", task: "Test task", number: 1, size: 1024 },
-	})),
-}))
-
 // Mock highlighting function to avoid JSX parsing issues in tests
 vi.mock("@src/components/chat/TaskHeader", async () => {
 	const originalModule = await vi.importActual("@src/components/chat/TaskHeader")
@@ -38,6 +30,19 @@ vi.mock("@src/components/ui/hooks/useSelectedModel", () => ({
 	useSelectedModel: vi.fn(() => ({
 		id: "test",
 		info: { contextWindow: 4000 },
+	})),
+}))
+
+// Mock useExtensionState to supply selectedModelCapabilities
+vi.mock("@src/context/ExtensionStateContext", () => ({
+	useExtensionState: vi.fn(() => ({
+		apiConfiguration: { apiProvider: "openai" },
+		currentTaskItem: { id: "test-id", task: "Test task", number: 1, size: 1024 },
+		selectedModelCapabilities: {
+			contextWindow: 4000,
+			supportsPromptCache: false,
+			supportsImages: false,
+		},
 	})),
 }))
 
@@ -81,7 +86,7 @@ describe("ContextWindowProgress", () => {
 		expect(screen.getByTestId("context-tokens-count")).toHaveTextContent("1000") // contextTokens
 		// The actual context window might be different than what we pass in
 		// due to the mock returning a default value from the API config
-		expect(screen.getByTestId("context-window-size")).toHaveTextContent(/(4000|128000)/) // contextWindow
+		expect(screen.getByTestId("context-window-size")).toHaveTextContent(/4000/) // contextWindow
 	})
 
 	it("handles zero context window gracefully", () => {
@@ -108,7 +113,7 @@ describe("ContextWindowProgress", () => {
 		// Should show 0 instead of -100
 		expect(screen.getByTestId("context-tokens-count")).toHaveTextContent("0")
 		// The actual context window might be different than what we pass in
-		expect(screen.getByTestId("context-window-size")).toHaveTextContent(/(4000|128000)/)
+		expect(screen.getByTestId("context-window-size")).toHaveTextContent(/4000/)
 	})
 
 	it("calculates percentages correctly", () => {

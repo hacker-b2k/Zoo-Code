@@ -6,6 +6,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type ExtensionMessage,
+	type ResolvedModelCapabilities,
 	litellmDefaultModelId,
 } from "@roo-code/types"
 
@@ -23,6 +24,7 @@ type LiteLLMProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -31,6 +33,7 @@ export const LiteLLM = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: LiteLLMProps) => {
@@ -157,6 +160,7 @@ export const LiteLLM = ({
 			)}
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={litellmDefaultModelId}
 				models={routerModels?.litellm ?? {}}
 				modelIdKey="litellmModelId"

@@ -3,7 +3,13 @@ import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { Trans } from "react-i18next"
 import { ChevronsUpDown, Check, X, Info } from "lucide-react"
 
-import { type ProviderSettings, type ModelInfo, type OrganizationAllowList, isRetiredProvider } from "@roo-code/types"
+import {
+	type ProviderSettings,
+	type ModelInfo,
+	type OrganizationAllowList,
+	type ResolvedModelCapabilities,
+	isRetiredProvider,
+} from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { useSelectedModel } from "@/components/ui/hooks/useSelectedModel"
@@ -56,6 +62,7 @@ interface ModelPickerProps {
 		isUserAction?: boolean,
 	) => void
 	organizationAllowList?: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	errorMessage?: string
 	simplifySettings?: boolean
 	hidePricing?: boolean
@@ -78,6 +85,7 @@ export const ModelPicker = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	organizationAllowList,
+	selectedModelCapabilities,
 	errorMessage,
 	simplifySettings,
 	hidePricing,
@@ -95,7 +103,10 @@ export const ModelPicker = ({
 	const selectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 	const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-	const { id: selectedModelId, info: selectedModelInfo } = useSelectedModel(apiConfiguration)
+	const { id: selectedModelId, info: selectedModelInfo } = useSelectedModel(
+		apiConfiguration,
+		selectedModelCapabilities,
+	)
 
 	// Get the display value for the current selection
 	// If displayTransform is provided, use it to convert the stored value to a display string

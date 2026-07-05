@@ -1,15 +1,37 @@
 import type { ProviderSettings } from "@roo-code/types"
+import { getModelId } from "@roo-code/types"
+import { ModelCapabilityResolver } from "@roo-code/core"
+import type { ModelInfo } from "@roo-code/types"
 
 import type { RouterModels } from "@/ui/store.js"
 
 const DEFAULT_CONTEXT_WINDOW = 200_000
 
 /**
- * Looks up the context window size for the current model from routerModels.
+ * Singleton resolver instance configured with CLI-safe defaults.
+ * Uses DEFAULT_CONTEXT_WINDOW as the safe fallback to preserve backward
+ * compatibility with the previous simple routerModels lookup.
+ */
+const resolver = new ModelCapabilityResolver({
+	safeFallbackContextWindow: DEFAULT_CONTEXT_WINDOW,
+})
+
+/**
+ * Resolves the context window for the current model using the
+ * ModelCapabilityResolver from @roo-code/core.
+ *
+ * This applies the full adapter chain:
+ * - Bedrock 1M context when awsBedrock1MContext is enabled
+ * - VS Code LM condense-window adapter
+ * - Provider default model info fallback (OpenAI-compatible, LiteLLM)
+ * - Safe fallback when model info is invalid or missing
+ *
+ * Falls back to a simple routerModels lookup → DEFAULT_CONTEXT_WINDOW
+ * when no routerModels or apiConfiguration are available.
  *
  * @param routerModels - The router models data containing model info per provider
  * @param apiConfiguration - The current API configuration with provider and model ID
- * @returns The context window size, or DEFAULT_CONTEXT_WINDOW (200K) if not found
+ * @returns The resolved context window size
  */
 export function getContextWindow(routerModels: RouterModels | null, apiConfiguration: ProviderSettings | null): number {
 	if (!routerModels || !apiConfiguration) {
@@ -17,45 +39,30 @@ export function getContextWindow(routerModels: RouterModels | null, apiConfigura
 	}
 
 	const provider = apiConfiguration.apiProvider
-	const modelId = getModelIdForProvider(apiConfiguration)
+	const modelId = getModelId(apiConfiguration)
 
 	if (!provider || !modelId) {
 		return DEFAULT_CONTEXT_WINDOW
 	}
 
 	const providerModels = routerModels[provider]
-	const modelInfo = providerModels?.[modelId]
+	const routerContextWindow = providerModels?.[modelId]?.contextWindow
 
-	return modelInfo?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
-}
-
-/**
- * Gets the model ID from the API configuration based on the provider type.
- *
- * Different providers store their model ID in different fields of ProviderSettings.
- */
-function getModelIdForProvider(config: ProviderSettings): string | undefined {
-	switch (config.apiProvider) {
-		case "openrouter":
-			return config.openRouterModelId
-		case "ollama":
-			return config.ollamaModelId
-		case "lmstudio":
-			return config.lmStudioModelId
-		case "openai":
-			return config.openAiModelId
-		case "requesty":
-			return config.requestyModelId
-		case "unbound":
-			return config.unboundModelId
-		case "litellm":
-			return config.litellmModelId
-		case "vercel-ai-gateway":
-			return config.vercelAiGatewayModelId
-		default:
-			// For anthropic, bedrock, vertex, gemini, xai, etc.
-			return config.apiModelId
+	// Build a minimal ModelInfo for the resolver.
+	// When routerModels has no contextWindow for this model, pass 0 (invalid)
+	// so the resolver applies its full fallback chain (adapters → safe fallback).
+	const model: ModelInfo = {
+		contextWindow: routerContextWindow ?? 0,
+		supportsPromptCache: false,
 	}
+
+	const resolved = resolver.resolve({
+		settings: apiConfiguration,
+		model,
+		modelId,
+	})
+
+	return resolved.contextWindow
 }
 
 export { DEFAULT_CONTEXT_WINDOW }

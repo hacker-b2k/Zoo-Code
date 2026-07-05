@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@/utils/test-utils"
+import { render, screen, fireEvent, waitFor, act } from "@/utils/test-utils"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import type { Command } from "@roo-code/types"
@@ -179,6 +179,11 @@ const renderSlashCommandsSettings = (commands: Command[] = mockCommands, cwd?: s
 describe("SlashCommandsSettings", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.useRealTimers()
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
 	})
 
 	it("renders section header", () => {
@@ -334,6 +339,7 @@ describe("SlashCommandsSettings", () => {
 	})
 
 	it("refreshes commands after deletion", async () => {
+		vi.useFakeTimers()
 		renderSlashCommandsSettings()
 
 		// Click delete button
@@ -344,20 +350,19 @@ describe("SlashCommandsSettings", () => {
 		const confirmButton = screen.getByTestId("alert-dialog-action")
 		fireEvent.click(confirmButton)
 
-		// Wait for refresh to be called after timeout
-		await waitFor(
-			() => {
-				// Initial mount call + refresh after deletion
-				const requestCommandsCalls = (vscode.postMessage as any).mock.calls.filter(
-					(call: any) => call[0].type === "requestCommands",
-				)
-				expect(requestCommandsCalls.length).toBeGreaterThanOrEqual(2)
-			},
-			{ timeout: 200 },
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(100)
+		})
+
+		// Initial mount call + refresh after deletion
+		const requestCommandsCalls = (vscode.postMessage as any).mock.calls.filter(
+			(call: any) => call[0].type === "requestCommands",
 		)
+		expect(requestCommandsCalls.length).toBeGreaterThanOrEqual(2)
 	})
 
 	it("refreshes commands after creating new command", async () => {
+		vi.useFakeTimers()
 		renderSlashCommandsSettings()
 
 		// Open create dialog
@@ -368,17 +373,15 @@ describe("SlashCommandsSettings", () => {
 		const createButton = screen.getByTestId("create-command-button")
 		fireEvent.click(createButton)
 
-		// Wait for refresh to be called after timeout
-		await waitFor(
-			() => {
-				// Initial mount call + refresh after creation
-				const requestCommandsCalls = (vscode.postMessage as any).mock.calls.filter(
-					(call: any) => call[0].type === "requestCommands",
-				)
-				expect(requestCommandsCalls.length).toBeGreaterThanOrEqual(2)
-			},
-			{ timeout: 600 },
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(500)
+		})
+
+		// Initial mount call + refresh after creation
+		const requestCommandsCalls = (vscode.postMessage as any).mock.calls.filter(
+			(call: any) => call[0].type === "requestCommands",
 		)
+		expect(requestCommandsCalls.length).toBeGreaterThanOrEqual(2)
 	})
 
 	it("renders empty state when no commands exist", () => {

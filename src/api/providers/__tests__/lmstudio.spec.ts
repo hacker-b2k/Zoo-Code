@@ -158,12 +158,12 @@ describe("LmStudioHandler", () => {
 	})
 
 	describe("getModel", () => {
-		it("should return model info", () => {
+		it("should return model info (contextWindow unknown = 0)", () => {
 			const modelInfo = handler.getModel()
 			expect(modelInfo.id).toBe(mockOptions.lmStudioModelId)
 			expect(modelInfo.info).toBeDefined()
 			expect(modelInfo.info.maxTokens).toBe(-1)
-			expect(modelInfo.info.contextWindow).toBe(128_000)
+			expect(modelInfo.info.contextWindow).toBe(0)
 		})
 	})
 })

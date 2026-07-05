@@ -68,11 +68,10 @@ import { findLastIndex } from "../../shared/array"
 import { combineApiRequests } from "../../shared/combineApiRequests"
 import { combineCommandSequences } from "../../shared/combineCommandSequences"
 import { t } from "../../i18n"
-import { getApiMetrics, hasTokenUsageChanged, hasToolUsageChanged } from "../../shared/getApiMetrics"
+import { hasTokenUsageChanged, hasToolUsageChanged } from "../../shared/getApiMetrics"
 import { ClineAskResponse } from "../../shared/WebviewMessage"
 import { defaultModeSlug, getModeBySlug } from "../../shared/modes"
 import { DiffStrategy, type ToolUse, type ToolParamName, toolParamNames } from "../../shared/tools"
-import { getModelMaxOutputTokens } from "../../shared/api"
 
 // services
 import { McpHub } from "../../services/mcp/McpHub"
@@ -105,7 +104,7 @@ import { RooIgnoreController } from "../ignore/RooIgnoreController"
 import { RooProtectedController } from "../protect/RooProtectedController"
 import { type AssistantMessageContent, presentAssistantMessage } from "../assistant-message"
 import { NativeToolCallParser } from "../assistant-message/NativeToolCallParser"
-import { manageContext, willManageContext } from "../context-management"
+import { RuntimeContextManager } from "../model-capabilities/RuntimeContextManager"
 import { ClineProvider } from "../webview/ClineProvider"
 import { MultiSearchReplaceDiffStrategy } from "../diff/strategies/multi-search-replace"
 import {
@@ -289,6 +288,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	api: ApiHandler
 	private rateLimitClock: RateLimitClock
 	private autoApprovalHandler: AutoApprovalHandler
+	private runtimeContextManager: RuntimeContextManager
 
 	toolRepetitionDetector: ToolRepetitionDetector
 	rooIgnoreController?: RooIgnoreController
@@ -508,6 +508,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.api = buildApiHandler(this.apiConfiguration)
 		this.rateLimitClock = rateLimitClock ?? createRateLimitClock()
 		this.autoApprovalHandler = new AutoApprovalHandler()
+		this.runtimeContextManager = new RuntimeContextManager()
 
 		this.consecutiveMistakeLimit = consecutiveMistakeLimit ?? DEFAULT_CONSECUTIVE_MISTAKE_LIMIT
 		this.providerRef = new WeakRef(provider)
@@ -3803,34 +3804,20 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private async handleContextWindowExceededError(): Promise<void> {
 		const state = await this.providerRef.deref()?.getState()
 		const { profileThresholds = {}, mode, apiConfiguration } = state ?? {}
-
 		const { contextTokens } = this.getTokenUsage()
-		const modelInfo = this.api.getModel().info
-
-		const maxTokens = getModelMaxOutputTokens({
-			modelId: this.api.getModel().id,
-			model: modelInfo,
+		const runtime = this.runtimeContextManager.resolveRuntimeContext({
+			apiHandler: this.api,
 			settings: this.apiConfiguration,
 		})
-
-		// vscode-lm condenses against its static-table maxInputTokens (not the inflated live window);
-		// only it implements getCondenseContextWindow, so others fall back to the full contextWindow.
-		const contextWindow = this.api.getCondenseContextWindow?.() ?? modelInfo.contextWindow
-		const useAvailableInputForContextPercent = typeof this.api.getCondenseContextWindow === "function"
-
-		// Get the current profile ID using the helper method
 		const currentProfileId = this.getCurrentProfileId(state)
 
-		// Log the context window error for debugging
 		console.warn(
-			`[Task#${this.taskId}] Context window exceeded for model ${this.api.getModel().id}. ` +
-				`Current tokens: ${contextTokens}, Context window: ${contextWindow}. ` +
+			`[Task#${this.taskId}] Context window exceeded for model ${runtime.modelId}. ` +
+				`Current tokens: ${contextTokens}, Context window: ${runtime.contextWindow}. ` +
 				`Forcing truncation to ${FORCED_CONTEXT_REDUCTION_PERCENT}% of current context.`,
 		)
-		// Send condenseTaskContextStarted to show in-progress indicator
 		await this.providerRef.deref()?.postMessageToWebview({ type: "condenseTaskContextStarted", text: this.taskId })
 
-		// Build tools for condensing metadata (same tools used for normal API calls)
 		const provider = this.providerRef.deref()
 		let allTools: import("openai").default.Chat.ChatCompletionTool[] = []
 		if (provider) {
@@ -3842,13 +3829,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				experiments: state?.experiments,
 				apiConfiguration,
 				disabledTools: state?.disabledTools,
-				modelInfo,
+				modelInfo: runtime.modelInfo,
 				includeAllToolsWithRestrictions: false,
 			})
 			allTools = toolsResult.tools
 		}
 
-		// Build metadata with tools and taskId for the condensing API call
 		const metadata: ApiHandlerCreateMessageMetadata = {
 			mode,
 			taskId: this.taskId,
@@ -3867,16 +3853,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 
 		try {
-			// Generate environment details to include in the condensed summary
 			const environmentDetails = await getEnvironmentDetails(this, true)
-
-			// Force aggressive truncation by keeping only 75% of the conversation history
-			const truncateResult = await manageContext({
+			const truncateResult = await this.runtimeContextManager.manageConversationContext({
 				messages: this.apiConversationHistory,
 				totalTokens: contextTokens || 0,
-				maxTokens,
-				contextWindow,
 				apiHandler: this.api,
+				settings: this.apiConfiguration,
+				runtime,
 				autoCondenseContext: true,
 				autoCondenseContextPercent: FORCED_CONTEXT_REDUCTION_PERCENT,
 				systemPrompt: await this.getSystemPrompt(),
@@ -3885,7 +3868,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				currentProfileId,
 				metadata,
 				environmentDetails,
-				useAvailableInputForContextPercent,
 			})
 
 			if (truncateResult.messages !== this.apiConversationHistory) {
@@ -4005,44 +3987,18 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const { contextTokens } = this.getTokenUsage()
 
 		if (contextTokens) {
-			const modelInfo = this.api.getModel().info
-
-			const maxTokens = getModelMaxOutputTokens({
-				modelId: this.api.getModel().id,
-				model: modelInfo,
-				settings: this.apiConfiguration,
-			})
-
-			// vscode-lm condenses against its static-table maxInputTokens (not the inflated live window);
-			// only it implements getCondenseContextWindow, so others fall back to the full contextWindow.
-			const contextWindow = this.api.getCondenseContextWindow?.() ?? modelInfo.contextWindow
-			const useAvailableInputForContextPercent = typeof this.api.getCondenseContextWindow === "function"
-
-			// Get the current profile ID using the helper method
 			const currentProfileId = this.getCurrentProfileId(state)
-			// Check if context management will likely run (threshold check)
-			// This allows us to show an in-progress indicator to the user
-			// We use the centralized willManageContext helper to avoid duplicating threshold logic
-			const lastMessage = this.apiConversationHistory[this.apiConversationHistory.length - 1]
-			const lastMessageContent = lastMessage?.content
-			let lastMessageTokens = 0
-			if (lastMessageContent) {
-				lastMessageTokens = Array.isArray(lastMessageContent)
-					? await this.api.countTokens(lastMessageContent)
-					: await this.api.countTokens([{ type: "text", text: lastMessageContent as string }])
-			}
-
-			const contextManagementWillRun = willManageContext({
+			const contextManagement = await this.runtimeContextManager.evaluateContextManagement({
+				messages: this.apiConversationHistory,
 				totalTokens: contextTokens,
-				contextWindow,
-				maxTokens,
+				apiHandler: this.api,
+				settings: this.apiConfiguration,
 				autoCondenseContext,
 				autoCondenseContextPercent,
 				profileThresholds,
 				currentProfileId,
-				lastMessageTokens,
-				useAvailableInputForContextPercent,
 			})
+			const { runtime, shouldManageContext: contextManagementWillRun } = contextManagement
 
 			// Send condenseTaskContextStarted BEFORE manageContext to show in-progress indicator
 			// This notification must be sent here (not earlier) because the early check uses stale token count
@@ -4067,7 +4023,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						experiments: state?.experiments,
 						apiConfiguration,
 						disabledTools: state?.disabledTools,
-						modelInfo,
+						modelInfo: runtime.modelInfo,
 						includeAllToolsWithRestrictions: false,
 					})
 					contextMgmtTools = toolsResult.tools
@@ -4106,12 +4062,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					: undefined
 
 			try {
-				const truncateResult = await manageContext({
+				const truncateResult = await this.runtimeContextManager.manageConversationContext({
 					messages: this.apiConversationHistory,
 					totalTokens: contextTokens,
-					maxTokens,
-					contextWindow,
 					apiHandler: this.api,
+					settings: this.apiConfiguration,
+					runtime,
 					autoCondenseContext,
 					autoCondenseContextPercent,
 					systemPrompt,
@@ -4124,7 +4080,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					filesReadByRoo: contextMgmtFilesReadByRoo,
 					cwd: this.cwd,
 					rooIgnoreController: this.rooIgnoreController,
-					useAvailableInputForContextPercent,
 				})
 				if (truncateResult.messages !== this.apiConversationHistory) {
 					await this.overwriteApiConversationHistory(truncateResult.messages)
@@ -4631,7 +4586,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	}
 
 	public getTokenUsage(): TokenUsage {
-		return getApiMetrics(this.combineMessages(this.clineMessages.slice(1)))
+		return this.runtimeContextManager.getTokenUsage(this.clineMessages.slice(1), (messages) =>
+			this.combineMessages(messages),
+		)
 	}
 
 	public recordToolUsage(toolName: ToolName) {

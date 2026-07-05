@@ -197,11 +197,12 @@ export const ChatRowContent = ({
 		currentCheckpoint,
 		mode,
 		apiConfiguration,
+		selectedModelCapabilities,
 		clineMessages,
 		currentTaskItem,
 		enableCheckpoints,
 	} = useExtensionState()
-	const { info: model } = useSelectedModel(apiConfiguration)
+	const { info: model } = useSelectedModel(apiConfiguration, selectedModelCapabilities)
 	const [isEditing, setIsEditing] = useState(false)
 	const [editedContent, setEditedContent] = useState("")
 	const [editMode, setEditMode] = useState<Mode>(mode || "code")

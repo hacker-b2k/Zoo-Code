@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect } from "react"
 import { useEvent } from "react-use"
 import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 
-import type { ProviderSettings, ExtensionMessage, ModelRecord } from "@roo-code/types"
+import type { ProviderSettings, ExtensionMessage, ModelRecord, ResolvedModelCapabilities } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { useRouterModels } from "@src/components/ui/hooks/useRouterModels"
@@ -14,9 +14,10 @@ import { ModelPicker } from "../ModelPicker"
 type OllamaProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
+	selectedModelCapabilities?: ResolvedModelCapabilities
 }
 
-export const Ollama = ({ apiConfiguration, setApiConfigurationField }: OllamaProps) => {
+export const Ollama = ({ apiConfiguration, setApiConfigurationField, selectedModelCapabilities }: OllamaProps) => {
 	const { t } = useAppTranslation()
 
 	const [ollamaModels, setOllamaModels] = useState<ModelRecord>({})
@@ -103,6 +104,7 @@ export const Ollama = ({ apiConfiguration, setApiConfigurationField }: OllamaPro
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId=""
 				models={ollamaModels}
 				modelIdKey="ollamaModelId"

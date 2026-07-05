@@ -6,6 +6,7 @@ import {
 	type ProviderSettings,
 	type OrganizationAllowList,
 	type ExtensionMessage,
+	type ResolvedModelCapabilities,
 	poeDefaultModelId,
 	type ProviderName,
 } from "@roo-code/types"
@@ -26,6 +27,7 @@ type PoeProps = {
 	apiConfiguration: ProviderSettings
 	setApiConfigurationField: (field: keyof ProviderSettings, value: ProviderSettings[keyof ProviderSettings]) => void
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -34,6 +36,7 @@ export const Poe = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: PoeProps) => {
@@ -149,6 +152,7 @@ export const Poe = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId={poeDefaultModelId}
 				models={routerModels?.poe ?? {}}
 				modelIdKey="apiModelId"

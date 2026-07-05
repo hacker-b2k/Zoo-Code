@@ -9,6 +9,7 @@ import {
 	type ReasoningEffort,
 	type OrganizationAllowList,
 	type ExtensionMessage,
+	type ResolvedModelCapabilities,
 	azureOpenAiDefaultApiVersion,
 	openAiModelInfoSaneDefaults,
 } from "@roo-code/types"
@@ -30,6 +31,7 @@ type OpenAICompatibleProps = {
 		isUserAction?: boolean,
 	) => void
 	organizationAllowList: OrganizationAllowList
+	selectedModelCapabilities?: ResolvedModelCapabilities
 	modelValidationError?: string
 	simplifySettings?: boolean
 }
@@ -38,6 +40,7 @@ export const OpenAICompatible = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	organizationAllowList,
+	selectedModelCapabilities,
 	modelValidationError,
 	simplifySettings,
 }: OpenAICompatibleProps) => {
@@ -144,6 +147,7 @@ export const OpenAICompatible = ({
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}
+				selectedModelCapabilities={selectedModelCapabilities}
 				defaultModelId="gpt-4o"
 				models={openAiModels}
 				modelIdKey="openAiModelId"
@@ -284,11 +288,10 @@ export const OpenAICompatible = ({
 
 				<div>
 					<VSCodeTextField
-						value={
-							apiConfiguration?.openAiCustomModelInfo?.maxTokens?.toString() ||
-							openAiModelInfoSaneDefaults.maxTokens?.toString() ||
-							""
-						}
+						value={(() => {
+							const v = apiConfiguration?.openAiCustomModelInfo?.maxTokens
+							return v && v > 0 ? v.toString() : ""
+						})()}
 						type="text"
 						style={{
 							borderColor: (() => {
@@ -322,11 +325,10 @@ export const OpenAICompatible = ({
 
 				<div>
 					<VSCodeTextField
-						value={
-							apiConfiguration?.openAiCustomModelInfo?.contextWindow?.toString() ||
-							openAiModelInfoSaneDefaults.contextWindow?.toString() ||
-							""
-						}
+						value={(() => {
+							const v = apiConfiguration?.openAiCustomModelInfo?.contextWindow
+							return v && v > 0 ? v.toString() : ""
+						})()}
 						type="text"
 						style={{
 							borderColor: (() => {
@@ -345,7 +347,7 @@ export const OpenAICompatible = ({
 
 							return {
 								...(apiConfiguration?.openAiCustomModelInfo || openAiModelInfoSaneDefaults),
-								contextWindow: isNaN(parsed) ? openAiModelInfoSaneDefaults.contextWindow : parsed,
+								contextWindow: isNaN(parsed) ? 0 : parsed,
 							}
 						})}
 						placeholder={t("settings:placeholders.numbers.contextWindow")}
