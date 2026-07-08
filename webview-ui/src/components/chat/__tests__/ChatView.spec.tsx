@@ -90,9 +90,26 @@ vi.mock("../ChatRow", () => ({
 }))
 
 vi.mock("../TaskActivityGroup", () => ({
-	default: function MockTaskActivityGroup({ messages }: { messages: ClineMessage[] }) {
+	default: function MockTaskActivityGroup({
+		messages,
+		isCollapsed,
+		viewModel,
+	}: {
+		messages: ClineMessage[]
+		isCollapsed?: boolean
+		viewModel?: { isActive?: boolean; headerMode?: string }
+	}) {
 		return (
-			<div data-testid="task-activity-group">
+			<div
+				data-testid="task-activity-group"
+				data-collapsed={String(isCollapsed)}
+				data-active={String(viewModel?.isActive)}
+				data-header-mode={viewModel?.headerMode}>
+				<button
+					type="button"
+					aria-expanded={!isCollapsed}
+					aria-label={isCollapsed ? "chat:taskActivity.expand" : "chat:taskActivity.collapse"}
+				/>
 				{messages.map((msg) => (
 					<div key={msg.ts}>{JSON.stringify(msg)}</div>
 				))}
@@ -305,20 +322,105 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeTextField: function MockVSCodeTextField({
 		value,
 		onInput,
+		onChange,
 		placeholder,
+		type = "text",
 	}: {
 		value?: string
 		onInput?: (e: { target: { value: string } }) => void
+		onChange?: (e: { target: { value: string } }) => void
 		placeholder?: string
+		type?: string
 	}) {
 		return (
 			<input
-				type="text"
+				type={type}
 				value={value}
-				onChange={(e) => onInput?.({ target: { value: e.target.value } })}
+				onChange={(e) => {
+					onInput?.({ target: { value: e.target.value } })
+					onChange?.({ target: { value: e.target.value } })
+				}}
 				placeholder={placeholder}
 			/>
 		)
+	},
+	VSCodeDropdown: function MockVSCodeDropdown({
+		children,
+		value,
+		onChange,
+	}: {
+		children: React.ReactNode
+		value?: string
+		onChange?: (e: { target: { value: string } }) => void
+	}) {
+		return (
+			<select value={value} onChange={(e) => onChange?.({ target: { value: e.target.value } })}>
+				{children}
+			</select>
+		)
+	},
+	VSCodeOption: function MockVSCodeOption({ children, value }: { children: React.ReactNode; value?: string }) {
+		return <option value={value}>{children}</option>
+	},
+	VSCodeCheckbox: function MockVSCodeCheckbox({
+		children,
+		checked,
+		onChange,
+	}: {
+		children: React.ReactNode
+		checked?: boolean
+		onChange?: (e: { target: { checked: boolean } }) => void
+	}) {
+		return (
+			<label>
+				<input
+					type="checkbox"
+					checked={checked}
+					onChange={(e) => onChange?.({ target: { checked: e.target.checked } })}
+				/>
+				{children}
+			</label>
+		)
+	},
+	VSCodeProgressRing: function MockVSCodeProgressRing(props: Record<string, unknown>) {
+		return <div role="progressbar" {...props} />
+	},
+	VSCodeRadioGroup: function MockVSCodeRadioGroup({ children, ...props }: { children: React.ReactNode }) {
+		return <div {...props}>{children}</div>
+	},
+	VSCodeRadio: function MockVSCodeRadio({
+		children,
+		value,
+		...props
+	}: {
+		children: React.ReactNode
+		value?: string
+	}) {
+		return (
+			<label>
+				<input type="radio" value={value} {...props} />
+				{children}
+			</label>
+		)
+	},
+	VSCodeTextArea: function MockVSCodeTextArea({
+		value,
+		onChange,
+		...props
+	}: {
+		value?: string
+		onChange?: React.ChangeEventHandler<HTMLTextAreaElement>
+	}) {
+		return <textarea value={value ?? ""} onChange={onChange} {...props} />
+	},
+	VSCodePanels: function MockVSCodePanels({ children, ...props }: { children: React.ReactNode }) {
+		return <div {...props}>{children}</div>
+	},
+	VSCodePanelTab: function MockVSCodePanelTab({ children, ...props }: { children: React.ReactNode }) {
+		return <div {...props}>{children}</div>
+	},
+	VSCodePanelView: function MockVSCodePanelView({ children, ...props }: { children: React.ReactNode }) {
+		return <div {...props}>{children}</div>
 	},
 	VSCodeLink: function MockVSCodeLink({ children, href }: { children: React.ReactNode; href?: string }) {
 		return <a href={href}>{children}</a>
@@ -1239,6 +1341,67 @@ describe("ChatView - Follow-up Suggestions", () => {
 			})
 		})
 		expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "mode" }))
+	})
+})
+
+describe("ChatView - Task Activity auto-collapse lifecycle", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("collapses task activity once a final completion response renders after it, even while API request cost is pending", async () => {
+		const now = Date.now()
+		const { container, getByText } = renderChatView()
+
+		mockPostMessage({
+			autoCollapseTaskActivity: true,
+			clineMessages: [
+				{ type: "say", say: "task", ts: now - 3000, text: "Initial task" },
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: now - 2000,
+					text: JSON.stringify({ apiProtocol: "anthropic" }),
+				},
+				{
+					type: "say",
+					say: "tool",
+					ts: now - 1000,
+					text: JSON.stringify({ tool: "readFile", path: "src/foo.ts" }),
+				},
+				{ type: "say", say: "completion_result", ts: now, text: "Task completed successfully" },
+			],
+		})
+
+		await waitFor(() => {
+			const toggle = container.querySelector('button[aria-label="chat:taskActivity.expand"]')
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(getByText("Task completed successfully")).toBeInTheDocument()
+		})
+	})
+
+	it("keeps the final task activity expanded while it is the active streaming item", async () => {
+		const now = Date.now()
+		const { container } = renderChatView()
+
+		mockPostMessage({
+			autoCollapseTaskActivity: true,
+			clineMessages: [
+				{ type: "say", say: "task", ts: now - 2000, text: "Initial task" },
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: now - 1000,
+					text: JSON.stringify({ apiProtocol: "anthropic" }),
+				},
+				{ type: "say", say: "tool", ts: now, text: JSON.stringify({ tool: "readFile", path: "src/foo.ts" }) },
+			],
+		})
+
+		await waitFor(() => {
+			const toggle = container.querySelector('button[aria-label="chat:taskActivity.collapse"]')
+			expect(toggle).toHaveAttribute("aria-expanded", "true")
+		})
 	})
 })
 

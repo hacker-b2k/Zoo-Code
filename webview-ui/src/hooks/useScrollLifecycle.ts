@@ -266,8 +266,12 @@ export function useScrollLifecycle({
 				return
 			}
 
-			const shouldForcePinForAnchoredStreaming = scrollPhaseRef.current === "ANCHORED_FOLLOWING" && isStreaming
-			if (isAtBottomRef.current || shouldForcePinForAnchoredStreaming) {
+			// In anchored follow, the phase records user intent more reliably
+			// than the bottom flag. A group collapse can transiently report
+			// not-at-bottom before the row-height callback re-pins the list.
+			const shouldFollow = isAtBottomRef.current || scrollPhaseRef.current === "ANCHORED_FOLLOWING"
+
+			if (shouldFollow) {
 				if (isTaller) {
 					scrollToBottomSmooth()
 				} else {
@@ -275,7 +279,7 @@ export function useScrollLifecycle({
 				}
 			}
 		},
-		[isStreaming, scrollToBottomSmooth, scrollToBottomAuto],
+		[scrollToBottomSmooth, scrollToBottomAuto],
 	)
 
 	// -----------------------------------------------------------------------
@@ -298,9 +302,14 @@ export function useScrollLifecycle({
 	// Virtuoso callback: followOutput
 	// -----------------------------------------------------------------------
 
+	// CRITICAL: Read the ref, not the React state.  The ref is updated
+	// synchronously inside `enterUserBrowsingHistory` / `enterAnchoredFollowing`,
+	// but `scrollPhase` state is batched.  If we read state here, Virtuoso will
+	// evaluate `followOutput` during the same micro-task as a user-wheel-up
+	// event and still see the *previous* phase — causing an unwanted snap-back.
 	const followOutputCallback = useCallback((): "auto" | false => {
-		return scrollPhase === "USER_BROWSING_HISTORY" ? false : "auto"
-	}, [scrollPhase])
+		return scrollPhaseRef.current === "USER_BROWSING_HISTORY" ? false : "auto"
+	}, [])
 
 	// -----------------------------------------------------------------------
 	// Virtuoso callback: atBottomStateChange
@@ -327,20 +336,21 @@ export function useScrollLifecycle({
 				return
 			}
 
-			if (currentPhase === "ANCHORED_FOLLOWING" && !isAtBottom && pointerScrollActiveRef.current) {
-				enterUserBrowsingHistory("pointer-scroll-up")
-				return
-			}
-
-			if (currentPhase === "ANCHORED_FOLLOWING" && isStreaming) {
-				scrollToBottomAuto()
+			if (currentPhase === "ANCHORED_FOLLOWING") {
+				// This is layout drift, not user intent. User upward intent moves
+				// the phase to USER_BROWSING_HISTORY before this callback runs.
+				// When not streaming, tool/file-read transitions may not trigger a
+				// reliable row-height callback, so re-pin here.
+				if (!isStreaming) {
+					scrollToBottomAuto()
+				}
 				setShowScrollToBottom(false)
 				return
 			}
 
 			setShowScrollToBottom(currentPhase === "USER_BROWSING_HISTORY")
 		},
-		[enterAnchoredFollowing, enterUserBrowsingHistory, isStreaming, scrollToBottomAuto],
+		[enterAnchoredFollowing, isStreaming, scrollToBottomAuto],
 	)
 
 	// -----------------------------------------------------------------------

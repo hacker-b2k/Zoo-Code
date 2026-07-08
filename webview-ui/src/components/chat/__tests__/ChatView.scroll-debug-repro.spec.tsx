@@ -639,6 +639,85 @@ describe("ChatView scroll behavior regression coverage", () => {
 		})
 	})
 
+	it("manual scroll position is preserved during streaming — no force-pin to bottom", async () => {
+		const baseTs = Date.now() - 3_000
+		await hydrate(2, buildMessages(baseTs))
+		await waitForCalls(2)
+		await waitForCallsSettled()
+		expect(resolveFollowOutput(false)).toBe("auto")
+
+		// User scrolls up via wheel → disengage follow
+		const scrollable = getScrollable()
+		await act(async () => {
+			fireEvent.wheel(scrollable, { deltaY: -120 })
+		})
+		expect(resolveFollowOutput(false)).toBe(false)
+
+		// Simulate streaming data growth — reuse same baseTs to avoid task switch
+		await act(async () => {
+			postState([
+				...buildMessages(baseTs),
+				{ type: "say", say: "text", ts: Date.now(), text: "streaming-update" },
+			])
+		})
+		await flushEffects()
+
+		// followOutput should still be false — user's scroll position is preserved
+		expect(resolveFollowOutput(false)).toBe(false)
+	})
+
+	it("clicking inside chat during streaming does not disengage sticky follow", async () => {
+		const baseTs = Date.now() - 3_000
+		await hydrate(2, buildMessages(baseTs))
+		await waitForCalls(2)
+		await waitForCallsSettled()
+		expect(resolveFollowOutput(false)).toBe("auto")
+
+		// Simulate user clicking inside the chat area (e.g. reading messages)
+		// This sets pointerScrollActiveRef.current = true via pointerdown
+		const scrollable = getScrollable()
+		await act(async () => {
+			fireEvent.pointerDown(scrollable)
+		})
+
+		// Simulate streaming data growth that causes atBottom(false)
+		await act(async () => {
+			postState([
+				...buildMessages(baseTs),
+				{ type: "say", say: "text", ts: Date.now(), text: "streaming-update" },
+			])
+		})
+		await flushEffects()
+
+		// followOutput should still be "auto" — clicking (not scrolling up)
+		// should NOT disengage sticky follow during streaming
+		expect(resolveFollowOutput(false)).toBe("auto")
+
+		await act(async () => {
+			fireEvent.pointerUp(window)
+		})
+	})
+
+	it("bottom-following user stays at bottom during streaming", async () => {
+		const baseTs = Date.now() - 3_000
+		await hydrate(2, buildMessages(baseTs))
+		await waitForCalls(2)
+		await waitForCallsSettled()
+		expect(resolveFollowOutput(false)).toBe("auto")
+
+		// Simulate streaming data growth — reuse same baseTs to avoid task switch
+		await act(async () => {
+			postState([
+				...buildMessages(baseTs),
+				{ type: "say", say: "text", ts: Date.now(), text: "streaming-update-1" },
+			])
+		})
+		await flushEffects()
+
+		// followOutput should still be "auto" — user stays at bottom
+		expect(resolveFollowOutput(false)).toBe("auto")
+	})
+
 	it("repeated checkpoint clicks step backward through previous checkpoints", async () => {
 		await hydrate(2, buildMessagesWithMultipleCheckpoints(Date.now() - 3_000))
 		await waitForCalls(2)

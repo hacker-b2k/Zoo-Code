@@ -1408,19 +1408,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		prevExpandedRowsRef.current = expandedRows
 	}, [enterUserBrowsingHistory, expandedRows])
 
-	// Clear ephemeral manual overrides when collapse-relevant inputs change.
-	// This ensures that expanding/collapsing a message is a temporary action:
-	// - When a new message arrives (groupedMessages.length changes), overrides reset
-	// - When the user changes auto-collapse settings, overrides reset
-	// - During streaming (same message count), overrides persist for good UX
-	const prevVirtuosoItemsLengthRef = useRef(virtuosoItems.length)
-	if (prevVirtuosoItemsLengthRef.current !== virtuosoItems.length) {
-		prevVirtuosoItemsLengthRef.current = virtuosoItems.length
-		// Schedule state reset using the "state adjustment during render" pattern.
-		// React 18 batches this with the current render for efficiency.
-		setExpandedRows({})
-	}
-
+	// Clear ephemeral manual overrides when collapse-relevant settings change.
+	// Task switches reset via the effect keyed on task?.ts (line ~549).
+	// We intentionally do NOT reset on virtuosoItems.length change during
+	// streaming — collapsing all expanded rows simultaneously creates a sudden
+	// height change that competes with Virtuoso's followOutput scroll, causing
+	// visible jumps to older messages.
 	useEffect(() => {
 		setExpandedRows({})
 	}, [autoCollapseLongMessages, longMessageCollapseThreshold])
@@ -1454,11 +1447,11 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	//
 	// Each Task Activity group has a lifecycle:
 	//   - Active: the agent is currently working on this group.
-	//     A group is active iff it is the latest (newest) group AND isStreaming is true.
+	//     A group is active iff it is the final rendered item AND isStreaming is true.
 	//     Active groups are expanded by default.
 	//   - Finished: the agent has moved past this group.
-	//     A group is finished if it is NOT the latest group (a newer group exists),
-	//     OR if it IS the latest group but isStreaming is false (agent stopped).
+	//     A group is finished if a newer rendered item exists after it,
+	//     OR if it IS the final rendered item but isStreaming is false (agent stopped).
 	//     Finished groups are auto-collapsed.
 	//
 	// This single effect replaces both the previous "new group creation" effect
@@ -1469,19 +1462,11 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	//
 	// Manual user interaction always wins — groups recorded in manualToggleRef
 	// are never overridden by this effect.
-	// Extract latestGroupTs so it can be shared between the lifecycle effect
-	// and the itemContent callback (where viewModel is derived per group).
-	const latestGroupTs = useMemo(() => {
-		let latest: number | undefined
-		for (const item of virtuosoItems) {
-			if (isTaskActivityGroup(item)) {
-				const ts = (item as TaskActivityGroupData).ts
-				if (latest === undefined || ts > latest) {
-					latest = ts
-				}
-			}
-		}
-		return latest
+	// Extract activeTaskActivityGroupTs so it can be shared between the lifecycle
+	// effect and the itemContent callback (where viewModel is derived per group).
+	const activeTaskActivityGroupTs = useMemo(() => {
+		const lastItem = virtuosoItems.at(-1)
+		return lastItem && isTaskActivityGroup(lastItem) ? lastItem.ts : undefined
 	}, [virtuosoItems])
 
 	useEffect(() => {
@@ -1495,8 +1480,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 				if (!isTaskActivityGroup(item)) continue
 				const ts = (item as TaskActivityGroupData).ts
 
-				// A group is "active" if it is the latest AND the agent is streaming.
-				const isActive = ts === latestGroupTs && isStreaming
+				// A group is "active" only while it is the final rendered item and the agent is streaming.
+				const isActive = ts === activeTaskActivityGroupTs && isStreaming
 
 				if (manualToggleRef.current.has(ts)) {
 					// User manually changed this group — preserve their choice.
@@ -1523,7 +1508,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 
 			return changed ? next : prev
 		})
-	}, [virtuosoItems, isStreaming, autoCollapseTaskActivity, latestGroupTs])
+	}, [virtuosoItems, isStreaming, autoCollapseTaskActivity, activeTaskActivityGroupTs])
 
 	// Toggle collapse state for a task activity group.
 	const handleToggleTaskActivity = useCallback((groupTs: number) => {
@@ -1722,7 +1707,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			if (isTaskActivityGroup(item)) {
 				const groupData = item as TaskActivityGroupData
 				const groupCollapse = taskActivityGroupState[groupData.ts]
-				const isActive = groupData.ts === latestGroupTs && isStreaming
+				const isActive = groupData.ts === activeTaskActivityGroupTs && isStreaming
 				const viewModel = deriveTaskActivityViewModel(groupData.messages, isActive)
 				return (
 					<TaskActivityGroup
@@ -1794,7 +1779,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		[
 			collapseDecisions,
 			taskActivityGroupState,
-			latestGroupTs,
+			activeTaskActivityGroupTs,
 			handleToggleTaskActivity,
 			toggleRowExpansion,
 			modifiedMessages,
