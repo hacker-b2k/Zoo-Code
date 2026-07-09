@@ -1,6 +1,12 @@
 import { HTMLAttributes } from "react"
 
-import type { Experiments, ImageGenerationProvider } from "@roo-code/types"
+import type {
+	CustomImageProviderConfig,
+	Experiments,
+	ImageGenerationApiMethod,
+	ImageGenerationProvider,
+	VertexImageAuthMode,
+} from "@roo-code/types"
 
 import { EXPERIMENT_IDS, experimentConfigsMap } from "@roo/experiments"
 
@@ -21,11 +27,31 @@ type ExperimentalSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	apiConfiguration?: any
 	setApiConfigurationField?: any
 	imageGenerationProvider?: ImageGenerationProvider
-	openRouterImageApiKey?: string
-	openRouterImageGenerationSelectedModel?: string
+	imageGenerationBaseUrl?: string
+	imageGenerationApiKey?: string
+	imageGenerationHeaders?: Record<string, string>
+	imageGenerationSelectedModel?: string
+	imageGenerationApiMethod?: ImageGenerationApiMethod
+	imageGenerationCustomProvider?: CustomImageProviderConfig
+	vertexImageProjectId?: string
+	vertexImageRegion?: string
+	vertexImageModel?: string
+	vertexImageAuthMode?: VertexImageAuthMode
+	vertexImageAccessToken?: string
+	vertexImageServiceAccountJson?: string
 	setImageGenerationProvider?: (provider: ImageGenerationProvider) => void
-	setOpenRouterImageApiKey?: (apiKey: string) => void
+	setImageGenerationBaseUrl?: (baseUrl: string) => void
+	setImageGenerationApiKey?: (apiKey: string) => void
+	setImageGenerationHeaders?: (headers: Record<string, string>) => void
 	setImageGenerationSelectedModel?: (model: string) => void
+	setImageGenerationApiMethod?: (apiMethod: ImageGenerationApiMethod) => void
+	setImageGenerationCustomProvider?: (customProvider: CustomImageProviderConfig) => void
+	setVertexImageProjectId?: (projectId: string) => void
+	setVertexImageRegion?: (region: string) => void
+	setVertexImageModel?: (model: string) => void
+	setVertexImageAuthMode?: (authMode: VertexImageAuthMode) => void
+	setVertexImageAccessToken?: (accessToken: string) => void
+	setVertexImageServiceAccountJson?: (serviceAccountJson: string) => void
 }
 
 export const ExperimentalSettings = ({
@@ -34,11 +60,31 @@ export const ExperimentalSettings = ({
 	apiConfiguration,
 	setApiConfigurationField,
 	imageGenerationProvider,
-	openRouterImageApiKey,
-	openRouterImageGenerationSelectedModel,
+	imageGenerationBaseUrl,
+	imageGenerationApiKey,
+	imageGenerationHeaders,
+	imageGenerationSelectedModel,
+	imageGenerationApiMethod,
+	imageGenerationCustomProvider,
+	vertexImageProjectId,
+	vertexImageRegion,
+	vertexImageModel,
+	vertexImageAuthMode,
+	vertexImageAccessToken,
+	vertexImageServiceAccountJson,
 	setImageGenerationProvider,
-	setOpenRouterImageApiKey,
+	setImageGenerationBaseUrl,
+	setImageGenerationApiKey,
+	setImageGenerationHeaders,
 	setImageGenerationSelectedModel,
+	setImageGenerationApiMethod,
+	setImageGenerationCustomProvider,
+	setVertexImageProjectId,
+	setVertexImageRegion,
+	setVertexImageModel,
+	setVertexImageAuthMode,
+	setVertexImageAccessToken,
+	setVertexImageServiceAccountJson,
 	className,
 	...props
 }: ExperimentalSettingsProps) => {
@@ -60,8 +106,18 @@ export const ExperimentalSettings = ({
 						if (
 							config[0] === "IMAGE_GENERATION" &&
 							setImageGenerationProvider &&
-							setOpenRouterImageApiKey &&
-							setImageGenerationSelectedModel
+							setImageGenerationBaseUrl &&
+							setImageGenerationApiKey &&
+							setImageGenerationHeaders &&
+							setImageGenerationSelectedModel &&
+							setImageGenerationApiMethod &&
+							setImageGenerationCustomProvider &&
+							setVertexImageProjectId &&
+							setVertexImageRegion &&
+							setVertexImageModel &&
+							setVertexImageAuthMode &&
+							setVertexImageAccessToken &&
+							setVertexImageServiceAccountJson
 						) {
 							return (
 								<SearchableSetting
@@ -75,11 +131,31 @@ export const ExperimentalSettings = ({
 											setExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION, enabled)
 										}
 										imageGenerationProvider={imageGenerationProvider}
-										openRouterImageApiKey={openRouterImageApiKey}
-										openRouterImageGenerationSelectedModel={openRouterImageGenerationSelectedModel}
+										imageGenerationBaseUrl={imageGenerationBaseUrl}
+										imageGenerationApiKey={imageGenerationApiKey}
+										imageGenerationHeaders={imageGenerationHeaders}
+										imageGenerationSelectedModel={imageGenerationSelectedModel}
+										imageGenerationApiMethod={imageGenerationApiMethod}
+										imageGenerationCustomProvider={imageGenerationCustomProvider}
+										vertexImageProjectId={vertexImageProjectId}
+										vertexImageRegion={vertexImageRegion}
+										vertexImageModel={vertexImageModel}
+										vertexImageAuthMode={vertexImageAuthMode}
+										vertexImageAccessToken={vertexImageAccessToken}
+										vertexImageServiceAccountJson={vertexImageServiceAccountJson}
 										setImageGenerationProvider={setImageGenerationProvider}
-										setOpenRouterImageApiKey={setOpenRouterImageApiKey}
+										setImageGenerationBaseUrl={setImageGenerationBaseUrl}
+										setImageGenerationApiKey={setImageGenerationApiKey}
+										setImageGenerationHeaders={setImageGenerationHeaders}
 										setImageGenerationSelectedModel={setImageGenerationSelectedModel}
+										setImageGenerationApiMethod={setImageGenerationApiMethod}
+										setImageGenerationCustomProvider={setImageGenerationCustomProvider}
+										setVertexImageProjectId={setVertexImageProjectId}
+										setVertexImageRegion={setVertexImageRegion}
+										setVertexImageModel={setVertexImageModel}
+										setVertexImageAuthMode={setVertexImageAuthMode}
+										setVertexImageAccessToken={setVertexImageAccessToken}
+										setVertexImageServiceAccountJson={setVertexImageServiceAccountJson}
 									/>
 								</SearchableSetting>
 							)

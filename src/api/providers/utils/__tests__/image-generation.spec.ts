@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { generateImageWithImagesApi, generateImageWithProvider } from "../image-generation"
+import { CLOUDFLARE_IMAGE_PROVIDER_PRESET, POYO_IMAGE_PROVIDER_PRESET } from "@roo-code/types"
+import {
+	generateImageWithCustomProvider,
+	generateImageWithDirectPostProvider,
+	generateImageWithImagesApi,
+	generateImageWithProvider,
+} from "../image-generation"
 
 // Mock the i18n module
 vi.mock("../../../i18n", () => ({
@@ -415,5 +421,120 @@ describe("generateImageWithProvider (chat completions)", () => {
 
 		expect(result.success).toBe(false)
 		expect(result.error).toBeDefined()
+	})
+})
+
+describe("generateImageWithCustomProvider (async submit/poll)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	afterEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("should submit, poll, download, and return a data URL for Poyo-style providers", async () => {
+		const submitResponse = {
+			ok: true,
+			json: vi.fn().mockResolvedValue({ data: { task_id: "task-123" } }),
+		}
+		const pollResponse = {
+			ok: true,
+			json: vi.fn().mockResolvedValue({
+				data: {
+					status: "finished",
+					files: [{ file_url: "https://cdn.example.com/image.png" }],
+				},
+			}),
+		}
+		const imageResponse = {
+			ok: true,
+			headers: new Headers({ "content-type": "image/png" }),
+			arrayBuffer: vi.fn().mockResolvedValue(Buffer.from("fake image data")),
+		}
+
+		vi.mocked(global.fetch)
+			.mockResolvedValueOnce(submitResponse as any)
+			.mockResolvedValueOnce(pollResponse as any)
+			.mockResolvedValueOnce(imageResponse as any)
+
+		const result = await generateImageWithCustomProvider({
+			baseURL: "https://api.poyo.ai",
+			authToken: "test-token",
+			model: "gpt-image-1.5",
+			prompt: "A futuristic lamp",
+			config: { ...POYO_IMAGE_PROVIDER_PRESET, pollIntervalMs: 0 },
+		})
+
+		expect(result.success).toBe(true)
+		expect(result.imageData).toContain("data:image/png;base64,")
+		expect(global.fetch).toHaveBeenNthCalledWith(
+			1,
+			"https://api.poyo.ai/api/generate/submit",
+			expect.objectContaining({ method: "POST" }),
+		)
+		expect(global.fetch).toHaveBeenNthCalledWith(
+			2,
+			"https://api.poyo.ai/api/generate/status/task-123",
+			expect.objectContaining({ method: "GET" }),
+		)
+		expect(global.fetch).toHaveBeenNthCalledWith(3, "https://cdn.example.com/image.png")
+	})
+
+	describe("generateImageWithDirectPostProvider", () => {
+		beforeEach(() => {
+			vi.clearAllMocks()
+		})
+
+		it("should support Cloudflare-style direct binary image responses", async () => {
+			vi.mocked(global.fetch).mockResolvedValueOnce({
+				ok: true,
+				headers: new Headers({ "content-type": "image/png" }),
+				arrayBuffer: vi.fn().mockResolvedValue(Buffer.from("fake image data")),
+			} as any)
+
+			const result = await generateImageWithDirectPostProvider({
+				baseURL: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/run",
+				authToken: "cf-token",
+				model: "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+				prompt: "A futuristic lamp",
+				config: CLOUDFLARE_IMAGE_PROVIDER_PRESET,
+			})
+
+			expect(result.success).toBe(true)
+			expect(result.imageData).toContain("data:image/png;base64,")
+			expect(global.fetch).toHaveBeenCalledWith(
+				"https://api.cloudflare.com/client/v4/accounts/account-id/ai/run/@cf/stabilityai/stable-diffusion-xl-base-1.0",
+				expect.objectContaining({
+					method: "POST",
+					headers: expect.objectContaining({ Authorization: "Bearer cf-token" }),
+				}),
+			)
+			const body = JSON.parse(vi.mocked(global.fetch).mock.calls[0][1]?.body as string)
+			expect(body.prompt).toBe("A futuristic lamp")
+		})
+	})
+
+	it("should return failure when async provider reports failed status", async () => {
+		vi.mocked(global.fetch)
+			.mockResolvedValueOnce({
+				ok: true,
+				json: vi.fn().mockResolvedValue({ data: { task_id: "task-123" } }),
+			} as any)
+			.mockResolvedValueOnce({
+				ok: true,
+				json: vi.fn().mockResolvedValue({ data: { status: "failed", error: "bad prompt" } }),
+			} as any)
+
+		const result = await generateImageWithCustomProvider({
+			baseURL: "https://api.poyo.ai",
+			authToken: "test-token",
+			model: "gpt-image-1.5",
+			prompt: "A futuristic lamp",
+			config: { ...POYO_IMAGE_PROVIDER_PRESET, pollIntervalMs: 0 },
+		})
+
+		expect(result.success).toBe(false)
+		expect(result.error).toContain("failed")
 	})
 })

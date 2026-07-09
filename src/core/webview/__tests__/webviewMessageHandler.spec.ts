@@ -1428,3 +1428,56 @@ describe("zooCodeSignOut", () => {
 		)
 	})
 })
+
+describe("webviewMessageHandler - testImageGenerationProvider", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				headers: new Headers({ "content-type": "image/png" }),
+				arrayBuffer: vi.fn().mockResolvedValue(Buffer.from("test-image")),
+			}),
+		)
+	})
+
+	it("generates a small test image and returns a preview", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "testImageGenerationProvider",
+			values: {
+				provider: "custom",
+				baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/run",
+				apiKey: "token",
+				model: "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+				apiMethod: "direct_post",
+				customProvider: { directPath: "/{{model}}", directBodyTemplate: '{"prompt":"{{prompt}}"}' },
+			},
+		} as any)
+
+		expect(global.fetch).toHaveBeenCalledWith(
+			"https://api.cloudflare.com/client/v4/accounts/account-id/ai/run/@cf/stabilityai/stable-diffusion-xl-base-1.0",
+			expect.objectContaining({ method: "POST" }),
+		)
+		expect(mockClineProvider.postMessageToWebview).toHaveBeenCalledWith({
+			type: "imageGenerationTestResult",
+			success: true,
+			text: "Provider test successful.",
+			images: ["data:image/png;base64,dGVzdC1pbWFnZQ=="],
+		})
+	})
+
+	it("returns validation error when required values are missing", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "testImageGenerationProvider",
+			values: { provider: "custom", apiKey: "token" },
+		} as any)
+
+		expect(global.fetch).not.toHaveBeenCalled()
+		expect(mockClineProvider.postMessageToWebview).toHaveBeenCalledWith({
+			type: "imageGenerationTestResult",
+			success: false,
+			error: "Base URL, API key, and model are required.",
+		})
+	})
+})

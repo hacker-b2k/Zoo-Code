@@ -97,8 +97,46 @@ export const globalSettingsSchema = z.object({
 	taskHistory: z.array(historyItemSchema).optional(),
 	dismissedUpsells: z.array(z.string()).optional(),
 
-	// Image generation settings (experimental) - flattened for simplicity
-	imageGenerationProvider: z.enum(["openrouter"]).optional(),
+	// Image generation settings (experimental) - OpenAI-compatible and custom endpoint configuration.
+	imageGenerationProvider: z
+		.enum(["openai-compatible", "openrouter", "vertex-ai", "google-express", "custom"])
+		.optional(),
+	imageGenerationBaseUrl: z.string().optional(),
+	imageGenerationApiKey: z.string().optional(),
+	imageGenerationHeaders: z.record(z.string(), z.string()).optional(),
+	imageGenerationSelectedModel: z.string().optional(),
+	imageGenerationApiMethod: z.enum(["chat_completions", "images_api", "async_submit_poll", "direct_post"]).optional(),
+	imageGenerationCustomProvider: z
+		.object({
+			name: z.string().optional(),
+			presetId: z.enum(["openai-images", "openai-chat", "cloudflare-workers-ai", "poyo-ai", "manual"]).optional(),
+			directPath: z.string().optional(),
+			directBodyTemplate: z.string().optional(),
+			directImagePath: z.string().optional(),
+			directErrorPath: z.string().optional(),
+			submitPath: z.string().optional(),
+			submitMethod: z.enum(["POST", "PUT", "PATCH"]).optional(),
+			submitBodyTemplate: z.string().optional(),
+			taskIdPath: z.string().optional(),
+			pollPath: z.string().optional(),
+			pollMethod: z.enum(["GET", "POST"]).optional(),
+			statusPath: z.string().optional(),
+			successStatus: z.string().optional(),
+			failureStatus: z.string().optional(),
+			imageUrlPath: z.string().optional(),
+			errorPath: z.string().optional(),
+			pollIntervalMs: z.number().optional(),
+			pollMaxAttempts: z.number().optional(),
+			outputFormat: z.enum(["png", "jpeg", "jpg", "webp"]).optional(),
+		})
+		.optional(),
+	vertexImageProjectId: z.string().optional(),
+	vertexImageRegion: z.string().optional(),
+	vertexImageModel: z.string().optional(),
+	vertexImageAuthMode: z.enum(["access_token", "service_account_json"]).optional(),
+	vertexImageAccessToken: z.string().optional(),
+	vertexImageServiceAccountJson: z.string().optional(),
+	// Legacy OpenRouter image fields kept for import/migration compatibility.
 	openRouterImageApiKey: z.string().optional(),
 	openRouterImageGenerationSelectedModel: z.string().optional(),
 
@@ -312,7 +350,10 @@ export const SECRET_STATE_KEYS = [
 
 // Global secrets that are part of GlobalSettings (not ProviderSettings)
 export const GLOBAL_SECRET_KEYS = [
-	"openRouterImageApiKey", // For image generation
+	"imageGenerationApiKey", // For generic image generation
+	"vertexImageAccessToken", // For Vertex AI image generation access-token auth
+	"vertexImageServiceAccountJson", // For Vertex AI image generation service-account JSON auth
+	"openRouterImageApiKey", // Legacy image generation key
 ] as const
 
 // Type for the actual secret storage keys

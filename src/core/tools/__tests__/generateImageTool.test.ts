@@ -7,14 +7,14 @@ import * as pathUtils from "../../../utils/pathUtils"
 import * as fileUtils from "../../../utils/fs"
 import { formatResponse } from "../../prompts/responses"
 import { EXPERIMENT_IDS } from "../../../shared/experiments"
-import { OpenRouterHandler } from "../../../api/providers/openrouter"
+import { ImageGenerationClient } from "../../../api/providers/image-generation"
 
 // Mock dependencies
 vi.mock("fs/promises")
 vi.mock("../../../utils/pathUtils")
 vi.mock("../../../utils/fs")
 vi.mock("../../../utils/safeWriteJson")
-vi.mock("../../../api/providers/openrouter")
+vi.mock("../../../api/providers/image-generation")
 
 describe("generateImageTool", () => {
 	let mockCline: any
@@ -45,8 +45,10 @@ describe("generateImageTool", () => {
 						experiments: {
 							[EXPERIMENT_IDS.IMAGE_GENERATION]: true,
 						},
-						openRouterImageApiKey: "test-api-key",
-						openRouterImageGenerationSelectedModel: "google/gemini-2.5-flash-image",
+						imageGenerationApiKey: "test-api-key",
+						imageGenerationBaseUrl: "https://openrouter.ai/api/v1",
+						imageGenerationSelectedModel: "google/gemini-2.5-flash-image",
+						imageGenerationApiMethod: "chat_completions",
 					}),
 				}),
 			},
@@ -141,13 +143,12 @@ describe("generateImageTool", () => {
 				partial: false,
 			}
 
-			// Mock the OpenRouterHandler generateImage method
 			const mockGenerateImage = vi.fn().mockResolvedValue({
 				success: true,
 				imageData: "data:image/png;base64,fakebase64data",
 			})
 
-			vi.mocked(OpenRouterHandler).mockImplementation(function () {
+			vi.mocked(ImageGenerationClient).mockImplementation(function () {
 				return {
 					generateImage: mockGenerateImage,
 				} as any
@@ -161,7 +162,15 @@ describe("generateImageTool", () => {
 
 			// Should process the complete block
 			expect(mockAskApproval).toHaveBeenCalled()
-			expect(mockGenerateImage).toHaveBeenCalled()
+			expect(ImageGenerationClient).toHaveBeenCalledWith(
+				expect.objectContaining({
+					apiKey: "test-api-key",
+					baseUrl: "https://openrouter.ai/api/v1",
+					model: "google/gemini-2.5-flash-image",
+					apiMethod: "chat_completions",
+				}),
+			)
+			expect(mockGenerateImage).toHaveBeenCalledWith({ prompt: "Generate a test image", inputImage: undefined })
 			expect(mockPushToolResult).toHaveBeenCalled()
 		})
 
@@ -184,13 +193,12 @@ describe("generateImageTool", () => {
 			const mockWebviewUri = "https://file+.vscode-resource.vscode-cdn.net/test/workspace/test-image.png"
 			mockCline.providerRef.deref().convertToWebviewUri = vi.fn().mockReturnValue(mockWebviewUri)
 
-			// Mock the OpenRouterHandler generateImage method
 			const mockGenerateImage = vi.fn().mockResolvedValue({
 				success: true,
 				imageData: "data:image/png;base64,fakebase64data",
 			})
 
-			vi.mocked(OpenRouterHandler).mockImplementation(function () {
+			vi.mocked(ImageGenerationClient).mockImplementation(function () {
 				return {
 					generateImage: mockGenerateImage,
 				} as any

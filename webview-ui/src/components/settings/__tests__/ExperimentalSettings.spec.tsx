@@ -15,8 +15,11 @@ describe("ExperimentalSettings", () => {
 		experiments: experimentDefault,
 		setExperimentEnabled: vi.fn(),
 		setImageGenerationProvider: vi.fn(),
-		setOpenRouterImageApiKey: vi.fn(),
+		setImageGenerationBaseUrl: vi.fn(),
+		setImageGenerationApiKey: vi.fn(),
+		setImageGenerationHeaders: vi.fn(),
 		setImageGenerationSelectedModel: vi.fn(),
+		setImageGenerationApiMethod: vi.fn(),
 	}
 
 	beforeEach(() => {

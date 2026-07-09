@@ -679,36 +679,50 @@ function normalizeOpenAiText(value: unknown): string {
 }
 
 export async function getOpenAiModels(baseUrl?: string, apiKey?: string, openAiHeaders?: Record<string, string>) {
+	if (!baseUrl) {
+		throw new Error("No base URL provided. Please configure a base URL in Image Generation settings.")
+	}
+
+	const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(baseUrl)
+	if (!analyzedBaseUrl.isValid || !analyzedBaseUrl.baseUrl) {
+		throw new Error(`Invalid base URL: "${baseUrl}". Please check the URL format.`)
+	}
+
+	const config: Record<string, any> = {}
+	const headers: Record<string, string> = {
+		...DEFAULT_HEADERS,
+		"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
+		"X-Title": "Roo Code",
+		...(openAiHeaders || {}),
+	}
+
+	if (apiKey) {
+		headers["Authorization"] = `Bearer ${apiKey}`
+	}
+
+	if (Object.keys(headers).length > 0) {
+		config["headers"] = headers
+	}
+
 	try {
-		if (!baseUrl) {
-			return []
-		}
-
-		const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(baseUrl)
-		if (!analyzedBaseUrl.isValid || !analyzedBaseUrl.baseUrl) {
-			return []
-		}
-
-		const config: Record<string, any> = {}
-		const headers: Record<string, string> = {
-			...DEFAULT_HEADERS,
-			"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
-			"X-Title": "Roo Code",
-			...(openAiHeaders || {}),
-		}
-
-		if (apiKey) {
-			headers["Authorization"] = `Bearer ${apiKey}`
-		}
-
-		if (Object.keys(headers).length > 0) {
-			config["headers"] = headers
-		}
-
 		const response = await axios.get(getOpenAiCompatibleModelsUrl(analyzedBaseUrl.baseUrl), config)
 		const modelsArray = response.data?.data?.map((model: any) => model.id) || []
 		return [...new Set<string>(modelsArray)]
 	} catch (error) {
-		return []
+		if (axios.isAxiosError(error)) {
+			const status = error.response?.status
+			if (status === 401 || status === 403) {
+				throw new Error(`Authentication failed (HTTP ${status}). Please check your API key.`)
+			}
+			if (status === 404) {
+				throw new Error(
+					`Models endpoint not found at "${getOpenAiCompatibleModelsUrl(analyzedBaseUrl.baseUrl)}". The server may not support model listing.`,
+				)
+			}
+			throw new Error(
+				`Failed to fetch models: ${error.message}${status ? ` (HTTP ${status})` : ""}. Check your base URL and API key.`,
+			)
+		}
+		throw error
 	}
 }

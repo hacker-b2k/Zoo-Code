@@ -3,9 +3,14 @@ import fs from "fs/promises"
 import * as vscode from "vscode"
 import {
 	GenerateImageParams,
-	IMAGE_GENERATION_MODEL_IDS,
-	IMAGE_GENERATION_MODELS,
-	getImageGenerationProvider,
+	IMAGE_GENERATION_DEFAULT_API_METHOD,
+	IMAGE_GENERATION_DEFAULT_MODEL,
+	IMAGE_GENERATION_DEFAULT_PROVIDER,
+	IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL,
+	IMAGE_GENERATION_GOOGLE_EXPRESS_DEFAULT_MODEL,
+	IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE,
+	IMAGE_GENERATION_VERTEX_DEFAULT_MODEL,
+	IMAGE_GENERATION_VERTEX_DEFAULT_REGION,
 } from "@roo-code/types"
 import { Task } from "../task/Task"
 import { formatResponse } from "../prompts/responses"
@@ -13,7 +18,7 @@ import { fileExistsAtPath } from "../../utils/fs"
 import { getReadablePath } from "../../utils/path"
 import { isPathOutsideWorkspace } from "../../utils/pathUtils"
 import { EXPERIMENT_IDS, experiments } from "../../shared/experiments"
-import { OpenRouterHandler } from "../../api/providers/openrouter"
+import { ImageGenerationClient } from "../../api/providers/image-generation"
 import { BaseTool, ToolCallbacks } from "./BaseTool"
 import type { ToolUse } from "../../shared/tools"
 import { t } from "../../i18n"
@@ -121,42 +126,31 @@ export class GenerateImageTool extends BaseTool<"generate_image"> {
 
 		const isWriteProtected = task.rooProtectedController?.isWriteProtected(relPath) || false
 
-		// Use shared utility for backwards compatibility logic
-		const imageProvider = getImageGenerationProvider(
-			state?.imageGenerationProvider,
-			!!state?.openRouterImageGenerationSelectedModel,
-		)
+		const imageProvider = state?.imageGenerationProvider || IMAGE_GENERATION_DEFAULT_PROVIDER
+		const defaultSelectedModel =
+			imageProvider === "google-express"
+				? IMAGE_GENERATION_GOOGLE_EXPRESS_DEFAULT_MODEL
+				: IMAGE_GENERATION_DEFAULT_MODEL
+		const selectedModel =
+			state?.imageGenerationSelectedModel || state?.openRouterImageGenerationSelectedModel || defaultSelectedModel
+		const apiKey = state?.imageGenerationApiKey || state?.openRouterImageApiKey
+		const baseUrl = state?.imageGenerationBaseUrl || IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL
+		const apiMethod = state?.imageGenerationApiMethod || IMAGE_GENERATION_DEFAULT_API_METHOD
+		const vertexAuthMode = state?.vertexImageAuthMode || IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE
+		const vertexCredential =
+			vertexAuthMode === "service_account_json"
+				? state?.vertexImageServiceAccountJson
+				: state?.vertexImageAccessToken
 
-		// Get the selected model
-		let selectedModel = state?.openRouterImageGenerationSelectedModel
-		let modelInfo = undefined
-
-		// Find the model info matching both value AND provider
-		// (since the same model value can exist for multiple providers)
-		if (selectedModel) {
-			modelInfo = IMAGE_GENERATION_MODELS.find((m) => m.value === selectedModel && m.provider === imageProvider)
-			if (!modelInfo) {
-				// Model doesn't exist for this provider, use first model for selected provider
-				const providerModels = IMAGE_GENERATION_MODELS.filter((m) => m.provider === imageProvider)
-				modelInfo = providerModels[0]
-				selectedModel = modelInfo?.value || IMAGE_GENERATION_MODEL_IDS[0]
-			}
-		} else {
-			// No model selected, use first model for selected provider
-			const providerModels = IMAGE_GENERATION_MODELS.filter((m) => m.provider === imageProvider)
-			modelInfo = providerModels[0]
-			selectedModel = modelInfo?.value || IMAGE_GENERATION_MODEL_IDS[0]
+		if (imageProvider !== "vertex-ai" && !apiKey) {
+			const errorMessage = t("tools:generateImage.apiKeyRequired")
+			await task.say("error", errorMessage)
+			pushToolResult(formatResponse.toolError(errorMessage))
+			return
 		}
 
-		// Use the provider selection
-		const modelProvider = imageProvider
-		const apiMethod = modelInfo?.apiMethod
-
-		// Validate API key for OpenRouter
-		const openRouterApiKey = state?.openRouterImageApiKey
-
-		if (imageProvider === "openrouter" && !openRouterApiKey) {
-			const errorMessage = t("tools:generateImage.openRouterApiKeyRequired")
+		if (imageProvider === "vertex-ai" && !vertexCredential) {
+			const errorMessage = "Vertex AI credentials are required for image generation."
 			await task.say("error", errorMessage)
 			pushToolResult(formatResponse.toolError(errorMessage))
 			return
@@ -188,13 +182,25 @@ export class GenerateImageTool extends BaseTool<"generate_image"> {
 				return
 			}
 
-			const openRouterHandler = new OpenRouterHandler({} as any)
-			const result = await openRouterHandler.generateImage(
-				prompt,
-				selectedModel,
-				openRouterApiKey!,
-				inputImageData,
-			)
+			const imageGenerationClient = new ImageGenerationClient({
+				provider:
+					imageProvider === "vertex-ai" || imageProvider === "google-express" || imageProvider === "custom"
+						? imageProvider
+						: "openai-compatible",
+				baseUrl,
+				apiKey,
+				model: selectedModel,
+				apiMethod,
+				headers: state?.imageGenerationHeaders,
+				customProvider: state?.imageGenerationCustomProvider,
+				vertexProjectId: state?.vertexImageProjectId,
+				vertexRegion: state?.vertexImageRegion || IMAGE_GENERATION_VERTEX_DEFAULT_REGION,
+				vertexModel: state?.vertexImageModel || IMAGE_GENERATION_VERTEX_DEFAULT_MODEL,
+				vertexAuthMode,
+				vertexAccessToken: state?.vertexImageAccessToken,
+				vertexServiceAccountJson: state?.vertexImageServiceAccountJson,
+			})
+			const result = await imageGenerationClient.generateImage({ prompt, inputImage: inputImageData })
 
 			if (!result.success) {
 				await task.say("error", result.error || "Failed to generate image")

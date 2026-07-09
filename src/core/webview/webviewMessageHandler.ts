@@ -70,6 +70,8 @@ import { fileExistsAtPath } from "../../utils/fs"
 import { playTts, setTtsEnabled, setTtsSpeed, stopTts } from "../../utils/tts"
 import { searchCommits } from "../../utils/git"
 import { exportSettings, importSettingsWithFeedback } from "../config/importExport"
+import { IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS, IMAGE_GENERATION_VERTEX_PRESET_MODELS } from "@roo-code/types"
+import { ImageGenerationClient } from "../../api/providers/image-generation"
 import { getOpenAiModels } from "../../api/providers/openai"
 import { getVsCodeLmModels } from "../../api/providers/vscode-lm"
 import { openMention } from "../mentions"
@@ -1301,6 +1303,100 @@ export const webviewMessageHandler = async (
 			}
 
 			break
+		case "requestImageGenerationModels": {
+			try {
+				const providerName = message?.values?.provider
+				if (providerName === "vertex-ai" || providerName === "google-express") {
+					// Vertex and Google Express use preset model lists, not live discovery
+					const presetModels =
+						providerName === "google-express"
+							? IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS.map((model) => model.value)
+							: IMAGE_GENERATION_VERTEX_PRESET_MODELS.map((model) => model.value)
+					provider.postMessageToWebview({
+						type: "imageGenerationModels",
+						imageGenerationModels: presetModels,
+					})
+					break
+				}
+
+				const baseUrl = message?.values?.baseUrl
+				if (!baseUrl) {
+					provider.postMessageToWebview({
+						type: "imageGenerationModels",
+						imageGenerationModels: [],
+						error: "No base URL configured. Please enter a base URL before refreshing models.",
+					})
+					break
+				}
+
+				const models = await getOpenAiModels(baseUrl, message?.values?.apiKey, message?.values?.headers)
+				provider.postMessageToWebview({ type: "imageGenerationModels", imageGenerationModels: models })
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error)
+				provider.postMessageToWebview({
+					type: "imageGenerationModels",
+					imageGenerationModels: [],
+					error: errorMessage,
+				})
+			}
+			break
+		}
+		case "testImageGenerationProvider": {
+			try {
+				const values = message?.values || {}
+				const providerName = values.provider || "openrouter"
+				const baseUrl = values.baseUrl || ""
+				const apiKey = values.apiKey || ""
+				const headers = values.headers || {}
+				const model = values.model || ""
+				const apiMethod = values.apiMethod || "chat_completions"
+				const customProvider = values.customProvider || {}
+
+				if (!baseUrl || !apiKey || !model) {
+					provider.postMessageToWebview({
+						type: "imageGenerationTestResult",
+						success: false,
+						error: "Base URL, API key, and model are required.",
+					})
+					break
+				}
+
+				const client = new ImageGenerationClient({
+					provider: providerName,
+					baseUrl,
+					apiKey,
+					headers,
+					model,
+					apiMethod,
+					customProvider,
+				})
+
+				const result = await client.generateImage({ prompt: "a simple red circle on white background" })
+
+				if (result.success && result.imageData) {
+					provider.postMessageToWebview({
+						type: "imageGenerationTestResult",
+						success: true,
+						text: "Provider test successful.",
+						images: [result.imageData],
+					})
+				} else {
+					provider.postMessageToWebview({
+						type: "imageGenerationTestResult",
+						success: false,
+						error: result.error || "Test failed.",
+					})
+				}
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error)
+				provider.postMessageToWebview({
+					type: "imageGenerationTestResult",
+					success: false,
+					error: errorMessage,
+				})
+			}
+			break
+		}
 		case "requestVsCodeLmModels":
 			const vsCodeLmModels = await getVsCodeLmModels()
 			// TODO: Cache like we do for OpenRouter, etc?

@@ -37,7 +37,11 @@ import {
 	type ExperimentId,
 	type TelemetrySetting,
 	DEFAULT_CHECKPOINT_TIMEOUT_SECONDS,
-	ImageGenerationProvider,
+	IMAGE_GENERATION_DEFAULT_PROVIDER,
+	type CustomImageProviderConfig,
+	type ImageGenerationApiMethod,
+	type ImageGenerationProvider,
+	type VertexImageAuthMode,
 } from "@roo-code/types"
 
 import { vscode } from "@src/utils/vscode"
@@ -202,6 +206,18 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		maxDiagnosticMessages,
 		includeTaskHistoryInEnhance,
 		imageGenerationProvider,
+		imageGenerationBaseUrl,
+		imageGenerationApiKey,
+		imageGenerationHeaders,
+		imageGenerationSelectedModel,
+		imageGenerationApiMethod,
+		imageGenerationCustomProvider,
+		vertexImageProjectId,
+		vertexImageRegion,
+		vertexImageModel,
+		vertexImageAuthMode,
+		vertexImageAccessToken,
+		vertexImageServiceAccountJson,
 		openRouterImageApiKey,
 		openRouterImageGenerationSelectedModel,
 		reasoningBlockCollapsed,
@@ -337,23 +353,123 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		})
 	}, [])
 
-	const setOpenRouterImageApiKey = useCallback((apiKey: string) => {
+	const setImageGenerationBaseUrl = useCallback((baseUrl: string) => {
 		setCachedState((prevState) => {
-			if (prevState.openRouterImageApiKey !== apiKey) {
+			if (prevState.imageGenerationBaseUrl !== baseUrl) {
 				setChangeDetected(true)
 			}
 
-			return { ...prevState, openRouterImageApiKey: apiKey }
+			return { ...prevState, imageGenerationBaseUrl: baseUrl }
+		})
+	}, [])
+
+	const setImageGenerationApiKey = useCallback((apiKey: string) => {
+		setCachedState((prevState) => {
+			if (prevState.imageGenerationApiKey !== apiKey) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, imageGenerationApiKey: apiKey }
+		})
+	}, [])
+
+	const setImageGenerationHeaders = useCallback((headers: Record<string, string>) => {
+		setCachedState((prevState) => {
+			if (JSON.stringify(prevState.imageGenerationHeaders ?? {}) !== JSON.stringify(headers)) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, imageGenerationHeaders: headers }
 		})
 	}, [])
 
 	const setImageGenerationSelectedModel = useCallback((model: string) => {
 		setCachedState((prevState) => {
-			if (prevState.openRouterImageGenerationSelectedModel !== model) {
+			if (prevState.imageGenerationSelectedModel !== model) {
 				setChangeDetected(true)
 			}
 
-			return { ...prevState, openRouterImageGenerationSelectedModel: model }
+			return { ...prevState, imageGenerationSelectedModel: model }
+		})
+	}, [])
+
+	const setImageGenerationApiMethod = useCallback((apiMethod: ImageGenerationApiMethod) => {
+		setCachedState((prevState) => {
+			if (prevState.imageGenerationApiMethod !== apiMethod) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, imageGenerationApiMethod: apiMethod }
+		})
+	}, [])
+
+	const setImageGenerationCustomProvider = useCallback((customProvider: CustomImageProviderConfig) => {
+		setCachedState((prevState) => {
+			if (JSON.stringify(prevState.imageGenerationCustomProvider ?? {}) !== JSON.stringify(customProvider)) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, imageGenerationCustomProvider: customProvider }
+		})
+	}, [])
+
+	const setVertexImageProjectId = useCallback((projectId: string) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageProjectId !== projectId) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageProjectId: projectId }
+		})
+	}, [])
+
+	const setVertexImageRegion = useCallback((region: string) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageRegion !== region) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageRegion: region }
+		})
+	}, [])
+
+	const setVertexImageModel = useCallback((model: string) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageModel !== model) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageModel: model }
+		})
+	}, [])
+
+	const setVertexImageAuthMode = useCallback((authMode: VertexImageAuthMode) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageAuthMode !== authMode) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageAuthMode: authMode }
+		})
+	}, [])
+
+	const setVertexImageAccessToken = useCallback((accessToken: string) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageAccessToken !== accessToken) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageAccessToken: accessToken }
+		})
+	}, [])
+
+	const setVertexImageServiceAccountJson = useCallback((serviceAccountJson: string) => {
+		setCachedState((prevState) => {
+			if (prevState.vertexImageServiceAccountJson !== serviceAccountJson) {
+				setChangeDetected(true)
+			}
+
+			return { ...prevState, vertexImageServiceAccountJson: serviceAccountJson }
 		})
 	}, [])
 
@@ -439,6 +555,18 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					autoCloseZooOpenedNewFiles: autoCloseZooOpenedNewFiles ?? false,
 					profileThresholds,
 					imageGenerationProvider,
+					imageGenerationBaseUrl,
+					imageGenerationApiKey,
+					imageGenerationHeaders,
+					imageGenerationSelectedModel,
+					imageGenerationApiMethod,
+					imageGenerationCustomProvider,
+					vertexImageProjectId,
+					vertexImageRegion,
+					vertexImageModel,
+					vertexImageAuthMode,
+					vertexImageAccessToken,
+					vertexImageServiceAccountJson,
 					openRouterImageApiKey,
 					openRouterImageGenerationSelectedModel,
 					experiments,
@@ -937,14 +1065,47 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								experiments={experiments}
 								apiConfiguration={apiConfiguration}
 								setApiConfigurationField={setApiConfigurationField}
-								imageGenerationProvider={imageGenerationProvider}
-								openRouterImageApiKey={openRouterImageApiKey as string | undefined}
-								openRouterImageGenerationSelectedModel={
-									openRouterImageGenerationSelectedModel as string | undefined
+								imageGenerationProvider={
+									imageGenerationProvider === "openai-compatible" ||
+									imageGenerationProvider === "vertex-ai" ||
+									imageGenerationProvider === "google-express" ||
+									imageGenerationProvider === "custom"
+										? imageGenerationProvider
+										: IMAGE_GENERATION_DEFAULT_PROVIDER
 								}
+								imageGenerationBaseUrl={imageGenerationBaseUrl as string | undefined}
+								imageGenerationApiKey={imageGenerationApiKey as string | undefined}
+								imageGenerationHeaders={imageGenerationHeaders as Record<string, string> | undefined}
+								imageGenerationSelectedModel={
+									(imageGenerationSelectedModel || openRouterImageGenerationSelectedModel) as
+										| string
+										| undefined
+								}
+								imageGenerationApiMethod={
+									imageGenerationApiMethod as ImageGenerationApiMethod | undefined
+								}
+								imageGenerationCustomProvider={
+									imageGenerationCustomProvider as CustomImageProviderConfig | undefined
+								}
+								vertexImageProjectId={vertexImageProjectId as string | undefined}
+								vertexImageRegion={vertexImageRegion as string | undefined}
+								vertexImageModel={vertexImageModel as string | undefined}
+								vertexImageAuthMode={vertexImageAuthMode as VertexImageAuthMode | undefined}
+								vertexImageAccessToken={vertexImageAccessToken as string | undefined}
+								vertexImageServiceAccountJson={vertexImageServiceAccountJson as string | undefined}
 								setImageGenerationProvider={setImageGenerationProvider}
-								setOpenRouterImageApiKey={setOpenRouterImageApiKey}
+								setImageGenerationBaseUrl={setImageGenerationBaseUrl}
+								setImageGenerationApiKey={setImageGenerationApiKey}
+								setImageGenerationHeaders={setImageGenerationHeaders}
 								setImageGenerationSelectedModel={setImageGenerationSelectedModel}
+								setImageGenerationApiMethod={setImageGenerationApiMethod}
+								setImageGenerationCustomProvider={setImageGenerationCustomProvider}
+								setVertexImageProjectId={setVertexImageProjectId}
+								setVertexImageRegion={setVertexImageRegion}
+								setVertexImageModel={setVertexImageModel}
+								setVertexImageAuthMode={setVertexImageAuthMode}
+								setVertexImageAccessToken={setVertexImageAccessToken}
+								setVertexImageServiceAccountJson={setVertexImageServiceAccountJson}
 							/>
 						)}
 

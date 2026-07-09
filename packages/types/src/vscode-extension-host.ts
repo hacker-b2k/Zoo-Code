@@ -42,6 +42,8 @@ export interface ExtensionMessage {
 		| "routerModels"
 		| "zooGatewayCredentialsReady"
 		| "openAiModels"
+		| "imageGenerationModels"
+		| "imageGenerationTestResult"
 		| "ollamaModels"
 		| "lmStudioModels"
 		| "vsCodeLmModels"
@@ -137,6 +139,7 @@ export interface ExtensionMessage {
 	clineMessage?: ClineMessage
 	routerModels?: RouterModels
 	openAiModels?: string[]
+	imageGenerationModels?: string[]
 	ollamaModels?: ModelRecord
 	lmStudioModels?: ModelRecord
 	vsCodeLmModels?: LanguageModelChatSelector[]
@@ -311,6 +314,15 @@ export type ExtensionState = Pick<
 	| "includeDiagnosticMessages"
 	| "maxDiagnosticMessages"
 	| "imageGenerationProvider"
+	| "imageGenerationBaseUrl"
+	| "imageGenerationHeaders"
+	| "imageGenerationSelectedModel"
+	| "imageGenerationApiMethod"
+	| "imageGenerationCustomProvider"
+	| "vertexImageProjectId"
+	| "vertexImageRegion"
+	| "vertexImageModel"
+	| "vertexImageAuthMode"
 	| "openRouterImageGenerationSelectedModel"
 	| "includeTaskHistoryInEnhance"
 	| "reasoningBlockCollapsed"
@@ -386,6 +398,9 @@ export type ExtensionState = Pick<
 	marketplaceInstalledMetadata?: { project: Record<string, any>; global: Record<string, any> }
 	profileThresholds: Record<string, number>
 	hasOpenedModeSelector: boolean
+	imageGenerationApiKey?: string
+	vertexImageAccessToken?: string
+	vertexImageServiceAccountJson?: string
 	openRouterImageApiKey?: string
 	messageQueue?: QueuedMessage[]
 	lastShownAnnouncementId?: string
@@ -589,6 +604,8 @@ export interface WebviewMessage {
 		| "openDebugUiHistory"
 		| "downloadErrorDiagnostics"
 		| "requestOpenAiCodexRateLimits"
+		| "requestImageGenerationModels"
+		| "testImageGenerationProvider"
 		| "refreshCustomTools"
 		| "requestModes"
 		| "switchMode"

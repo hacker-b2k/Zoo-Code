@@ -81,6 +81,7 @@ vitest.mock("openai", () => {
 vitest.mock("axios", () => ({
 	default: {
 		get: vitest.fn(),
+		isAxiosError: vitest.fn((error: any) => error?.isAxiosError === true),
 	},
 }))
 
@@ -1570,15 +1571,13 @@ describe("getOpenAiModels", () => {
 		vi.mocked(axios.get).mockClear()
 	})
 
-	it("should return empty array when baseUrl is not provided", async () => {
-		const result = await getOpenAiModels(undefined, "test-key")
-		expect(result).toEqual([])
+	it("should throw when baseUrl is not provided", async () => {
+		await expect(getOpenAiModels(undefined, "test-key")).rejects.toThrow("No base URL provided")
 		expect(axios.get).not.toHaveBeenCalled()
 	})
 
-	it("should return empty array when baseUrl is empty string", async () => {
-		const result = await getOpenAiModels("", "test-key")
-		expect(result).toEqual([])
+	it("should throw when baseUrl is empty string", async () => {
+		await expect(getOpenAiModels("", "test-key")).rejects.toThrow("No base URL provided")
 		expect(axios.get).not.toHaveBeenCalled()
 	})
 
@@ -1680,9 +1679,8 @@ describe("getOpenAiModels", () => {
 		expect(result).toEqual(["model-1"])
 	})
 
-	it("should return empty array for invalid URL after trimming", async () => {
-		const result = await getOpenAiModels("   not-a-valid-url   ", "test-key")
-		expect(result).toEqual([])
+	it("should throw for invalid URL after trimming", async () => {
+		await expect(getOpenAiModels("   not-a-valid-url   ", "test-key")).rejects.toThrow("Invalid base URL")
 		expect(axios.get).not.toHaveBeenCalled()
 	})
 
@@ -1731,19 +1729,21 @@ describe("getOpenAiModels", () => {
 		)
 	})
 
-	it("should handle API errors gracefully", async () => {
-		vi.mocked(axios.get).mockRejectedValueOnce(new Error("Network error"))
+	it("should throw on network errors", async () => {
+		const axiosError = Object.assign(new Error("Network error"), { isAxiosError: true })
+		vi.mocked(axios.get).mockRejectedValueOnce(axiosError)
 
-		const result = await getOpenAiModels("https://api.example.com/v1", "test-key")
-
-		expect(result).toEqual([])
+		await expect(getOpenAiModels("https://api.example.com/v1", "test-key")).rejects.toThrow(
+			"Failed to fetch models",
+		)
 	})
 
-	it("should handle malformed response data", async () => {
+	it("should handle malformed response data (no models array)", async () => {
 		vi.mocked(axios.get).mockResolvedValueOnce({ data: null })
 
 		const result = await getOpenAiModels("https://api.example.com/v1", "test-key")
 
+		// Returns empty array for null data, but does not throw (axios call succeeded)
 		expect(result).toEqual([])
 	})
 

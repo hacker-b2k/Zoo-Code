@@ -17,6 +17,9 @@ import {
 	isSecretStateKey,
 	isProviderName,
 	isRetiredProvider,
+	IMAGE_GENERATION_DEFAULT_API_METHOD,
+	IMAGE_GENERATION_DEFAULT_PROVIDER,
+	IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL,
 } from "@roo-code/types"
 import { TelemetryService } from "@roo-code/telemetry"
 
@@ -275,17 +278,16 @@ export class ContextProxy {
 	}
 
 	/**
-	 * Migrates old nested openRouterImageGenerationSettings to the new flattened structure
+	 * Migrates legacy OpenRouter image generation settings to the generic
+	 * OpenAI-compatible image generation configuration.
 	 */
 	private async migrateImageGenerationSettings() {
 		try {
-			// Check if there's an old nested structure
 			const oldNestedSettings = this.originalContext.globalState.get<any>("openRouterImageGenerationSettings")
 
 			if (oldNestedSettings && typeof oldNestedSettings === "object") {
 				logger.info("Migrating old nested image generation settings to flattened structure")
 
-				// Migrate the API key if it exists and we don't already have one
 				if (oldNestedSettings.openRouterApiKey && !this.secretCache.openRouterImageApiKey) {
 					await this.originalContext.secrets.store(
 						"openRouterImageApiKey",
@@ -295,7 +297,6 @@ export class ContextProxy {
 					logger.info("Migrated openRouterImageApiKey to secrets")
 				}
 
-				// Migrate the selected model if it exists and we don't already have one
 				if (oldNestedSettings.selectedModel && !this.stateCache.openRouterImageGenerationSelectedModel) {
 					await this.originalContext.globalState.update(
 						"openRouterImageGenerationSelectedModel",
@@ -305,9 +306,53 @@ export class ContextProxy {
 					logger.info("Migrated openRouterImageGenerationSelectedModel to global state")
 				}
 
-				// Clean up the old nested structure
 				await this.originalContext.globalState.update("openRouterImageGenerationSettings", undefined)
 				logger.info("Removed old nested openRouterImageGenerationSettings")
+			}
+
+			const legacyApiKey = this.secretCache.openRouterImageApiKey
+			const legacyModel = this.stateCache.openRouterImageGenerationSelectedModel
+			const hasLegacyImageSettings =
+				!!legacyApiKey || !!legacyModel || this.stateCache.imageGenerationProvider === "openrouter"
+
+			if (!hasLegacyImageSettings) {
+				return
+			}
+
+			if (!this.stateCache.imageGenerationProvider || this.stateCache.imageGenerationProvider === "openrouter") {
+				await this.originalContext.globalState.update(
+					"imageGenerationProvider",
+					IMAGE_GENERATION_DEFAULT_PROVIDER,
+				)
+				this.stateCache.imageGenerationProvider = IMAGE_GENERATION_DEFAULT_PROVIDER
+			}
+
+			if (!this.stateCache.imageGenerationBaseUrl) {
+				await this.originalContext.globalState.update(
+					"imageGenerationBaseUrl",
+					IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL,
+				)
+				this.stateCache.imageGenerationBaseUrl = IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL
+			}
+
+			if (!this.stateCache.imageGenerationApiMethod) {
+				await this.originalContext.globalState.update(
+					"imageGenerationApiMethod",
+					IMAGE_GENERATION_DEFAULT_API_METHOD,
+				)
+				this.stateCache.imageGenerationApiMethod = IMAGE_GENERATION_DEFAULT_API_METHOD
+			}
+
+			if (legacyApiKey && !this.secretCache.imageGenerationApiKey) {
+				await this.originalContext.secrets.store("imageGenerationApiKey", legacyApiKey)
+				this.secretCache.imageGenerationApiKey = legacyApiKey
+				logger.info("Migrated openRouterImageApiKey to imageGenerationApiKey")
+			}
+
+			if (legacyModel && !this.stateCache.imageGenerationSelectedModel) {
+				await this.originalContext.globalState.update("imageGenerationSelectedModel", legacyModel)
+				this.stateCache.imageGenerationSelectedModel = legacyModel
+				logger.info("Migrated openRouterImageGenerationSelectedModel to imageGenerationSelectedModel")
 			}
 		} catch (error) {
 			logger.error(
