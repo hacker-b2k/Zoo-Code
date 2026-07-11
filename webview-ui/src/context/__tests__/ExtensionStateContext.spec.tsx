@@ -539,5 +539,85 @@ describe("mergeExtensionState", () => {
 			expect(result.clineMessages).toBe(newMessages)
 			expect(result.clineMessagesSeq).toBe(1)
 		})
+
+		it("clones clineMessages when a newer seq reuses the same array reference", () => {
+			// Host mutates clineMessages in place across state pushes, so the
+			// array reference can be unchanged while contents differ. Cloning
+			// forces React useMemo([messages]) consumers to recompute.
+			const sharedMessages = [makeMessage(1, "hello")]
+			const prevState: ExtensionState = {
+				...baseState,
+				clineMessages: sharedMessages,
+				clineMessagesSeq: 3,
+			}
+
+			sharedMessages[0] = makeMessage(1, "hello world")
+
+			const result = mergeExtensionState(prevState, {
+				clineMessages: sharedMessages,
+				clineMessagesSeq: 4,
+			})
+
+			expect(result.clineMessages).not.toBe(sharedMessages)
+			expect(result.clineMessages).toEqual(sharedMessages)
+			expect(result.clineMessagesSeq).toBe(4)
+		})
+	})
+
+	describe("message identity for ChatRow memo", () => {
+		const makeMessage = (ts: number, text: string, partial = false): ClineMessage =>
+			({ ts, type: "say", say: "text", text, partial }) as ClineMessage
+
+		const Capture = ({ onMessages }: { onMessages: (messages: ClineMessage[]) => void }) => {
+			const { clineMessages } = useExtensionState()
+			onMessages(clineMessages)
+			return null
+		}
+
+		it("stores clones on messageAdded/messageUpdated so in-place host mutations get new identity", () => {
+			// Regression: ChatRow uses memo(..., deepEqual). If reducers store the
+			// host's same object reference after in-place mutation, deepEqual can
+			// skip re-renders and leave stale assistant text on screen.
+			const hostMessage = makeMessage(1000, "i am", true)
+			let latest: ClineMessage[] = []
+
+			render(
+				<ExtensionStateContextProvider>
+					<Capture onMessages={(m) => (latest = m)} />
+				</ExtensionStateContextProvider>,
+			)
+
+			act(() => {
+				window.dispatchEvent(
+					new MessageEvent("message", {
+						data: { type: "messageAdded", clineMessage: hostMessage },
+					}),
+				)
+			})
+
+			expect(latest).toHaveLength(1)
+			expect(latest[0]).not.toBe(hostMessage)
+			expect(latest[0].text).toBe("i am")
+			const afterAdd = latest[0]
+
+			// Host mutates in place during streaming, then posts messageUpdated
+			// with the same object reference.
+			hostMessage.text = "i am fine"
+			hostMessage.partial = false
+
+			act(() => {
+				window.dispatchEvent(
+					new MessageEvent("message", {
+						data: { type: "messageUpdated", clineMessage: hostMessage },
+					}),
+				)
+			})
+
+			expect(latest).toHaveLength(1)
+			expect(latest[0]).not.toBe(hostMessage)
+			expect(latest[0]).not.toBe(afterAdd)
+			expect(latest[0].text).toBe("i am fine")
+			expect(latest[0].partial).toBe(false)
+		})
 	})
 })

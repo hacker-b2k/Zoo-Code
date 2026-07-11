@@ -35,6 +35,7 @@ export interface ExtensionMessage {
 		| "workspaceUpdated"
 		| "invoke"
 		| "messageUpdated"
+		| "messageAdded"
 		| "mcpServers"
 		| "enhancedPrompt"
 		| "commitSearchResults"

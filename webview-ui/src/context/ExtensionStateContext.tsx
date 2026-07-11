@@ -203,6 +203,16 @@ export const mergeExtensionState = (prevState: ExtensionState, newState: Partial
 	) {
 		rest.clineMessages = prevState.clineMessages
 		rest.clineMessagesSeq = prevState.clineMessagesSeq
+	} else if (
+		// Newer seq (or first seq): if the host reuses the same array reference
+		// after in-place mutation, clone so useMemo([messages]) still recomputes.
+		newState.clineMessages !== undefined &&
+		newState.clineMessagesSeq !== undefined &&
+		newState.clineMessagesSeq > (prevState.clineMessagesSeq ?? -Infinity)
+	) {
+		rest.clineMessages =
+			newState.clineMessages !== prevState.clineMessages ? newState.clineMessages : [...newState.clineMessages]
+		rest.clineMessagesSeq = newState.clineMessagesSeq
 	}
 
 	// Note that we completely replace the previous apiConfiguration and customSupportPrompts objects
@@ -422,7 +432,8 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 						const lastIndex = findLastIndex(prevState.clineMessages, (msg) => msg.ts === clineMessage.ts)
 						if (lastIndex !== -1) {
 							const newClineMessages = [...prevState.clineMessages]
-							newClineMessages[lastIndex] = clineMessage
+							// Clone: ChatRow is memo'd with deepEqual; shared refs skip re-renders.
+							newClineMessages[lastIndex] = { ...clineMessage }
 							return { ...prevState, clineMessages: newClineMessages }
 						}
 						// Log a warning if messageUpdated arrives for a timestamp not in the
@@ -434,6 +445,19 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 								`Frontend has ${prevState.clineMessages.length} messages.`,
 						)
 						return prevState
+					})
+					break
+				}
+				case "messageAdded": {
+					const clineMessage = message.clineMessage!
+					setState((prevState) => {
+						// Guard against duplicate appends (e.g. concurrent full state push).
+						const exists = prevState.clineMessages.some((msg) => msg.ts === clineMessage.ts)
+						if (exists) {
+							return prevState
+						}
+						// Clone for ChatRow memo identity (see messageUpdated).
+						return { ...prevState, clineMessages: [...prevState.clineMessages, { ...clineMessage }] }
 					})
 					break
 				}
