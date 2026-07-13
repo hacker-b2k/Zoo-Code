@@ -55,15 +55,28 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 
 		this.options = options
 
-		if (!this.options.apiKey) {
-			throw new Error("API key is required")
-		}
+		// Allow empty/missing API keys for free/no-auth endpoints (e.g., g4f.space, pollinations.ai).
+		// The caller is responsible for ensuring the endpoint doesn't require authentication.
+		const isFreeEndpoint = !this.options.apiKey
+		const effectiveApiKey = this.options.apiKey || "not-provided"
+
+		// Custom fetch wrapper that strips the Authorization header for free/no-auth endpoints.
+		// The OpenAI SDK always adds `Authorization: Bearer <apiKey>` internally, but free APIs
+		// (like g4f.space) reject fake keys with 401 Unauthorized.
+		const freeEndpointFetch = isFreeEndpoint
+			? async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+					const newHeaders = new Headers(init?.headers)
+					newHeaders.delete("authorization")
+					return globalThis.fetch(url, { ...init, headers: newHeaders })
+				}
+			: undefined
 
 		this.client = new OpenAI({
 			baseURL,
-			apiKey: this.options.apiKey,
+			apiKey: effectiveApiKey,
 			defaultHeaders: DEFAULT_HEADERS,
 			timeout: this.timeoutMs,
+			...(freeEndpointFetch ? { fetch: freeEndpointFetch } : {}),
 		})
 	}
 

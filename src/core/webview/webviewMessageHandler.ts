@@ -1292,7 +1292,8 @@ export const webviewMessageHandler = async (
 			break
 		}
 		case "requestOpenAiModels":
-			if (message?.values?.baseUrl && message?.values?.apiKey) {
+			// API key is optional — allow free/no-auth endpoints (e.g., g4f.space, pollinations.ai).
+			if (message?.values?.baseUrl) {
 				const openAiModels = await getOpenAiModels(
 					message?.values?.baseUrl,
 					message?.values?.apiKey,

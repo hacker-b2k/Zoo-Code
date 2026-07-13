@@ -93,7 +93,8 @@ function validateModelsAndKeysProvided(
 			}
 			break
 		case "openai":
-			if (!apiConfiguration.openAiBaseUrl || !apiConfiguration.openAiApiKey || !apiConfiguration.openAiModelId) {
+			// API key is optional — allow free/no-auth endpoints (e.g., g4f.space, pollinations.ai).
+			if (!apiConfiguration.openAiBaseUrl || !apiConfiguration.openAiModelId) {
 				return i18next.t("settings:validation.openAi")
 			}
 			break

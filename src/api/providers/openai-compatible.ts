@@ -57,15 +57,28 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 		this.options = options
 		this.config = config
 
+		// For free/no-auth endpoints, use a placeholder key and custom fetch that strips the Authorization header.
+		const isFreeEndpoint = !config.apiKey
+		const effectiveApiKey = config.apiKey || "not-provided"
+
 		// Create the OpenAI-compatible provider using AI SDK
 		this.provider = createOpenAICompatible({
 			name: config.providerName,
 			baseURL: config.baseURL,
-			apiKey: config.apiKey,
+			apiKey: effectiveApiKey,
 			headers: {
 				...DEFAULT_HEADERS,
 				...(config.headers || {}),
 			},
+			...(isFreeEndpoint
+				? {
+						fetch: async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+							const newHeaders = new Headers(init?.headers)
+							newHeaders.delete("authorization")
+							return globalThis.fetch(url, { ...init, headers: newHeaders })
+						},
+					}
+				: {}),
 		})
 	}
 

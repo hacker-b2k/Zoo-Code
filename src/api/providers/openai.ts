@@ -41,7 +41,10 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 		const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
 		const baseURL = analyzedBaseUrl.baseUrl || this.options.openAiBaseUrl || "https://api.openai.com/v1"
-		const apiKey = this.options.openAiApiKey ?? "not-provided"
+		const apiKey = this.options.openAiApiKey || "not-provided"
+		// When no real API key is provided, this is a free/no-auth endpoint (e.g., g4f.space, pollinations.ai).
+		// We need to strip the Authorization header so the server doesn't reject the fake key.
+		const isFreeEndpoint = !this.options.openAiApiKey
 		const isAzureAiInference = analyzedBaseUrl.isAzureAiInference
 		const isAzureOpenAi = analyzedBaseUrl.isAzureOpenAi || options.openAiUseAzure
 
@@ -52,6 +55,17 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			...(this.options.openAiHeaders || {}),
 		}
 
+		// Custom fetch wrapper that strips the Authorization header for free/no-auth endpoints.
+		// The OpenAI SDK always adds `Authorization: Bearer <apiKey>` internally, but free APIs
+		// (like g4f.space) reject fake keys with 401 Unauthorized.
+		const freeEndpointFetch = isFreeEndpoint
+			? async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+					const newHeaders = new Headers(init?.headers)
+					newHeaders.delete("authorization")
+					return globalThis.fetch(url, { ...init, headers: newHeaders })
+				}
+			: undefined
+
 		if (isAzureAiInference) {
 			// Azure AI Inference Service (e.g., for DeepSeek) uses a different path structure
 			this.client = new OpenAI({
@@ -60,6 +74,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				defaultHeaders: headers,
 				defaultQuery: { "api-version": this.options.azureApiVersion || "2024-05-01-preview" },
 				timeout: this.timeoutMs,
+				...(freeEndpointFetch ? { fetch: freeEndpointFetch } : {}),
 			})
 		} else if (isAzureOpenAi) {
 			// Azure API shape slightly differs from the core API shape:
@@ -77,6 +92,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				apiKey,
 				defaultHeaders: headers,
 				timeout: this.timeoutMs,
+				...(freeEndpointFetch ? { fetch: freeEndpointFetch } : {}),
 			})
 		}
 	}
@@ -92,6 +108,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		const enabledR1Format = this.options.openAiR1FormatEnabled ?? false
 		const isAzureAiInference = this._isAzureAiInference(modelUrl)
 		const deepseekReasoner = modelId.includes("deepseek-reasoner") || enabledR1Format
+		const isFreeEndpoint = !this.options.openAiApiKey
 
 		if (modelId.includes("o1") || modelId.includes("o3") || modelId.includes("o4")) {
 			yield* this.handleO3FamilyMessage(modelId, systemPrompt, messages, metadata)
@@ -154,6 +171,13 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 			const isGrokXAI = this._isGrokXAI(this.options.openAiBaseUrl)
 
+			// For free/no-auth endpoints (e.g., g4f.space), some Go-based backends only accept
+			// content as a plain string, not as an array of content blocks. Flatten array content
+			// to plain strings for text-only blocks to ensure compatibility.
+			if (isFreeEndpoint) {
+				this._flattenMessageContent(convertedMessages)
+			}
+
 			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 				model: modelId,
 				// Some OpenAI-Compatible models (e.g. claude-opus-4-7, claude-opus-4-8) reject
@@ -169,9 +193,11 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				stream: true as const,
 				...(isGrokXAI ? {} : { stream_options: { include_usage: true } }),
 				...(reasoning && reasoning),
-				tools: this.convertToolsForOpenAI(metadata?.tools),
-				tool_choice: metadata?.tool_choice,
-				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+				// Free endpoints (e.g., g4f.space) may not support tool calls — only include
+				// tools when a real API key is configured.
+				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
+				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
 			}
 
 			// Add max_tokens if needed
@@ -312,15 +338,21 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				yield this.processUsageMetrics(lastUsage, modelInfo)
 			}
 		} else {
+			const nonStreamingMessages = deepseekReasoner
+				? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
+				: [systemMessage, ...convertToOpenAiMessages(messages)]
+
+			if (isFreeEndpoint) {
+				this._flattenMessageContent(nonStreamingMessages)
+			}
+
 			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
 				model: modelId,
-				messages: deepseekReasoner
-					? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
-					: [systemMessage, ...convertToOpenAiMessages(messages)],
-				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
-				tools: this.convertToolsForOpenAI(metadata?.tools),
-				tool_choice: metadata?.tool_choice,
-				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+				messages: nonStreamingMessages,
+				// Free endpoints may not support tool calls — only include when a real API key is configured.
+				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
+				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
 			}
 
 			// Add max_tokens if needed
@@ -602,6 +634,29 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 	protected _getUrlHost(baseUrl?: string): string {
 		return analyzeOpenAiCompatibleBaseUrl(baseUrl).host
+	}
+
+	/**
+	 * Flattens array content in messages to plain strings for free/no-auth endpoints
+	 * that only support string content (e.g., g4f.space's Go backend).
+	 * Handles: system messages, user messages, and assistant messages.
+	 */
+	private _flattenMessageContent(messages: OpenAI.Chat.ChatCompletionMessageParam[]): void {
+		for (const msg of messages) {
+			if (Array.isArray(msg.content)) {
+				const textParts: string[] = []
+
+				for (const part of msg.content) {
+					if (part.type === "text") {
+						textParts.push((part as any).text)
+					}
+				}
+
+				// Always flatten to string for free endpoints — the Go backends
+				// (e.g., g4f.space) require content to be a plain string.
+				msg.content = textParts.length > 0 ? textParts.join("\n") : ""
+			}
+		}
 	}
 
 	private _isGrokXAI(baseUrl?: string): boolean {

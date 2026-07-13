@@ -22,6 +22,8 @@ export function checkExistKey(config: ProviderSettings | undefined) {
 		config.ollamaModelId,
 		config.lmStudioModelId,
 		config.vsCodeLmModelSelector,
+		config.openAiBaseUrl,
+		config.openAiModelId,
 	].some((value) => value !== undefined)
 
 	return hasSecretKey || hasOtherConfig
