@@ -144,9 +144,11 @@ function validateModelsAndKeysProvided(
 			}
 			break
 		case "custom-endpoint":
-			// Base URL and model ID are required; API key is optional for no-auth endpoints.
-			if (!apiConfiguration.customEndpointBaseUrl || !apiConfiguration.customEndpointModelId) {
-				return i18next.t("settings:validation.openAi")
+			// Base URL is required; model ID and API key are optional.
+			// Model ID can be empty if user hasn't selected one yet (models
+			// are auto-fetched after entering the base URL).
+			if (!apiConfiguration.customEndpointBaseUrl) {
+				return i18next.t("settings:validation.baseUrl")
 			}
 			break
 	}
