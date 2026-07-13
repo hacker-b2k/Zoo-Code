@@ -123,6 +123,8 @@ export function getProviderDefaultModelId(
 			return opencodeGoDefaultModelId
 		case "zoo-gateway":
 			return zooGatewayDefaultModelId
+		case "custom-endpoint":
+			return "" // Custom endpoint uses user-configured model ID
 		case "anthropic":
 		case "gemini-cli":
 		case "fake-ai":

@@ -80,12 +80,13 @@ export const isInternalProvider = (key: string): key is InternalProvider =>
 	internalProviders.includes(key as InternalProvider)
 
 /**
+/**
  * CustomProvider
  *
  * Custom providers are completely configurable within Roo Code settings.
  */
 
-export const customProviders = ["openai"] as const
+export const customProviders = ["openai", "custom-endpoint"] as const
 
 export type CustomProvider = (typeof customProviders)[number]
 
@@ -418,6 +419,24 @@ const basetenSchema = apiModelIdProviderModelSchema.extend({
 	basetenApiKey: z.string().optional(),
 })
 
+/**
+ * CustomEndpoint provider - for user-configured OpenAI-compatible endpoints
+ * that are not auto-detected (Databricks, self-hosted, enterprise gateways).
+ */
+export const customEndpointFormatSchema = z.enum(["openai", "anthropic", "custom"])
+
+export type CustomEndpointFormat = z.infer<typeof customEndpointFormatSchema>
+
+const customEndpointSchema = baseProviderSettingsSchema.extend({
+	customEndpointBaseUrl: z.string().optional(),
+	customEndpointApiKey: z.string().optional(),
+	customEndpointApiKeyHeader: z.string().optional(),
+	customEndpointApiKeyPrefix: z.string().optional(),
+	customEndpointModelId: z.string().optional(),
+	customEndpointModelInfo: modelInfoSchema.nullish(),
+	customEndpointFormat: customEndpointFormatSchema.optional(),
+})
+
 const defaultSchema = z.object({
 	apiProvider: z.undefined(),
 })
@@ -453,6 +472,7 @@ export const providerSettingsSchemaDiscriminated = z.discriminatedUnion("apiProv
 	qwenCodeSchema.merge(z.object({ apiProvider: z.literal("qwen-code") })),
 	vercelAiGatewaySchema.merge(z.object({ apiProvider: z.literal("vercel-ai-gateway") })),
 	opencodeGoSchema.merge(z.object({ apiProvider: z.literal("opencode-go") })),
+	customEndpointSchema.merge(z.object({ apiProvider: z.literal("custom-endpoint") })),
 	zooGatewaySchema.merge(z.object({ apiProvider: z.literal("zoo-gateway") })),
 	defaultSchema,
 ])
@@ -490,6 +510,7 @@ export const providerSettingsSchema = z.object({
 	...vercelAiGatewaySchema.shape,
 	...opencodeGoSchema.shape,
 	...zooGatewaySchema.shape,
+	...customEndpointSchema.shape,
 	...codebaseIndexProviderSchema.shape,
 })
 
@@ -522,6 +543,7 @@ export const modelIdKeys = [
 	"vercelAiGatewayModelId",
 	"opencodeGoModelId",
 	"zooGatewayModelId",
+	"customEndpointModelId",
 ] as const satisfies readonly (keyof ProviderSettings)[]
 
 export type ModelIdKey = (typeof modelIdKeys)[number]
@@ -616,7 +638,7 @@ export const getApiProtocol = (provider: ProviderName | undefined, modelId?: str
  */
 
 export const MODELS_BY_PROVIDER: Record<
-	Exclude<ProviderName, "fake-ai" | "gemini-cli" | "openai">,
+	Exclude<ProviderName, "fake-ai" | "gemini-cli" | "openai" | "custom-endpoint">,
 	{ id: ProviderName; label: string; models: string[] }
 > = {
 	anthropic: {

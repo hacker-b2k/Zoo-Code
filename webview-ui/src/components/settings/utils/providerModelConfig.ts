@@ -130,6 +130,7 @@ const PROVIDER_MODEL_CONFIG: Partial<Record<ProviderName, ProviderModelConfig>> 
 	openai: { field: "openAiModelId" },
 	ollama: { field: "ollamaModelId" },
 	lmstudio: { field: "lmStudioModelId" },
+	"custom-endpoint": { field: "customEndpointModelId" },
 }
 
 export function getProviderModelConfig(provider: string, apiConfiguration?: ProviderSettings) {
@@ -200,6 +201,7 @@ export const PROVIDERS_WITH_CUSTOM_MODEL_UI: ProviderName[] = [
 	"ollama",
 	"lmstudio",
 	"vscode-lm",
+	"custom-endpoint", // Custom Endpoint has its own UI with base URL, API key, model info
 ]
 
 /**

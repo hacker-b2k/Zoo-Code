@@ -143,6 +143,12 @@ function validateModelsAndKeysProvided(
 				return i18next.t("settings:validation.apiKey")
 			}
 			break
+		case "custom-endpoint":
+			// Base URL and model ID are required; API key is optional for no-auth endpoints.
+			if (!apiConfiguration.customEndpointBaseUrl || !apiConfiguration.customEndpointModelId) {
+				return i18next.t("settings:validation.openAi")
+			}
+			break
 	}
 
 	return undefined
@@ -197,6 +203,9 @@ function getModelIdForProvider(apiConfiguration: ProviderSettings, provider: Pro
 	}
 
 	if (isCustomProvider(provider) || isFauxProvider(provider)) {
+		if (provider === "custom-endpoint") {
+			return apiConfiguration.customEndpointModelId
+		}
 		return apiConfiguration.apiModelId
 	}
 

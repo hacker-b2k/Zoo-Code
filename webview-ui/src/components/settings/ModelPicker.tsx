@@ -47,6 +47,7 @@ type ModelIdKey = keyof Pick<
 	| "lmStudioModelId"
 	| "lmStudioDraftModelId"
 	| "vsCodeLmModelSelector"
+	| "customEndpointModelId"
 >
 
 interface ModelPickerProps {

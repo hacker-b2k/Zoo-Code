@@ -319,6 +319,12 @@ function getSelectedModel({
 			const info = customInfo ?? openAiModelInfoSaneDefaults
 			return { id, info }
 		}
+		case "custom-endpoint": {
+			const id = apiConfiguration.customEndpointModelId ?? ""
+			const customInfo = apiConfiguration?.customEndpointModelInfo
+			const info = customInfo ?? openAiModelInfoSaneDefaults
+			return { id, info }
+		}
 		case "ollama": {
 			const id = apiConfiguration.ollamaModelId ?? ""
 			const info = ollamaModels && ollamaModels[apiConfiguration.ollamaModelId!]

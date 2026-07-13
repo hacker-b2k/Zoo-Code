@@ -1294,11 +1294,25 @@ export const webviewMessageHandler = async (
 		case "requestOpenAiModels":
 			// API key is optional — allow free/no-auth endpoints (e.g., g4f.space, pollinations.ai).
 			if (message?.values?.baseUrl) {
-				const openAiModels = await getOpenAiModels(
-					message?.values?.baseUrl,
-					message?.values?.apiKey,
-					message?.values?.openAiHeaders,
-				)
+				let openAiModels: string[] = []
+
+				// Try standard OpenAI models endpoint first.
+				try {
+					openAiModels = await getOpenAiModels(
+						message?.values?.baseUrl,
+						message?.values?.apiKey,
+						message?.values?.openAiHeaders,
+					)
+				} catch {
+					// If standard fetching fails, try smart multi-strategy fetching
+					// (handles Cloudflare Workers AI and other non-standard providers).
+					try {
+						const { getCustomEndpointModels } = await import("../../api/providers/custom-endpoint-models")
+						openAiModels = await getCustomEndpointModels(message?.values?.baseUrl, message?.values?.apiKey)
+					} catch {
+						// Both strategies failed — return empty array.
+					}
+				}
 
 				provider.postMessageToWebview({ type: "openAiModels", openAiModels })
 			}

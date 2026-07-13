@@ -50,6 +50,7 @@ import {
 	Anthropic,
 	Baseten,
 	Bedrock,
+	CustomEndpoint,
 	DeepSeek,
 	Gemini,
 	LMStudio,
@@ -672,6 +673,17 @@ const ApiOptions = ({
 						<Fireworks
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
+						/>
+					)}
+
+					{selectedProvider === "custom-endpoint" && (
+						<CustomEndpoint
+							apiConfiguration={apiConfiguration}
+							setApiConfigurationField={setApiConfigurationField}
+							organizationAllowList={organizationAllowList}
+							selectedModelCapabilities={selectedModelCapabilities}
+							modelValidationError={modelValidationError}
+							simplifySettings={fromWelcomeView}
 						/>
 					)}
 

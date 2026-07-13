@@ -646,6 +646,17 @@
 			"authenticated": "Authenticated",
 			"authenticatedAs": "Authenticated as {{name}}"
 		},
+		"customEndpoint": {
+			"baseUrl": "Base URL",
+			"apiKey": "API Key",
+			"format": "Request Format",
+			"formatDescription": "Select the API request format. OpenAI-compatible is the most common format used by providers like Ollama, LM Studio, and Databricks.",
+			"apiKeyHeader": "Auth Header Name",
+			"apiKeyHeaderDescription": "Defaults to \"Authorization\". Change for providers that use a different header name (e.g., \"x-api-key\").",
+			"apiKeyPrefix": "API Key Prefix",
+			"apiKeyPrefixDescription": "Prefix added before the API key value (e.g., \"Bearer \"). Defaults to \"Bearer \" for Authorization header.",
+			"capabilities": "Configure the capabilities and pricing for your custom endpoint model. Be careful when specifying the model capabilities, as they can affect how Zoo Code performs."
+		},
 		"customModel": {
 			"capabilities": "Configure the capabilities and pricing for your custom OpenAI-compatible model. Be careful when specifying the model capabilities, as they can affect how Zoo Code performs.",
 			"maxTokens": {
@@ -1101,6 +1112,8 @@
 		"projectId": "Enter Project ID...",
 		"customArn": "Enter ARN (e.g. arn:aws:bedrock:us-east-1:123456789012:foundation-model/my-model)",
 		"baseUrl": "Enter base URL...",
+		"apiKeyHeader": "Authorization",
+		"apiKeyPrefix": "Bearer ",
 		"modelId": {
 			"lmStudio": "e.g. meta-llama-3.1-8b-instruct",
 			"lmStudioDraft": "e.g. lmstudio-community/llama-3.2-1b-instruct",
