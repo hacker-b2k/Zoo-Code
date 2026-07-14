@@ -130,11 +130,23 @@ export const ImageGenerationSettings = ({
 	const isVertexProvider = currentProvider === "vertex-ai"
 	const isGoogleExpressProvider = currentProvider === "google-express"
 	const isCustomProvider = currentProvider === "custom"
+	const isVertexApiKeyMode = isVertexProvider && currentVertexAuthMode === "api_key"
 
 	const availableModels = useMemo(() => {
 		const ids = new Map<string, string>()
-		for (const model of IMAGE_GENERATION_OPENROUTER_PRESET_MODELS) {
-			ids.set(model.value, model.label)
+		// Add provider-specific preset models
+		if (isVertexProvider) {
+			for (const model of IMAGE_GENERATION_VERTEX_PRESET_MODELS) {
+				ids.set(model.value, model.label)
+			}
+		} else if (isGoogleExpressProvider) {
+			for (const model of IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS) {
+				ids.set(model.value, model.label)
+			}
+		} else {
+			for (const model of IMAGE_GENERATION_OPENROUTER_PRESET_MODELS) {
+				ids.set(model.value, model.label)
+			}
 		}
 		for (const model of discoveredModels) {
 			ids.set(model, model)
@@ -143,7 +155,7 @@ export const ImageGenerationSettings = ({
 			ids.set(currentModel, ids.get(currentModel) || currentModel)
 		}
 		return [...ids.entries()].map(([value, label]) => ({ value, label }))
-	}, [currentModel, discoveredModels])
+	}, [currentModel, discoveredModels, isVertexProvider, isGoogleExpressProvider])
 
 	const onMessage = useCallback((event: MessageEvent) => {
 		const message: ExtensionMessage = event.data
@@ -260,12 +272,14 @@ export const ImageGenerationSettings = ({
 	}
 
 	const isConfigured = isVertexProvider
-		? !!vertexImageProjectId &&
-			!!currentVertexRegion &&
-			!!currentVertexModel &&
-			(currentVertexAuthMode === "service_account_json"
-				? !!vertexImageServiceAccountJson
-				: !!vertexImageAccessToken)
+		? !!currentVertexModel &&
+			(currentVertexAuthMode === "api_key"
+				? !!vertexImageAccessToken
+				: !!vertexImageProjectId &&
+					!!currentVertexRegion &&
+					(currentVertexAuthMode === "service_account_json"
+						? !!vertexImageServiceAccountJson
+						: !!vertexImageAccessToken))
 		: isGoogleExpressProvider
 			? !!imageGenerationApiKey && !!currentModel
 			: isCustomProvider
@@ -322,29 +336,36 @@ export const ImageGenerationSettings = ({
 
 					{isVertexProvider ? (
 						<>
-							<div>
-								<label className="block font-medium mb-1">Vertex Project ID</label>
-								<VSCodeTextField
-									value={vertexImageProjectId || ""}
-									onInput={(e: any) => setVertexImageProjectId(e.target.value)}
-									placeholder="my-gcp-project"
-									className="w-full"
-								/>
-							</div>
+							{!isVertexApiKeyMode && (
+								<>
+									<div>
+										<label className="block font-medium mb-1">Vertex Project ID</label>
+										<VSCodeTextField
+											value={vertexImageProjectId || ""}
+											onInput={(e: any) => setVertexImageProjectId(e.target.value)}
+											placeholder="my-gcp-project"
+											className="w-full"
+										/>
+									</div>
 
-							<div>
-								<label className="block font-medium mb-1">Vertex Region</label>
-								<VSCodeDropdown
-									value={currentVertexRegion}
-									onChange={(e: any) => setVertexImageRegion(e.target.value)}
-									className="w-full">
-									{IMAGE_GENERATION_VERTEX_REGIONS.map((region) => (
-										<VSCodeOption key={region.value} value={region.value} className="py-2 px-3">
-											{region.label}
-										</VSCodeOption>
-									))}
-								</VSCodeDropdown>
-							</div>
+									<div>
+										<label className="block font-medium mb-1">Vertex Region</label>
+										<VSCodeDropdown
+											value={currentVertexRegion}
+											onChange={(e: any) => setVertexImageRegion(e.target.value)}
+											className="w-full">
+											{IMAGE_GENERATION_VERTEX_REGIONS.map((region) => (
+												<VSCodeOption
+													key={region.value}
+													value={region.value}
+													className="py-2 px-3">
+													{region.label}
+												</VSCodeOption>
+											))}
+										</VSCodeDropdown>
+									</div>
+								</>
+							)}
 
 							<div>
 								<label className="block font-medium mb-1">Vertex Imagen Model</label>
@@ -372,6 +393,9 @@ export const ImageGenerationSettings = ({
 									value={currentVertexAuthMode}
 									onChange={(e: any) => setVertexImageAuthMode(e.target.value)}
 									className="w-full">
+									<VSCodeOption value="api_key" className="py-2 px-3">
+										API Key (Express Mode)
+									</VSCodeOption>
 									<VSCodeOption value="access_token" className="py-2 px-3">
 										Access Token
 									</VSCodeOption>
@@ -385,7 +409,9 @@ export const ImageGenerationSettings = ({
 								<label className="block font-medium mb-1">
 									{currentVertexAuthMode === "service_account_json"
 										? "Service Account JSON"
-										: "Access Token"}
+										: currentVertexAuthMode === "api_key"
+											? "API Key"
+											: "Access Token"}
 								</label>
 								<VSCodeTextField
 									value={
@@ -401,14 +427,66 @@ export const ImageGenerationSettings = ({
 									placeholder={
 										currentVertexAuthMode === "service_account_json"
 											? "Paste service account JSON"
-											: "Paste OAuth access token"
+											: currentVertexAuthMode === "api_key"
+												? "Paste Vertex AI Express Mode API key"
+												: "Paste OAuth access token"
 									}
 									className="w-full"
 									type="password"
 								/>
 								<p className="text-vscode-descriptionForeground text-xs mt-1">
-									Stored in VS Code Secret Storage for this installation only.
+									{currentVertexAuthMode === "api_key"
+										? "Use a Google Cloud API key with Vertex AI Express Mode. No OAuth or service account needed."
+										: "Stored in VS Code Secret Storage for this installation only."}
 								</p>
+							</div>
+
+							<div className="mt-4">
+								<div className="flex items-center justify-between gap-2 mb-2">
+									<label className="block font-medium">Test Provider</label>
+									<VSCodeButton
+										appearance="secondary"
+										onClick={() => {
+											setTestProviderLoading(true)
+											setTestProviderResult(null)
+											vscode.postMessage({
+												type: "testImageGenerationProvider",
+												values: {
+													provider: currentProvider,
+													apiKey:
+														currentVertexAuthMode === "api_key"
+															? vertexImageAccessToken
+															: "",
+													model: currentVertexModel,
+													vertexProjectId: vertexImageProjectId,
+													vertexRegion: currentVertexRegion,
+													vertexModel: currentVertexModel,
+													vertexAuthMode: currentVertexAuthMode,
+													vertexAccessToken: vertexImageAccessToken,
+													vertexServiceAccountJson: vertexImageServiceAccountJson,
+												},
+											})
+										}}
+										disabled={!isConfigured || testProviderLoading}>
+										{testProviderLoading ? "Testing..." : "Test Provider"}
+									</VSCodeButton>
+								</div>
+								{testProviderResult && (
+									<div
+										className={`p-2 rounded text-xs ${testProviderResult.success ? "bg-vscode-editorInfo-background text-vscode-editorInfo-foreground" : "bg-vscode-editorWarning-background text-vscode-editorWarning-foreground"}`}>
+										{testProviderResult.success ? "✓ " : " "}
+										{testProviderResult.message}
+										{testProviderResult.imageData && (
+											<div className="mt-2">
+												<img
+													src={testProviderResult.imageData}
+													alt="Test result"
+													className="max-w-full rounded border border-vscode-panel-border"
+												/>
+											</div>
+										)}
+									</div>
+								)}
 							</div>
 						</>
 					) : isGoogleExpressProvider ? (
@@ -447,9 +525,48 @@ export const ImageGenerationSettings = ({
 									className="w-full mt-2"
 								/>
 								<p className="text-vscode-descriptionForeground text-xs mt-1">
-									Calls the Google Generative Language API with an API key instead of Vertex
-									OAuth/IAM.
+									Calls Vertex AI with an API key (Express Mode). Uses the same endpoint as the
+									chat/completion provider.
 								</p>
+							</div>
+
+							<div className="mt-4">
+								<div className="flex items-center justify-between gap-2 mb-2">
+									<label className="block font-medium">Test Provider</label>
+									<VSCodeButton
+										appearance="secondary"
+										onClick={() => {
+											setTestProviderLoading(true)
+											setTestProviderResult(null)
+											vscode.postMessage({
+												type: "testImageGenerationProvider",
+												values: {
+													provider: currentProvider,
+													apiKey: imageGenerationApiKey,
+													model: currentModel,
+												},
+											})
+										}}
+										disabled={!isConfigured || testProviderLoading}>
+										{testProviderLoading ? "Testing..." : "Test Provider"}
+									</VSCodeButton>
+								</div>
+								{testProviderResult && (
+									<div
+										className={`p-2 rounded text-xs ${testProviderResult.success ? "bg-vscode-editorInfo-background text-vscode-editorInfo-foreground" : "bg-vscode-editorWarning-background text-vscode-editorWarning-foreground"}`}>
+										{testProviderResult.success ? "✓ " : " "}
+										{testProviderResult.message}
+										{testProviderResult.imageData && (
+											<div className="mt-2">
+												<img
+													src={testProviderResult.imageData}
+													alt="Test result"
+													className="max-w-full rounded border border-vscode-panel-border"
+												/>
+											</div>
+										)}
+									</div>
+								)}
 							</div>
 						</>
 					) : (
@@ -675,7 +792,12 @@ export const ImageGenerationSettings = ({
 									<VSCodeButton
 										appearance="secondary"
 										onClick={requestModels}
-										disabled={!imageGenerationBaseUrl || modelRefreshLoading}>
+										disabled={
+											(!imageGenerationBaseUrl &&
+												!isVertexProvider &&
+												!isGoogleExpressProvider) ||
+											modelRefreshLoading
+										}>
 										{modelRefreshLoading
 											? t("settings:experimental.IMAGE_GENERATION.loadingModels")
 											: t("settings:experimental.IMAGE_GENERATION.refreshModels")}

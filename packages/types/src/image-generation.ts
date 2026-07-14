@@ -8,7 +8,7 @@ export interface ImageGenerationModelPreset {
 	label: string
 }
 
-export type VertexImageAuthMode = "access_token" | "service_account_json"
+export type VertexImageAuthMode = "access_token" | "service_account_json" | "api_key"
 
 /**
  * Image generation providers.
@@ -27,9 +27,9 @@ export const IMAGE_GENERATION_DEFAULT_API_METHOD: ImageGenerationApiMethod = "ch
 export const IMAGE_GENERATION_CUSTOM_DEFAULT_API_METHOD: ImageGenerationApiMethod = "direct_post"
 
 export const IMAGE_GENERATION_VERTEX_DEFAULT_REGION = "us-central1"
-export const IMAGE_GENERATION_VERTEX_DEFAULT_MODEL = "imagen-4.0-generate-001"
-export const IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE: VertexImageAuthMode = "access_token"
-export const IMAGE_GENERATION_GOOGLE_EXPRESS_DEFAULT_MODEL = "imagen-4.0-ultra-generate-001"
+export const IMAGE_GENERATION_VERTEX_DEFAULT_MODEL = "imagen-4.0-ultra-generate-001"
+export const IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE: VertexImageAuthMode = "api_key"
+export const IMAGE_GENERATION_GOOGLE_EXPRESS_DEFAULT_MODEL = "gemini-2.5-flash-image"
 
 export const IMAGE_GENERATION_VERTEX_REGIONS = [
 	{ value: "us-central1", label: "US Central 1 (Iowa)" },
@@ -217,19 +217,23 @@ export const IMAGE_GENERATION_OPENROUTER_PRESET_MODELS: ImageGenerationPresetMod
 ]
 
 export const IMAGE_GENERATION_VERTEX_PRESET_MODELS: ImageGenerationPresetModel[] = [
-	{ value: "imagen-4.0-generate-001", label: "Imagen 4" },
-	{ value: "imagen-4.0-fast-generate-001", label: "Imagen 4 Fast" },
+	{ value: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
+	{ value: "gemini-3-pro-image-preview", label: "Gemini 3 Pro Image Preview" },
+	{ value: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image" },
+	{ value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image Preview" },
+	{ value: "gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image" },
+	{ value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
 	{ value: "imagen-4.0-ultra-generate-001", label: "Imagen 4 Ultra" },
-	{ value: "imagen-3.0-generate-002", label: "Imagen 3" },
-	{ value: "imagen-3.0-fast-generate-001", label: "Imagen 3 Fast" },
 ]
 
 export const IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS: ImageGenerationPresetModel[] = [
+	{ value: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
+	{ value: "gemini-3-pro-image-preview", label: "Gemini 3 Pro Image Preview" },
+	{ value: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image" },
+	{ value: "gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image Preview" },
+	{ value: "gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image" },
+	{ value: "gemini-2.5-flash-image", label: "Gemini 2.5 Flash Image" },
 	{ value: "imagen-4.0-ultra-generate-001", label: "Imagen 4 Ultra" },
-	{ value: "imagen-4.0-generate-001", label: "Imagen 4" },
-	{ value: "imagen-4.0-fast-generate-001", label: "Imagen 4 Fast" },
-	{ value: "imagen-3.0-generate-002", label: "Imagen 3" },
-	{ value: "imagen-3.0-fast-generate-001", label: "Imagen 3 Fast" },
 ]
 
 /**

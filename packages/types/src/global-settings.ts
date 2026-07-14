@@ -133,7 +133,7 @@ export const globalSettingsSchema = z.object({
 	vertexImageProjectId: z.string().optional(),
 	vertexImageRegion: z.string().optional(),
 	vertexImageModel: z.string().optional(),
-	vertexImageAuthMode: z.enum(["access_token", "service_account_json"]).optional(),
+	vertexImageAuthMode: z.enum(["access_token", "service_account_json", "api_key"]).optional(),
 	vertexImageAccessToken: z.string().optional(),
 	vertexImageServiceAccountJson: z.string().optional(),
 	// Legacy OpenRouter image fields kept for import/migration compatibility.

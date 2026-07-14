@@ -946,11 +946,16 @@ const ModesView = () => {
 									<SelectValue placeholder={t("settings:common.select")} />
 								</SelectTrigger>
 								<SelectContent>
-									{(listApiConfigMeta || []).map((config) => (
-										<SelectItem key={config.id} value={config.name}>
-											{config.name}
-										</SelectItem>
-									))}
+									{(listApiConfigMeta || [])
+										.filter(
+											(config) =>
+												typeof config?.name === "string" && config.name.trim().length > 0,
+										)
+										.map((config) => (
+											<SelectItem key={config.id} value={config.name}>
+												{config.name}
+											</SelectItem>
+										))}
 								</SelectContent>
 							</Select>
 						</div>

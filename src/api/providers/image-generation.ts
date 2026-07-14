@@ -79,12 +79,15 @@ export class ImageGenerationClient {
 
 	async generateImage(options: GenerateImageOptions): Promise<ImageGenerationResult> {
 		if (this.provider === "vertex-ai") {
+			// For api_key auth mode, fall back to the general API key if vertex-specific one isn't set
+			const accessToken =
+				this.vertexAuthMode === "api_key" && !this.vertexAccessToken ? this.apiKey : this.vertexAccessToken
 			return generateImageWithVertex({
 				projectId: this.vertexProjectId,
 				region: this.vertexRegion,
 				model: this.vertexModel,
 				authMode: this.vertexAuthMode,
-				accessToken: this.vertexAccessToken,
+				accessToken,
 				serviceAccountJson: this.vertexServiceAccountJson,
 				prompt: options.prompt,
 				inputImage: options.inputImage,

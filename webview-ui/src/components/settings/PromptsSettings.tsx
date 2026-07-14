@@ -19,6 +19,7 @@ import {
 import { SectionHeader } from "./SectionHeader"
 import { Section } from "./Section"
 import { SearchableSetting } from "./SearchableSetting"
+import { getSelectableApiConfigs } from "./utils/apiConfigSelect"
 
 interface PromptsSettingsProps {
 	customSupportPrompts: Record<string, string | undefined>
@@ -49,6 +50,7 @@ const PromptsSettings = ({
 	const [testPrompt, setTestPrompt] = useState("")
 	const [isEnhancing, setIsEnhancing] = useState(false)
 	const [activeSupportOption, setActiveSupportOption] = useState<SupportPromptType>("ENHANCE")
+	const selectableApiConfigMeta = getSelectableApiConfigs(listApiConfigMeta)
 
 	useEffect(() => {
 		const handler = (event: MessageEvent) => {
@@ -182,7 +184,7 @@ const PromptsSettings = ({
 										<SelectItem value="-">
 											{t("prompts:supportPrompts.enhance.useCurrentConfig")}
 										</SelectItem>
-										{(listApiConfigMeta || []).map((config) => (
+										{selectableApiConfigMeta.map((config) => (
 											<SelectItem
 												key={config.id}
 												value={config.id}

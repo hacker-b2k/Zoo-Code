@@ -19,15 +19,15 @@ describe("Google Express image generation", () => {
 		global.fetch = mocks.mockFetch as unknown as typeof fetch
 	})
 
-	it("builds the Generative Language predict endpoint with an API key", () => {
-		expect(buildGoogleExpressImageEndpoint("imagen-4.0-ultra-generate-001", "test key")).toBe(
-			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict?key=test%20key",
+	it("builds the Generative Language predict endpoint", () => {
+		expect(buildGoogleExpressImageEndpoint("imagen-4.0-ultra-generate-001")).toBe(
+			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict",
 		)
 	})
 
 	it("strips an optional models/ prefix from model IDs", () => {
-		expect(buildGoogleExpressImageEndpoint("models/imagen-4.0-ultra-generate-001", "test-key")).toBe(
-			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict?key=test-key",
+		expect(buildGoogleExpressImageEndpoint("models/imagen-4.0-ultra-generate-001")).toBe(
+			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict",
 		)
 	})
 

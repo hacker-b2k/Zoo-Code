@@ -136,7 +136,13 @@ export class GenerateImageTool extends BaseTool<"generate_image"> {
 		const apiKey = state?.imageGenerationApiKey || state?.openRouterImageApiKey
 		const baseUrl = state?.imageGenerationBaseUrl || IMAGE_GENERATION_OPENROUTER_DEFAULT_BASE_URL
 		const apiMethod = state?.imageGenerationApiMethod || IMAGE_GENERATION_DEFAULT_API_METHOD
-		const vertexAuthMode = state?.vertexImageAuthMode || IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE
+		const savedVertexAuthMode = state?.vertexImageAuthMode || IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE
+		// If auth mode is access_token but no access token is set and an API key exists,
+		// auto-upgrade to api_key mode (Express Mode) since the user has an API key
+		const vertexAuthMode =
+			savedVertexAuthMode === "access_token" && !state?.vertexImageAccessToken && apiKey
+				? "api_key"
+				: savedVertexAuthMode
 		const vertexCredential =
 			vertexAuthMode === "service_account_json"
 				? state?.vertexImageServiceAccountJson
@@ -149,8 +155,15 @@ export class GenerateImageTool extends BaseTool<"generate_image"> {
 			return
 		}
 
-		if (imageProvider === "vertex-ai" && !vertexCredential) {
+		if (imageProvider === "vertex-ai" && !vertexCredential && vertexAuthMode !== "api_key") {
 			const errorMessage = "Vertex AI credentials are required for image generation."
+			await task.say("error", errorMessage)
+			pushToolResult(formatResponse.toolError(errorMessage))
+			return
+		}
+
+		if (imageProvider === "vertex-ai" && vertexAuthMode === "api_key" && !vertexCredential && !apiKey) {
+			const errorMessage = "Vertex AI API key is required for image generation. Please set an API key."
 			await task.say("error", errorMessage)
 			pushToolResult(formatResponse.toolError(errorMessage))
 			return

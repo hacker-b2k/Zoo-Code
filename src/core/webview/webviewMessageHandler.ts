@@ -70,7 +70,11 @@ import { fileExistsAtPath } from "../../utils/fs"
 import { playTts, setTtsEnabled, setTtsSpeed, stopTts } from "../../utils/tts"
 import { searchCommits } from "../../utils/git"
 import { exportSettings, importSettingsWithFeedback } from "../config/importExport"
-import { IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS, IMAGE_GENERATION_VERTEX_PRESET_MODELS } from "@roo-code/types"
+import {
+	IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS,
+	IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE,
+	IMAGE_GENERATION_VERTEX_PRESET_MODELS,
+} from "@roo-code/types"
 import { ImageGenerationClient } from "../../api/providers/image-generation"
 import { getOpenAiModels } from "../../api/providers/openai"
 import { getVsCodeLmModels } from "../../api/providers/vscode-lm"
@@ -1327,14 +1331,67 @@ export const webviewMessageHandler = async (
 			try {
 				const providerName = message?.values?.provider
 				if (providerName === "vertex-ai" || providerName === "google-express") {
-					// Vertex and Google Express use preset model lists, not live discovery
+					// Return expanded preset model lists for Vertex/Google Express
 					const presetModels =
 						providerName === "google-express"
 							? IMAGE_GENERATION_GOOGLE_EXPRESS_PRESET_MODELS.map((model) => model.value)
 							: IMAGE_GENERATION_VERTEX_PRESET_MODELS.map((model) => model.value)
+
+					// Also try live discovery via API if we have an API key
+					const apiKey = message?.values?.apiKey
+					const discovered: string[] = []
+					if (apiKey) {
+						const testModels = [
+							// Gemini image models (generateContent) — verified working via Express Mode
+							"gemini-3-pro-image",
+							"gemini-3-pro-image-preview",
+							"gemini-3.1-flash-image",
+							"gemini-3.1-flash-image-preview",
+							"gemini-3.1-flash-lite-image",
+							"gemini-2.5-flash-image",
+							// Imagen models (predict) — only ultra verified working via Express Mode
+							"imagen-4.0-ultra-generate-001",
+						]
+						await Promise.allSettled(
+							testModels.map(async (model) => {
+								try {
+									const isGemini = model.startsWith("gemini-") && model.includes("image")
+									const url = isGemini
+										? `https://aiplatform.googleapis.com/v1beta1/publishers/google/models/${model}:generateContent`
+										: `https://aiplatform.googleapis.com/v1beta1/publishers/google/models/${model}:predict`
+									const body = isGemini
+										? JSON.stringify({
+												contents: [{ role: "user", parts: [{ text: "test" }] }],
+												generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+											})
+										: JSON.stringify({
+												instances: [{ prompt: "test" }],
+												parameters: { sampleCount: 1 },
+											})
+									const response = await fetch(url, {
+										method: "POST",
+										headers: {
+											"x-goog-api-key": apiKey,
+											"Content-Type": "application/json",
+										},
+										body,
+									})
+									if (response.ok || response.status === 429) {
+										// 429 = rate limited but model exists
+										discovered.push(model)
+									}
+								} catch {
+									// ignore probe failures
+								}
+							}),
+						)
+					}
+
+					// Merge presets and discovered, removing duplicates
+					const allModels = [...new Set([...presetModels, ...discovered])]
 					provider.postMessageToWebview({
 						type: "imageGenerationModels",
-						imageGenerationModels: presetModels,
+						imageGenerationModels: allModels,
 					})
 					break
 				}
@@ -1371,14 +1428,46 @@ export const webviewMessageHandler = async (
 				const model = values.model || ""
 				const apiMethod = values.apiMethod || "chat_completions"
 				const customProvider = values.customProvider || {}
+				const vertexProjectId = values.vertexProjectId || ""
+				const vertexRegion = values.vertexRegion || ""
+				const vertexModel = values.vertexModel || ""
+				const vertexAuthModeRaw = values.vertexAuthMode || IMAGE_GENERATION_VERTEX_DEFAULT_AUTH_MODE
+				const vertexAccessToken = values.vertexAccessToken || ""
+				const vertexServiceAccountJson = values.vertexServiceAccountJson || ""
+				// Auto-upgrade to api_key if user has API key but no vertex access token
+				const vertexAuthMode =
+					vertexAuthModeRaw === "access_token" && !vertexAccessToken && apiKey ? "api_key" : vertexAuthModeRaw
 
-				if (!baseUrl || !apiKey || !model) {
-					provider.postMessageToWebview({
-						type: "imageGenerationTestResult",
-						success: false,
-						error: "Base URL, API key, and model are required.",
-					})
-					break
+				// For google-express, only apiKey and model are needed
+				if (providerName === "google-express") {
+					if (!apiKey || !model) {
+						provider.postMessageToWebview({
+							type: "imageGenerationTestResult",
+							success: false,
+							error: "API key and model are required for Google Express.",
+						})
+						break
+					}
+				} else if (providerName === "vertex-ai") {
+					// For vertex-ai, need project, region, model, and auth
+					if (!vertexProjectId || !vertexRegion || !vertexModel) {
+						provider.postMessageToWebview({
+							type: "imageGenerationTestResult",
+							success: false,
+							error: "Project ID, region, and model are required for Vertex AI.",
+						})
+						break
+					}
+				} else {
+					// For openai-compatible and custom, need baseUrl, apiKey, model
+					if (!baseUrl || !apiKey || !model) {
+						provider.postMessageToWebview({
+							type: "imageGenerationTestResult",
+							success: false,
+							error: "Base URL, API key, and model are required.",
+						})
+						break
+					}
 				}
 
 				const client = new ImageGenerationClient({
@@ -1389,6 +1478,12 @@ export const webviewMessageHandler = async (
 					model,
 					apiMethod,
 					customProvider,
+					vertexProjectId,
+					vertexRegion,
+					vertexModel,
+					vertexAuthMode,
+					vertexAccessToken,
+					vertexServiceAccountJson,
 				})
 
 				const result = await client.generateImage({ prompt: "a simple red circle on white background" })

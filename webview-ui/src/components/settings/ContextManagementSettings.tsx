@@ -21,6 +21,7 @@ import {
 } from "@/components/ui"
 
 import { SetCachedStateField } from "./types"
+import { getSelectableApiConfigs } from "./utils/apiConfigSelect"
 import { SectionHeader } from "./SectionHeader"
 import { Section } from "./Section"
 import { SearchableSetting } from "./SearchableSetting"
@@ -92,6 +93,7 @@ export const ContextManagementSettings = ({
 }: ContextManagementSettingsProps) => {
 	const { t } = useAppTranslation()
 	const [selectedThresholdProfile, setSelectedThresholdProfile] = React.useState<string>("default")
+	const selectableApiConfigMeta = getSelectableApiConfigs(listApiConfigMeta)
 
 	// Helper function to get the CONDENSE prompt value
 	const getCondensePromptValue = (): string => {
@@ -539,7 +541,7 @@ export const ContextManagementSettings = ({
 										{t("settings:contextManagement.condensingThreshold.defaultProfile") ||
 											"Default (applies to all unconfigured profiles)"}
 									</SelectItem>
-									{(listApiConfigMeta || []).map((config) => {
+									{selectableApiConfigMeta.map((config) => {
 										const profileThreshold = profileThresholds[config.id]
 										const thresholdDisplay =
 											profileThreshold !== undefined

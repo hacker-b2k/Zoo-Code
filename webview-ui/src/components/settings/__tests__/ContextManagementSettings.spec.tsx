@@ -55,7 +55,16 @@ vi.mock("@/components/ui", () => ({
 	SelectTrigger: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 	SelectValue: ({ children, ...props }: any) => <div {...props}>{children}</div>,
 	SelectContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-	SelectItem: ({ children, ...props }: any) => <div {...props}>{children}</div>,
+	SelectItem: ({ children, value, ...props }: any) => {
+		if (value === "") {
+			throw new Error("A <Select.Item /> must have a value prop that is not an empty string.")
+		}
+		return (
+			<div data-value={value} {...props}>
+				{children}
+			</div>
+		)
+	},
 	StandardTooltip: ({ children, content }: any) => <div title={content}>{children}</div>,
 }))
 
@@ -315,6 +324,26 @@ describe("ContextManagementSettings", () => {
 				expect(setCachedStateField).toHaveBeenCalledWith("maxDiagnosticMessages", 50.7)
 			})
 		})
+	})
+
+	it("ignores profiles with empty IDs so the threshold Select does not crash", () => {
+		expect(() =>
+			render(
+				<ContextManagementSettings
+					{...defaultProps}
+					autoCondenseContext={true}
+					listApiConfigMeta={[
+						{ id: "", name: "Incomplete profile" },
+						{ id: "   ", name: "Whitespace profile" },
+						{ id: "valid-profile", name: "Valid profile" },
+					]}
+				/>,
+			),
+		).not.toThrow()
+
+		expect(screen.queryByText("Incomplete profile")).not.toBeInTheDocument()
+		expect(screen.queryByText("Whitespace profile")).not.toBeInTheDocument()
+		expect(screen.getByText("Valid profile")).toHaveAttribute("data-value", "valid-profile")
 	})
 
 	it("renders with autoCondenseContext enabled", () => {
