@@ -206,9 +206,14 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 						location,
 						googleAuthOptions: { keyFile: this.options.vertexKeyFile },
 					})
-				: isVertex
-					? new GoogleGenAI({ vertexai: true, project, location })
-					: new GoogleGenAI({ apiKey })
+				: isVertex && this.options.vertexApiKey
+					? // Express Mode: use API key with Vertex AI endpoint
+						// (aiplatform.googleapis.com). The SDK handles routing
+						// automatically when vertexai=true + apiKey (no billing required).
+						new GoogleGenAI({ vertexai: true, apiKey: this.options.vertexApiKey })
+					: isVertex
+						? new GoogleGenAI({ vertexai: true, project, location })
+						: new GoogleGenAI({ apiKey })
 	}
 
 	async *createMessage(

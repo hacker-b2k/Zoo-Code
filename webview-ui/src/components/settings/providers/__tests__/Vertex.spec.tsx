@@ -66,6 +66,7 @@ describe("Vertex", () => {
 		vertexJsonCredentials: "",
 		vertexProjectId: "",
 		vertexRegion: "",
+		vertexApiKey: "",
 		apiModelId: "gemini-2.0-flash-001",
 	}
 

@@ -96,6 +96,19 @@ export const Vertex = ({ apiConfiguration, setApiConfigurationField }: VertexPro
 				<label className="block font-medium mb-1">{t("settings:providers.googleCloudKeyFile")}</label>
 			</VSCodeTextField>
 			<VSCodeTextField
+				value={apiConfiguration?.vertexApiKey || ""}
+				onInput={handleInputChange("vertexApiKey")}
+				placeholder={t("settings:placeholders.apiKey")}
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.vertexApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-1 mb-2">
+				<Trans
+					i18nKey="settings:providers.vertexApiKeyDescription"
+					defaults="Express Mode — no billing required. Get key from Vertex AI Studio."
+				/>
+			</div>
+			<VSCodeTextField
 				value={apiConfiguration?.vertexProjectId || ""}
 				onInput={handleInputChange("vertexProjectId")}
 				placeholder={t("settings:placeholders.projectId")}
