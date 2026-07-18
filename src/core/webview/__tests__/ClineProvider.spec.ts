@@ -649,6 +649,7 @@ describe("ClineProvider", () => {
 			ttsEnabled: false,
 			enableCheckpoints: false,
 			writeDelayMs: 1000,
+			agenticMode: "classic",
 			mcpEnabled: true,
 			mode: defaultModeSlug,
 			customModes: [],

@@ -273,8 +273,8 @@ export class PipelineController {
 
 			// Store intermediate outputs in context
 			for (const outcome of allOutcomes) {
-				if (outcome.ok && outcome.output) {
-					this.storeOutcome(ctx, outcome)
+				if (outcome.ok && outcome.output !== undefined) {
+					this.storeOutcome(ctx, { stageId: outcome.stageId, output: outcome.output })
 				}
 			}
 

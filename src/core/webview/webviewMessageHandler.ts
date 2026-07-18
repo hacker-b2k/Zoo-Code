@@ -1889,7 +1889,7 @@ export const webviewMessageHandler = async (
 			// the updated state back to the webview. The UI control
 			// itself is added in Phase 2 alongside the ExperimentalSettings
 			// panel. Validation: only "classic" / "deepSequential".
-			const requested = message.agenticMode
+			const requested = (message as { agenticMode?: string }).agenticMode
 			const agenticMode = requested === "deepSequential" ? "deepSequential" : "classic"
 			await updateGlobalState("agenticMode", agenticMode)
 			await provider.postStateToWebview()

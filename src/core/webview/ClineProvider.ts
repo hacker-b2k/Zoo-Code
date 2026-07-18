@@ -2453,6 +2453,7 @@ export class ClineProvider
 			allowedCommands,
 			deniedCommands,
 			alwaysAllowMcp,
+			agenticMode,
 			alwaysAllowModeSwitch,
 			alwaysAllowSubtasks,
 			allowedMaxRequests,
@@ -2768,6 +2769,7 @@ export class ClineProvider
 			platform: process.platform,
 			arch: process.arch,
 			debug: vscode.workspace.getConfiguration(Package.name).get<boolean>("debug", false),
+			agenticMode: agenticMode ?? "classic",
 		}
 	}
 

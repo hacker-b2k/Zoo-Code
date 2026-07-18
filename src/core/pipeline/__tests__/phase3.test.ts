@@ -191,7 +191,7 @@ describe("ReviewBuffer", () => {
 		buffer.pushEvent({ type: "FileEdited", timestamp: Date.now(), description: "test" })
 		buffer.pushFinding({
 			id: "f1",
-			severity: "info",
+			severity: "suggestion",
 			category: "test",
 			description: "finding",
 			recommendation: "none",
@@ -211,7 +211,7 @@ describe("ReviewBuffer", () => {
 		buffer.pushEvent({ type: "FileEdited", timestamp: Date.now(), description: "test" })
 		buffer.pushFinding({
 			id: "f1",
-			severity: "info",
+			severity: "suggestion",
 			category: "test",
 			description: "finding",
 			recommendation: "none",

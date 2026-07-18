@@ -505,10 +505,7 @@ export class OrchestrationRuntime extends EventEmitter {
 		}
 		handle.snapshot.attempt++
 		handle.snapshot.updatedAt = Date.now()
-		this.workerState.setActivity(workerId, "thinking", {
-			currentStep: "review_digest_sent",
-			summary: summary.slice(0, 400),
-		})
+		this.workerState.setActivity(workerId, "thinking", `review_digest_sent: ${summary.slice(0, 200)}`)
 		const entry = this.inbox.push({
 			workerId,
 			parentTaskId: handle.snapshot.parentTaskId,

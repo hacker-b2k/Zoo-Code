@@ -2,7 +2,7 @@ import type { McpConfigScope } from "@roo-code/types"
 
 import type { Task } from "../../task/Task"
 import type { McpHub } from "../../../services/mcp/McpHub"
-import { isSecretLikeKey } from "../../../services/mcp/McpCredentialVault"
+import { isSecretLikeKey } from "../../../services/mcp/mcpCredentialVault"
 
 export function getClineProvider(task: Task) {
 	const provider = task.providerRef.deref()

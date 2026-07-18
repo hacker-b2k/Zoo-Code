@@ -180,7 +180,7 @@ export class ManageMcpServerTool extends BaseTool<"manage_mcp_server"> {
 			// Brief settle for connect when intent=start (stdio spawn is async)
 			if (intent === "start" && written?.disabled !== true) {
 				for (let i = 0; i < 8; i++) {
-					if (live?.status === "connected" || live?.status === "error") {
+					if (live?.status === "connected" || live?.status === ("error" as string)) {
 						break
 					}
 					await new Promise((r) => setTimeout(r, 250))

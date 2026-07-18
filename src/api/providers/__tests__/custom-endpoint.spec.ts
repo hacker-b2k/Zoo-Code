@@ -89,7 +89,7 @@ describe("mapCustomEndpointOptionsToOpenAi", () => {
 			customEndpointBaseUrl: "https://example.com/v1",
 			customEndpointApiKey: "sk-test",
 			customEndpointModelId: "gpt-test",
-			customEndpointModelInfo: { contextWindow: 128000, reasoningEffort: "high" },
+			customEndpointModelInfo: { contextWindow: 128000, reasoningEffort: "high", supportsPromptCache: false },
 			customEndpointFormat: "custom",
 		})
 
@@ -168,7 +168,7 @@ describe("CustomEndpointHandler", () => {
 		const h = new CustomEndpointHandler({
 			...mockOptions,
 			customEndpointModelId: "my-model",
-			customEndpointModelInfo: { contextWindow: 64000, supportsImages: true },
+			customEndpointModelInfo: { contextWindow: 64000, supportsImages: true, supportsPromptCache: false },
 		})
 		const model = h.getModel()
 		expect(model.id).toBe("my-model")

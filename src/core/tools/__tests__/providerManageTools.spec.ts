@@ -24,10 +24,10 @@ function makeCallbacks() {
 		callbacks: {
 			askApproval: vi.fn(async () => true),
 			handleError: vi.fn(async () => {}),
-			pushToolResult: vi.fn((r: string) => {
+			pushToolResult: vi.fn((r: any) => {
 				results.push(typeof r === "string" ? r : JSON.stringify(r))
 			}),
-		},
+		} as any,
 	}
 }
 
@@ -62,7 +62,7 @@ describe("provider manage tools", () => {
 		const task = makeTask(provider)
 		const { callbacks, results } = makeCallbacks()
 		await listProviderProfilesTool.execute({}, task, callbacks)
-		const body = JSON.parse(results[0])
+		const body = JSON.parse(results[0] as string)
 		expect(body.ok).toBe(true)
 		expect(body.profiles).toHaveLength(2)
 		expect(body.currentApiConfigName).toBe("default")
@@ -101,7 +101,7 @@ describe("provider manage tools", () => {
 		// Save ≠ Switch: third arg must always be false
 		expect(activateArg).toBe(false)
 
-		const body = JSON.parse(results[0])
+		const body = JSON.parse(results[0] as string)
 		expect(body.ok).toBe(true)
 		expect(body.activated).toBe(false)
 		expect(body.currentActiveProfile).toBe("default")
@@ -125,7 +125,7 @@ describe("provider manage tools", () => {
 		)
 
 		expect(provider.upsertProviderProfile).toHaveBeenCalledWith("half-configured", expect.any(Object), false)
-		const body = JSON.parse(results[0])
+		const body = JSON.parse(results[0] as string)
 		expect(body.activated).toBe(false)
 		expect(body.note).toMatch(/activate=true was ignored/i)
 		expect(body.currentActiveProfile).toBe("default")
@@ -142,7 +142,7 @@ describe("provider manage tools", () => {
 		)
 		const approvalJson = (callbacks.askApproval as any).mock.calls[0][1]
 		expect(approvalJson).not.toContain("sk-brand-new-secret")
-		const body = JSON.parse(results[0])
+		const body = JSON.parse(results[0] as string)
 		expect(body.ok).toBe(true)
 		expect(body.key).toBe("openAiApiKey")
 		expect(body.stored).toBe(true)
@@ -158,7 +158,7 @@ describe("provider manage tools", () => {
 		const { callbacks, results } = makeCallbacks()
 		await deleteProviderProfileTool.execute({ name: "only" }, task, callbacks)
 		expect(provider.providerSettingsManager.deleteConfig).not.toHaveBeenCalled()
-		expect(results[0]).toMatch(/last remaining/i)
+		expect(results[0] as string).toMatch(/last remaining/i)
 	})
 
 	it("delete_provider_profile deletes and activates fallback", async () => {
@@ -167,7 +167,7 @@ describe("provider manage tools", () => {
 		await deleteProviderProfileTool.execute({ name: "default" }, task, callbacks)
 		expect(provider.providerSettingsManager.deleteConfig).toHaveBeenCalledWith("default")
 		expect(provider.activateProviderProfile).toHaveBeenCalledWith({ name: "secondary" })
-		const body = JSON.parse(results[0])
+		const body = JSON.parse(results[0] as string)
 		expect(body.ok).toBe(true)
 		expect(body.deleted).toBe("default")
 	})

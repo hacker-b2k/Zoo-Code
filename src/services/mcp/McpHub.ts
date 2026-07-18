@@ -736,7 +736,7 @@ export class McpHub {
 			if (this.credentialVault) {
 				configForConnect = await this.credentialVault.hydrateConfig(source, name, configForConnect)
 			}
-			const configInjected = (await injectVariables(configForConnect, {
+			const configInjected = (await injectVariables(configForConnect as Parameters<typeof injectVariables>[0], {
 				env: process.env,
 				workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
 			})) as typeof config

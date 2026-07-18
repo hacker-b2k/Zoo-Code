@@ -414,13 +414,13 @@ describe("NativeToolCallParser", () => {
 				const listId = "toolu_list_workers"
 				NativeToolCallParser.startStreamingToolCall(listId, "list_workers")
 				NativeToolCallParser.processStreamingChunk(listId, JSON.stringify({ include_completed: "true" }))
-				const listResult = NativeToolCallParser.finalizeStreamingToolCall(listId)
+				const listResult = NativeToolCallParser.finalizeStreamingToolCall(listId) as any
 				expect(listResult?.nativeArgs).toEqual({ include_completed: "true" })
 
 				const collectId = "toolu_collect"
 				NativeToolCallParser.startStreamingToolCall(collectId, "collect_results")
 				NativeToolCallParser.processStreamingChunk(collectId, JSON.stringify({ unread_only: true }))
-				const collectResult = NativeToolCallParser.finalizeStreamingToolCall(collectId)
+				const collectResult = NativeToolCallParser.finalizeStreamingToolCall(collectId) as any
 				expect(collectResult?.nativeArgs).toEqual({ unread_only: true })
 			})
 		})
@@ -437,7 +437,7 @@ describe("NativeToolCallParser", () => {
 				}),
 			})
 			expect(result).not.toBeNull()
-			expect(result?.nativeArgs).toMatchObject({
+			expect((result as any)?.nativeArgs).toMatchObject({
 				name: "w1",
 				message: "do work",
 				mode: null,

@@ -57,7 +57,7 @@ export class DeleteProviderProfileTool extends BaseTool<"delete_provider_profile
 			const activateName =
 				state.currentApiConfigName === name || !remaining.some((r) => r.name === state.currentApiConfigName)
 					? nextName
-					: state.currentApiConfigName
+					: (state.currentApiConfigName ?? nextName)
 			await provider.activateProviderProfile({ name: activateName })
 
 			task.consecutiveMistakeCount = 0
