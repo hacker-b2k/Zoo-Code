@@ -113,15 +113,19 @@ describe("Single-open-task invariant", () => {
 		expect(addClineToStack).toHaveBeenCalledTimes(1)
 	})
 
-	it("History resume path always closes current before rehydration (non-rehydrating case)", async () => {
+	it("History resume parks current (no hard dispose) before rehydration when not live", async () => {
 		const removeClineFromStack = vi.fn().mockResolvedValue(undefined)
 		const addClineToStack = vi.fn().mockResolvedValue(undefined)
 		const updateGlobalState = vi.fn().mockResolvedValue(undefined)
+		const findLiveTask = vi.fn(() => undefined)
+		const focusLiveTask = vi.fn().mockResolvedValue(undefined)
 
 		const provider = {
 			getCurrentTask: vi.fn(() => undefined), // ensure not rehydrating
 			removeClineFromStack,
 			addClineToStack,
+			findLiveTask,
+			focusLiveTask,
 			updateGlobalState,
 			log: vi.fn(),
 			customModesManager: { getCustomModes: vi.fn().mockResolvedValue([]) },
@@ -164,8 +168,45 @@ describe("Single-open-task invariant", () => {
 
 		const task = await (ClineProvider.prototype as any).createTaskWithHistoryItem.call(provider, historyItem)
 		expect(task).toBeTruthy()
+		// Park-by-default: dispose is false so running workers/main keep going.
 		expect(removeClineFromStack).toHaveBeenCalledTimes(1)
+		expect(removeClineFromStack).toHaveBeenCalledWith({ dispose: false })
 		expect(addClineToStack).toHaveBeenCalledTimes(1)
+		expect(focusLiveTask).not.toHaveBeenCalled()
+	})
+
+	it("History open of a live task focuses without remove/dispose", async () => {
+		const removeClineFromStack = vi.fn().mockResolvedValue(undefined)
+		const addClineToStack = vi.fn().mockResolvedValue(undefined)
+		const live = { taskId: "live-1", instanceId: "inst-1" }
+		const findLiveTask = vi.fn((id: string) => (id === "live-1" ? live : undefined))
+		const focusLiveTask = vi.fn().mockResolvedValue(undefined)
+
+		const provider = {
+			getCurrentTask: vi.fn(() => ({ taskId: "other", instanceId: "other-inst" })),
+			removeClineFromStack,
+			addClineToStack,
+			findLiveTask,
+			focusLiveTask,
+			log: vi.fn(),
+		} as unknown as ClineProvider
+
+		const historyItem = {
+			id: "live-1",
+			number: 1,
+			ts: Date.now(),
+			task: "Live worker",
+			tokensIn: 0,
+			tokensOut: 0,
+			totalCost: 0,
+			workspace: "/tmp",
+		}
+
+		const result = await (ClineProvider.prototype as any).createTaskWithHistoryItem.call(provider, historyItem)
+		expect(result).toBe(live)
+		expect(focusLiveTask).toHaveBeenCalledWith(live)
+		expect(removeClineFromStack).not.toHaveBeenCalled()
+		expect(addClineToStack).not.toHaveBeenCalled()
 	})
 
 	it("IPC StartNewTask path closes current before new task", async () => {

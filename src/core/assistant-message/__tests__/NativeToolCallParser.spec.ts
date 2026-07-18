@@ -311,6 +311,33 @@ describe("NativeToolCallParser", () => {
 				expect(nativeArgs.path).toBe("src/test.ts")
 			})
 		})
+
+		describe("spawn_worker tool", () => {
+			it("should emit partial nativeArgs for name/message during streaming", () => {
+				const id = "toolu_spawn_partial"
+				NativeToolCallParser.startStreamingToolCall(id, "spawn_worker")
+
+				const result = NativeToolCallParser.processStreamingChunk(
+					id,
+					JSON.stringify({
+						name: "worker-a",
+						message: "Create workers/a/hello.txt",
+						api_config_name: "nvidia",
+					}),
+				)
+
+				expect(result).not.toBeNull()
+				expect(result?.nativeArgs).toBeDefined()
+				const nativeArgs = result?.nativeArgs as {
+					name: string
+					message: string
+					api_config_name?: string | null
+				}
+				expect(nativeArgs.name).toBe("worker-a")
+				expect(nativeArgs.message).toBe("Create workers/a/hello.txt")
+				expect(nativeArgs.api_config_name).toBe("nvidia")
+			})
+		})
 	})
 
 	describe("finalizeStreamingToolCall", () => {
@@ -340,6 +367,84 @@ describe("NativeToolCallParser", () => {
 					expect(nativeArgs.offset).toBe(1)
 					expect(nativeArgs.limit).toBe(10)
 				}
+			})
+		})
+
+		describe("orchestration tools", () => {
+			it("should finalize spawn_worker with nativeArgs (regression for missing nativeArgs)", () => {
+				const id = "toolu_spawn_finalize"
+				NativeToolCallParser.startStreamingToolCall(id, "spawn_worker")
+				NativeToolCallParser.processStreamingChunk(
+					id,
+					JSON.stringify({
+						name: "worker-a-hello",
+						mode: "code",
+						api_config_name: "nvidia",
+						fallback_api_config_names: "xiaomi,vertexstudio,grok xai",
+						role: "worker",
+						review_target_id: "",
+						message: "Create file workers/a/hello.txt containing exactly: HELLO_FROM_A",
+					}),
+				)
+
+				const result = NativeToolCallParser.finalizeStreamingToolCall(id)
+				expect(result).not.toBeNull()
+				expect(result?.type).toBe("tool_use")
+				if (result?.type === "tool_use") {
+					expect(result.nativeArgs).toBeDefined()
+					const nativeArgs = result.nativeArgs as {
+						name: string
+						message: string
+						mode?: string | null
+						api_config_name?: string | null
+						fallback_api_config_names?: string | null
+						role?: string | null
+						review_target_id?: string | null
+					}
+					expect(nativeArgs.name).toBe("worker-a-hello")
+					expect(nativeArgs.message).toContain("HELLO_FROM_A")
+					expect(nativeArgs.api_config_name).toBe("nvidia")
+					expect(nativeArgs.fallback_api_config_names).toBe("xiaomi,vertexstudio,grok xai")
+					expect(nativeArgs.role).toBe("worker")
+					expect(nativeArgs.review_target_id).toBe("")
+				}
+			})
+
+			it("should finalize list_workers and collect_results with nativeArgs", () => {
+				const listId = "toolu_list_workers"
+				NativeToolCallParser.startStreamingToolCall(listId, "list_workers")
+				NativeToolCallParser.processStreamingChunk(listId, JSON.stringify({ include_completed: "true" }))
+				const listResult = NativeToolCallParser.finalizeStreamingToolCall(listId)
+				expect(listResult?.nativeArgs).toEqual({ include_completed: "true" })
+
+				const collectId = "toolu_collect"
+				NativeToolCallParser.startStreamingToolCall(collectId, "collect_results")
+				NativeToolCallParser.processStreamingChunk(collectId, JSON.stringify({ unread_only: true }))
+				const collectResult = NativeToolCallParser.finalizeStreamingToolCall(collectId)
+				expect(collectResult?.nativeArgs).toEqual({ unread_only: true })
+			})
+		})
+	})
+
+	describe("parseToolCall orchestration", () => {
+		it("should parse spawn_worker required name+message only", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_spawn_min",
+				name: "spawn_worker",
+				arguments: JSON.stringify({
+					name: "w1",
+					message: "do work",
+				}),
+			})
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs).toMatchObject({
+				name: "w1",
+				message: "do work",
+				mode: null,
+				api_config_name: null,
+				fallback_api_config_names: null,
+				role: null,
+				review_target_id: null,
 			})
 		})
 	})

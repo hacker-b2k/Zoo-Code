@@ -30,6 +30,11 @@ import { askFollowupQuestionTool } from "../tools/AskFollowupQuestionTool"
 import { switchModeTool } from "../tools/SwitchModeTool"
 import { attemptCompletionTool, AttemptCompletionCallbacks } from "../tools/AttemptCompletionTool"
 import { newTaskTool } from "../tools/NewTaskTool"
+import { spawnWorkerTool } from "../tools/SpawnWorkerTool"
+import { listWorkersTool } from "../tools/ListWorkersTool"
+import { collectResultsTool } from "../tools/CollectResultsTool"
+import { cancelWorkerTool } from "../tools/CancelWorkerTool"
+import { getWorkerStatusTool } from "../tools/GetWorkerStatusTool"
 import { updateTodoListTool } from "../tools/UpdateTodoListTool"
 import { runSlashCommandTool } from "../tools/RunSlashCommandTool"
 import { skillTool } from "../tools/SkillTool"
@@ -37,6 +42,21 @@ import { generateImageTool } from "../tools/GenerateImageTool"
 import { applyDiffTool as applyDiffToolClass } from "../tools/ApplyDiffTool"
 import { isValidToolName, validateToolUse } from "../tools/validateToolUse"
 import { codebaseSearchTool } from "../tools/CodebaseSearchTool"
+import { listProviderProfilesTool } from "../tools/ListProviderProfilesTool"
+import { getProviderProfileTool } from "../tools/GetProviderProfileTool"
+import { listProviderTypesTool } from "../tools/ListProviderTypesTool"
+import { manageProviderProfileTool } from "../tools/ManageProviderProfileTool"
+import { setProviderSecretTool } from "../tools/SetProviderSecretTool"
+import { activateProviderProfileTool } from "../tools/ActivateProviderProfileTool"
+import { deleteProviderProfileTool } from "../tools/DeleteProviderProfileTool"
+import { setModeProviderTool } from "../tools/SetModeProviderTool"
+import { listMcpConfigTool } from "../tools/ListMcpConfigTool"
+import { getMcpServerTool } from "../tools/GetMcpServerTool"
+import { manageMcpServerTool } from "../tools/ManageMcpServerTool"
+import { setMcpSecretTool } from "../tools/SetMcpSecretTool"
+import { toggleMcpServerTool } from "../tools/ToggleMcpServerTool"
+import { deleteMcpServerTool } from "../tools/DeleteMcpServerTool"
+import { refreshMcpServersTool } from "../tools/RefreshMcpServersTool"
 
 import { formatResponse } from "../prompts/responses"
 import { sanitizeToolUseId } from "../../utils/tool-id"
@@ -320,9 +340,17 @@ export async function presentAssistantMessage(cline: Task) {
 				break
 			}
 
-			// Fetch state early so it's available for toolDescription and validation
+			// Fetch state early so it's available for toolDescription and validation.
+			// Sticky task mode wins so background workers validate tools against spawn mode
+			// (not global orchestrator mode with empty groups).
 			const state = await cline.providerRef.deref()?.getState()
 			const { mode, customModes, experiments: stateExperiments, disabledTools } = state ?? {}
+			const effectiveMode =
+				typeof (cline as { getEffectiveModeSync?: (f?: string) => string }).getEffectiveModeSync === "function"
+					? (cline as { getEffectiveModeSync: (f?: string) => string }).getEffectiveModeSync(
+							mode ?? defaultModeSlug,
+						)
+					: (mode ?? defaultModeSlug)
 
 			const toolDescription = (): string => {
 				switch (block.name) {
@@ -365,6 +393,36 @@ export async function presentAssistantMessage(cline: Task) {
 						return `[${block.name}]`
 					case "switch_mode":
 						return `[${block.name} to '${block.params.mode_slug}'${block.params.reason ? ` because: ${block.params.reason}` : ""}]`
+					case "list_provider_profiles":
+						return `[${block.name}]`
+					case "get_provider_profile":
+						return `[${block.name} for '${block.params.name}']`
+					case "list_provider_types":
+						return `[${block.name}]`
+					case "manage_provider_profile":
+						return `[${block.name} ${block.params.action ?? ""} '${block.params.name}']`
+					case "set_provider_secret":
+						return `[${block.name} for '${block.params.name}' key '${block.params.key}']`
+					case "activate_provider_profile":
+						return `[${block.name} '${block.params.name}']`
+					case "delete_provider_profile":
+						return `[${block.name} '${block.params.name}']`
+					case "set_mode_provider":
+						return `[${block.name} mode '${block.params.mode_slug}' → '${block.params.name}']`
+					case "list_mcp_config":
+						return `[${block.name}]`
+					case "get_mcp_server":
+						return `[${block.name} for '${block.params.name}' (${block.params.scope})]`
+					case "manage_mcp_server":
+						return `[${block.name} ${block.params.action ?? ""} '${block.params.name}' (${block.params.scope})]`
+					case "set_mcp_secret":
+						return `[${block.name} for '${block.params.name}' ${block.params.channel} '${block.params.key}']`
+					case "toggle_mcp_server":
+						return `[${block.name} '${block.params.name}' disabled=${block.params.disabled}]`
+					case "delete_mcp_server":
+						return `[${block.name} '${block.params.name}' (${block.params.scope})]`
+					case "refresh_mcp_servers":
+						return `[${block.name}]`
 					case "codebase_search":
 						return `[${block.name} for '${block.params.query}']`
 					case "read_command_output":
@@ -537,7 +595,8 @@ export async function presentAssistantMessage(cline: Task) {
 				return await askApproval("tool", toolMessage)
 			}
 
-			const handleError = async (action: string, error: Error) => {
+			// `let` so worker evidence tracking can wrap this without shadowing const.
+			let handleError = async (action: string, error: Error) => {
 				// Silently ignore AskIgnoredError - this is an internal control flow
 				// signal, not an actual error. It occurs when a newer ask supersedes an older one.
 				if (error instanceof AskIgnoredError) {
@@ -596,7 +655,7 @@ export async function presentAssistantMessage(cline: Task) {
 
 					validateToolUse(
 						block.name as ToolName,
-						mode ?? defaultModeSlug,
+						effectiveMode,
 						customModes ?? [],
 						toolRequirements,
 						block.params,
@@ -673,6 +732,31 @@ export async function presentAssistantMessage(cline: Task) {
 					)
 					break
 				}
+			}
+
+			// Evidence SSOT: record tool start/end for background workers (no guessing).
+			const workerToolName = String(block.name)
+			let workerToolFailed = false
+			let workerToolEndReported = false
+			if (cline.isBackgroundWorker && !block.partial) {
+				try {
+					cline.reportWorkerToolStart?.(workerToolName, toolDescription())
+				} catch {
+					// non-fatal
+				}
+			}
+			const baseHandleError = handleError
+			handleError = async (action, error) => {
+				workerToolFailed = true
+				if (cline.isBackgroundWorker && !block.partial && !workerToolEndReported) {
+					workerToolEndReported = true
+					try {
+						cline.reportWorkerToolEnd?.(workerToolName, false, error?.message ?? String(error))
+					} catch {
+						// non-fatal
+					}
+				}
+				return baseHandleError(action, error)
 			}
 
 			switch (block.name) {
@@ -803,6 +887,111 @@ export async function presentAssistantMessage(cline: Task) {
 						pushToolResult,
 					})
 					break
+				case "list_provider_profiles":
+					await listProviderProfilesTool.handle(cline, block as ToolUse<"list_provider_profiles">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "get_provider_profile":
+					await getProviderProfileTool.handle(cline, block as ToolUse<"get_provider_profile">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "list_provider_types":
+					await listProviderTypesTool.handle(cline, block as ToolUse<"list_provider_types">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "manage_provider_profile":
+					await manageProviderProfileTool.handle(cline, block as ToolUse<"manage_provider_profile">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "set_provider_secret":
+					await setProviderSecretTool.handle(cline, block as ToolUse<"set_provider_secret">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "activate_provider_profile":
+					await activateProviderProfileTool.handle(cline, block as ToolUse<"activate_provider_profile">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "delete_provider_profile":
+					await deleteProviderProfileTool.handle(cline, block as ToolUse<"delete_provider_profile">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "set_mode_provider":
+					await setModeProviderTool.handle(cline, block as ToolUse<"set_mode_provider">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "list_mcp_config":
+					await listMcpConfigTool.handle(cline, block as ToolUse<"list_mcp_config">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "get_mcp_server":
+					await getMcpServerTool.handle(cline, block as ToolUse<"get_mcp_server">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "manage_mcp_server":
+					await manageMcpServerTool.handle(cline, block as ToolUse<"manage_mcp_server">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "set_mcp_secret":
+					await setMcpSecretTool.handle(cline, block as ToolUse<"set_mcp_secret">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "toggle_mcp_server":
+					await toggleMcpServerTool.handle(cline, block as ToolUse<"toggle_mcp_server">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "delete_mcp_server":
+					await deleteMcpServerTool.handle(cline, block as ToolUse<"delete_mcp_server">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "refresh_mcp_servers":
+					await refreshMcpServersTool.handle(cline, block as ToolUse<"refresh_mcp_servers">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
 				case "new_task":
 					await checkpointSaveAndMark(cline)
 					await newTaskTool.handle(cline, block as ToolUse<"new_task">, {
@@ -810,6 +999,43 @@ export async function presentAssistantMessage(cline: Task) {
 						handleError,
 						pushToolResult,
 						toolCallId: block.id,
+					})
+					break
+				case "spawn_worker":
+					await spawnWorkerTool.handle(cline, block as ToolUse<"spawn_worker">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+						toolCallId: block.id,
+					})
+					break
+				case "list_workers":
+					await listWorkersTool.handle(cline, block as ToolUse<"list_workers">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "collect_results":
+					await collectResultsTool.handle(cline, block as ToolUse<"collect_results">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "cancel_worker":
+					await cancelWorkerTool.handle(cline, block as ToolUse<"cancel_worker">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+						toolCallId: block.id,
+					})
+					break
+				case "get_worker_status":
+					await getWorkerStatusTool.handle(cline, block as ToolUse<"get_worker_status">, {
+						askApproval,
+						handleError,
+						pushToolResult,
 					})
 					break
 				case "attempt_completion": {
@@ -880,7 +1106,7 @@ export async function presentAssistantMessage(cline: Task) {
 							}
 
 							const result = await customTool.execute(customToolArgs, {
-								mode: mode ?? defaultModeSlug,
+								mode: effectiveMode,
 								task: cline,
 							})
 
@@ -904,6 +1130,7 @@ export async function presentAssistantMessage(cline: Task) {
 					const errorMessage = `Unknown tool "${block.name}". This tool does not exist. Please use one of the available tools.`
 					cline.consecutiveMistakeCount++
 					cline.recordToolError(block.name as ToolName, errorMessage)
+					workerToolFailed = true
 					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
 					// Push tool_result directly WITHOUT setting didAlreadyUseTool
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"
@@ -914,6 +1141,16 @@ export async function presentAssistantMessage(cline: Task) {
 						is_error: true,
 					})
 					break
+				}
+			}
+
+			// Evidence SSOT: successful tool completion for background workers.
+			if (cline.isBackgroundWorker && !block.partial && !workerToolEndReported) {
+				workerToolEndReported = true
+				try {
+					cline.reportWorkerToolEnd?.(workerToolName, !workerToolFailed)
+				} catch {
+					// non-fatal
 				}
 			}
 

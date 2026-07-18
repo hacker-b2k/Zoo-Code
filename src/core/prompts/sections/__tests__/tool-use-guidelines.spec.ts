@@ -21,6 +21,10 @@ describe("getToolUseGuidelinesSection", () => {
 
 		expect(guidelines).toContain("carefully considering the user's response after tool executions")
 		expect(guidelines).not.toContain("It is crucial to proceed step-by-step")
+		expect(guidelines).toContain("manage_provider_profile")
+		expect(guidelines).toContain("Save ≠ Switch")
+		expect(guidelines).toContain("activate_provider_profile")
+		expect(guidelines).toContain("Provider / API key setup")
 		expect(guidelines).not.toContain("ALWAYS wait for user confirmation after each tool use")
 	})
 

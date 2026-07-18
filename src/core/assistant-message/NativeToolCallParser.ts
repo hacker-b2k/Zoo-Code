@@ -637,6 +637,175 @@ export class NativeToolCallParser {
 				}
 				break
 
+			case "spawn_worker":
+				if (partialArgs.name !== undefined || partialArgs.message !== undefined) {
+					nativeArgs = {
+						name: partialArgs.name,
+						message: partialArgs.message,
+						mode: partialArgs.mode ?? null,
+						api_config_name: partialArgs.api_config_name ?? null,
+						fallback_api_config_names: partialArgs.fallback_api_config_names ?? null,
+						role: partialArgs.role ?? null,
+						review_target_id: partialArgs.review_target_id ?? null,
+					}
+				}
+				break
+
+			case "list_workers":
+				nativeArgs = {
+					include_completed: partialArgs.include_completed ?? null,
+				}
+				break
+
+			case "collect_results":
+				nativeArgs = {
+					unread_only: partialArgs.unread_only ?? null,
+				}
+				break
+
+			case "cancel_worker":
+				if (partialArgs.worker_id !== undefined) {
+					nativeArgs = {
+						worker_id: partialArgs.worker_id,
+						reason: partialArgs.reason ?? null,
+					}
+				}
+				break
+
+			case "get_worker_status":
+				if (partialArgs.worker_id !== undefined) {
+					nativeArgs = {
+						worker_id: partialArgs.worker_id,
+					}
+				}
+				break
+
+			case "list_provider_profiles":
+			case "list_provider_types":
+				nativeArgs = {}
+				break
+
+			case "get_provider_profile":
+			case "activate_provider_profile":
+			case "delete_provider_profile":
+				if (partialArgs.name !== undefined) {
+					nativeArgs = { name: partialArgs.name }
+				}
+				break
+
+			case "set_provider_secret":
+				if (partialArgs.name !== undefined || partialArgs.key !== undefined) {
+					nativeArgs = {
+						name: partialArgs.name,
+						key: partialArgs.key,
+						// never surface partial secret value in streaming UI via nativeArgs display paths
+						value: undefined,
+					}
+				}
+				break
+
+			case "manage_provider_profile":
+				if (
+					partialArgs.action !== undefined ||
+					partialArgs.name !== undefined ||
+					partialArgs.settings !== undefined
+				) {
+					nativeArgs = {
+						action: partialArgs.action,
+						name: partialArgs.name,
+						activate:
+							partialArgs.activate === null
+								? undefined
+								: this.coerceOptionalBoolean(partialArgs.activate),
+						settings:
+							partialArgs.settings && typeof partialArgs.settings === "object"
+								? partialArgs.settings
+								: {},
+						secrets: undefined,
+					}
+				}
+				break
+
+			case "set_mode_provider":
+				if (partialArgs.mode_slug !== undefined || partialArgs.name !== undefined) {
+					nativeArgs = {
+						mode_slug: partialArgs.mode_slug,
+						name: partialArgs.name,
+					}
+				}
+				break
+
+			case "list_mcp_config":
+				nativeArgs = {
+					scope:
+						partialArgs.scope === null || partialArgs.scope === undefined ? undefined : partialArgs.scope,
+				}
+				break
+
+			case "refresh_mcp_servers":
+				nativeArgs = {}
+				break
+
+			case "get_mcp_server":
+			case "delete_mcp_server":
+				if (partialArgs.name !== undefined || partialArgs.scope !== undefined) {
+					nativeArgs = {
+						name: partialArgs.name,
+						scope: partialArgs.scope,
+					}
+				}
+				break
+
+			case "set_mcp_secret":
+				if (
+					partialArgs.name !== undefined ||
+					partialArgs.scope !== undefined ||
+					partialArgs.channel !== undefined ||
+					partialArgs.key !== undefined
+				) {
+					nativeArgs = {
+						name: partialArgs.name,
+						scope: partialArgs.scope,
+						channel: partialArgs.channel,
+						key: partialArgs.key,
+						value: undefined,
+					}
+				}
+				break
+
+			case "manage_mcp_server":
+				if (
+					partialArgs.action !== undefined ||
+					partialArgs.name !== undefined ||
+					partialArgs.config !== undefined
+				) {
+					nativeArgs = {
+						action: partialArgs.action,
+						name: partialArgs.name,
+						scope: partialArgs.scope,
+						intent:
+							partialArgs.intent === null || partialArgs.intent === undefined
+								? undefined
+								: partialArgs.intent,
+						config: partialArgs.config && typeof partialArgs.config === "object" ? partialArgs.config : {},
+					}
+				}
+				break
+
+			case "toggle_mcp_server":
+				if (
+					partialArgs.name !== undefined ||
+					partialArgs.scope !== undefined ||
+					partialArgs.disabled !== undefined
+				) {
+					nativeArgs = {
+						name: partialArgs.name,
+						scope: partialArgs.scope,
+						disabled: this.coerceOptionalBoolean(partialArgs.disabled),
+					}
+				}
+				break
+
 			default:
 				break
 		}
@@ -988,6 +1157,175 @@ export class NativeToolCallParser {
 							mode: args.mode,
 							message: args.message,
 							todos: args.todos,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "spawn_worker":
+					// name + message required; optional fields may be null/omitted by models
+					if (args.name !== undefined && args.message !== undefined) {
+						nativeArgs = {
+							name: args.name,
+							message: args.message,
+							mode: args.mode === undefined ? null : args.mode,
+							api_config_name: args.api_config_name === undefined ? null : args.api_config_name,
+							fallback_api_config_names:
+								args.fallback_api_config_names === undefined ? null : args.fallback_api_config_names,
+							role: args.role === undefined ? null : args.role,
+							review_target_id: args.review_target_id === undefined ? null : args.review_target_id,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "list_workers":
+					nativeArgs = {
+						include_completed: args.include_completed === undefined ? null : args.include_completed,
+					} as NativeArgsFor<TName>
+					break
+
+				case "collect_results":
+					nativeArgs = {
+						unread_only: args.unread_only === undefined ? null : args.unread_only,
+					} as NativeArgsFor<TName>
+					break
+
+				case "cancel_worker":
+					if (args.worker_id !== undefined) {
+						nativeArgs = {
+							worker_id: args.worker_id,
+							reason: args.reason === undefined ? null : args.reason,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "get_worker_status":
+					if (args.worker_id !== undefined) {
+						nativeArgs = {
+							worker_id: args.worker_id,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "list_provider_profiles":
+				case "list_provider_types":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+
+				case "get_provider_profile":
+				case "activate_provider_profile":
+				case "delete_provider_profile":
+					if (args.name !== undefined) {
+						nativeArgs = { name: args.name } as NativeArgsFor<TName>
+					}
+					break
+
+				case "set_provider_secret":
+					if (args.name !== undefined && args.key !== undefined) {
+						nativeArgs = {
+							name: args.name,
+							key: args.key,
+							value: args.value === null || args.value === undefined ? undefined : String(args.value),
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "manage_provider_profile":
+					if (args.action !== undefined && args.name !== undefined && args.settings !== undefined) {
+						const secrets =
+							args.secrets === null || args.secrets === undefined
+								? undefined
+								: (args.secrets as Record<string, string>)
+						nativeArgs = {
+							action: args.action,
+							name: args.name,
+							activate:
+								args.activate === null || args.activate === undefined
+									? undefined
+									: this.coerceOptionalBoolean(args.activate),
+							settings:
+								typeof args.settings === "object" &&
+								args.settings !== null &&
+								!Array.isArray(args.settings)
+									? (args.settings as Record<string, unknown>)
+									: {},
+							secrets,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "set_mode_provider":
+					if (args.mode_slug !== undefined && args.name !== undefined) {
+						nativeArgs = {
+							mode_slug: args.mode_slug,
+							name: args.name,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "list_mcp_config":
+					nativeArgs = {
+						scope:
+							args.scope === null || args.scope === undefined
+								? undefined
+								: (args.scope as "project" | "global" | "all"),
+					} as NativeArgsFor<TName>
+					break
+
+				case "refresh_mcp_servers":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+
+				case "get_mcp_server":
+				case "delete_mcp_server":
+					if (args.name !== undefined && args.scope !== undefined) {
+						nativeArgs = {
+							name: args.name,
+							scope: args.scope,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "set_mcp_secret":
+					if (
+						args.name !== undefined &&
+						args.scope !== undefined &&
+						args.channel !== undefined &&
+						args.key !== undefined
+					) {
+						nativeArgs = {
+							name: args.name,
+							scope: args.scope,
+							channel: args.channel,
+							key: args.key,
+							value: args.value === null || args.value === undefined ? undefined : String(args.value),
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "manage_mcp_server":
+					if (args.action !== undefined && args.name !== undefined && args.config !== undefined) {
+						nativeArgs = {
+							action: args.action,
+							name: args.name,
+							scope: args.scope,
+							intent:
+								args.intent === null || args.intent === undefined
+									? undefined
+									: (args.intent as "install_only" | "start" | "preserve"),
+							config:
+								typeof args.config === "object" && args.config !== null && !Array.isArray(args.config)
+									? (args.config as Record<string, unknown>)
+									: {},
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "toggle_mcp_server":
+					if (args.name !== undefined && args.scope !== undefined && args.disabled !== undefined) {
+						nativeArgs = {
+							name: args.name,
+							scope: args.scope,
+							disabled: this.coerceOptionalBoolean(args.disabled) === true,
 						} as NativeArgsFor<TName>
 					}
 					break
