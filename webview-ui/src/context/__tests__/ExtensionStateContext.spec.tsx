@@ -357,6 +357,7 @@ describe("mergeExtensionState", () => {
 			checkpointTimeout: DEFAULT_CHECKPOINT_TIMEOUT_SECONDS, // Add the checkpoint timeout property
 			maxReadFileLine: -1,
 			diffFuzzyThreshold: DEFAULT_DIFF_FUZZY_THRESHOLD,
+			agenticMode: "classic",
 		}
 
 		const prevState: ExtensionState = {
@@ -427,6 +428,7 @@ describe("mergeExtensionState", () => {
 			checkpointTimeout: DEFAULT_CHECKPOINT_TIMEOUT_SECONDS,
 			maxReadFileLine: -1,
 			diffFuzzyThreshold: DEFAULT_DIFF_FUZZY_THRESHOLD,
+			agenticMode: "classic",
 		}
 
 		const makeMessage = (ts: number, text: string): ClineMessage =>

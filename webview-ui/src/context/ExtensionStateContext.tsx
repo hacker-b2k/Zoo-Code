@@ -273,6 +273,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		maxTotalImageSize: 20, // Default max total image size in MB
 		pinnedApiConfigs: {}, // Empty object for pinned API configs
 		workerEnabledApiConfigs: {}, // Empty = all profiles allowed for workers
+		agenticMode: "classic", // Default classic multi-agent; opt-in deepSequential pipeline
 		terminalZshOhMy: false, // Default Oh My Zsh integration setting
 		terminalZshP10k: false, // Default Powerlevel10k integration setting
 		terminalZdotdir: false, // Default ZDOTDIR handling setting
