@@ -39,6 +39,9 @@ import { fileExistsAtPath } from "../../utils/fs"
 import { TOKEN_EXPIRY_BUFFER_MS, OAUTH_FLOW_TIMEOUT_MS } from "./constants"
 import { SecretStorageService } from "./SecretStorageService"
 import { McpOAuthClientProvider } from "./McpOAuthClientProvider"
+import { McpConfigStore } from "./mcpConfigStore"
+import { McpCredentialVault } from "./mcpCredentialVault"
+import { shouldStartMcpProcess, resolveDisableStartReason } from "./mcpLifecyclePolicy"
 import { arePathsEqual, getWorkspacePath } from "../../utils/path"
 import { injectVariables } from "../../utils/config"
 import { safeWriteJson } from "../../utils/safeWriteJson"
@@ -170,12 +173,50 @@ export class McpHub {
 	private secretStorage?: SecretStorageService
 	private reauthPromises: Map<string, Promise<void>> = new Map()
 	private _oauthWatchers: Map<string, { unsubscribe: () => void; abortHandle: NodeJS.Timeout }> = new Map()
+	/** Single JSON write funnel (Track B). */
+	public readonly configStore: McpConfigStore
+	/** Env/header vault (Track D); optional until secrets API available. */
+	public readonly credentialVault?: McpCredentialVault
 
 	constructor(provider: ClineProvider, secretStorage?: SecretStorageService) {
 		this.providerRef = new WeakRef(provider)
 		if (secretStorage) {
 			this.secretStorage = secretStorage
 		}
+		// Prefer extension secret storage for credential vault
+		const secrets = provider.context?.secrets
+		if (secrets) {
+			this.credentialVault = new McpCredentialVault(secrets)
+		}
+		this.configStore = new McpConfigStore({
+			resolvePath: async (scope) => {
+				if (scope === "global") {
+					const p = this.providerRef.deref()
+					if (!p) {
+						throw new Error("Provider not available")
+					}
+					return path.join(await p.ensureSettingsDirectoryExists(), GlobalFileNames.mcpSettings)
+				}
+				const workspacePath = this.providerRef.deref()?.cwd ?? getWorkspacePath()
+				if (!workspacePath) {
+					throw new Error("No workspace folder found for project MCP config")
+				}
+				return path.join(workspacePath, ".roo", "mcp.json")
+			},
+			onProgrammaticWrite: (active) => {
+				if (this.flagResetTimer) {
+					clearTimeout(this.flagResetTimer)
+					this.flagResetTimer = undefined
+				}
+				this.isProgrammaticUpdate = active
+				if (active) {
+					this.flagResetTimer = setTimeout(() => {
+						this.isProgrammaticUpdate = false
+						this.flagResetTimer = undefined
+					}, 600)
+				}
+			},
+		})
 		this.watchMcpSettingsFile()
 		this.watchProjectMcpFile().catch(console.error)
 		this.setupWorkspaceFoldersWatcher()
@@ -494,26 +535,7 @@ export class McpHub {
 	}
 
 	async getMcpSettingsFilePath(): Promise<string> {
-		const provider = this.providerRef.deref()
-		if (!provider) {
-			throw new Error("Provider not available")
-		}
-		const mcpSettingsFilePath = path.join(
-			await provider.ensureSettingsDirectoryExists(),
-			GlobalFileNames.mcpSettings,
-		)
-		const fileExists = await fileExistsAtPath(mcpSettingsFilePath)
-		if (!fileExists) {
-			await fs.writeFile(
-				mcpSettingsFilePath,
-				`{
-  "mcpServers": {
-
-  }
-}`,
-			)
-		}
-		return mcpSettingsFilePath
+		return this.configStore.ensure("global")
 	}
 
 	private async watchMcpSettingsFile(): Promise<void> {
@@ -649,17 +671,24 @@ export class McpHub {
 	}
 
 	/**
-	 * Checks if MCP is globally enabled
-	 * @returns Promise<boolean> indicating if MCP is enabled
+	 * Checks if MCP is globally enabled.
+	 * @param override When set (D1), use this value instead of state — avoids stale getState after toggle.
 	 */
-	private async isMcpEnabled(): Promise<boolean> {
+	private async isMcpEnabled(override?: boolean): Promise<boolean> {
+		if (typeof override === "boolean") {
+			return override
+		}
 		const provider = this.providerRef.deref()
 		if (!provider) {
-			return true // Default to enabled if provider is not available
+			// Fail closed when provider is missing during enable checks after explicit override path
+			return true
 		}
 		const state = await provider.getState()
 		return state.mcpEnabled ?? true
 	}
+
+	/** Optional override used by refresh/connect during global enable toggle (D1). */
+	private mcpEnabledOverride: boolean | undefined
 
 	private async connectToServer(
 		name: string,
@@ -673,19 +702,14 @@ export class McpHub {
 		const sanitizedName = sanitizeMcpName(name)
 		this.sanitizedNameRegistry.set(sanitizedName, name)
 
-		// Check if MCP is globally enabled
-		const mcpEnabled = await this.isMcpEnabled()
-		if (!mcpEnabled) {
-			// Still create a connection object to track the server, but don't actually connect
-			const connection = this.createPlaceholderConnection(name, config, source, DisableReason.MCP_DISABLED)
-			this.connections.push(connection)
-			return
-		}
-
-		// Skip connecting to disabled servers
-		if (config.disabled) {
-			// Still create a connection object to track the server, but don't actually connect
-			const connection = this.createPlaceholderConnection(name, config, source, DisableReason.SERVER_DISABLED)
+		const mcpEnabled = await this.isMcpEnabled(this.mcpEnabledOverride)
+		const serverDisabled = config.disabled === true
+		if (!shouldStartMcpProcess({ mcpEnabled, serverDisabled })) {
+			const reason =
+				resolveDisableStartReason({ mcpEnabled, serverDisabled }) === "mcpDisabled"
+					? DisableReason.MCP_DISABLED
+					: DisableReason.SERVER_DISABLED
+			const connection = this.createPlaceholderConnection(name, config, source, reason)
 			this.connections.push(connection)
 			return
 		}
@@ -707,8 +731,12 @@ export class McpHub {
 			let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 			let streamableHttpAuthProvider: McpOAuthClientProvider | undefined
 
-			// Inject variables to the config (environment, magic variables,...)
-			const configInjected = (await injectVariables(config, {
+			// Hydrate vault secrets (Track D) then inject variables
+			let configForConnect: Record<string, unknown> = { ...config } as Record<string, unknown>
+			if (this.credentialVault) {
+				configForConnect = await this.credentialVault.hydrateConfig(source, name, configForConnect)
+			}
+			const configInjected = (await injectVariables(configForConnect, {
 				env: process.env,
 				workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
 			})) as typeof config
@@ -1999,84 +2027,40 @@ export class McpHub {
 	}
 
 	/**
-	 * Helper method to update a server's configuration in the appropriate settings file
-	 * @param serverName The name of the server to update
-	 * @param configUpdate The configuration updates to apply
-	 * @param source Whether to update the global or project config
+	 * Helper method to update a server's configuration via McpConfigStore (preserves top-level keys).
 	 */
 	private async updateServerConfig(
 		serverName: string,
 		configUpdate: Record<string, any>,
 		source: "global" | "project" = "global",
 	): Promise<void> {
-		// Determine which config file to update
-		let configPath: string
 		if (source === "project") {
 			const projectMcpPath = await this.getProjectMcpPath()
 			if (!projectMcpPath) {
 				throw new Error("Project MCP configuration file not found")
 			}
-			configPath = projectMcpPath
 		} else {
-			configPath = await this.getMcpSettingsFilePath()
+			await this.getMcpSettingsFilePath()
 		}
 
-		// Ensure the settings file exists and is accessible
-		try {
-			await fs.access(configPath)
-		} catch (error) {
-			console.error("Settings file not accessible:", error)
-			throw new Error("Settings file not accessible")
+		const existing = await this.configStore.getServer(source, serverName)
+		const patch: Record<string, unknown> = { ...configUpdate }
+		if (existing && !("alwaysAllow" in patch) && !existing.alwaysAllow) {
+			patch.alwaysAllow = []
+		} else if (!existing && !("alwaysAllow" in patch)) {
+			patch.alwaysAllow = []
 		}
 
-		// Read and parse the config file
-		const content = await fs.readFile(configPath, "utf-8")
-		const config = JSON.parse(content)
-
-		// Validate the config structure
-		if (!config || typeof config !== "object") {
-			throw new Error("Invalid config structure")
-		}
-
-		if (!config.mcpServers || typeof config.mcpServers !== "object") {
-			config.mcpServers = {}
-		}
-
-		if (!config.mcpServers[serverName]) {
-			config.mcpServers[serverName] = {}
-		}
-
-		// Create a new server config object to ensure clean structure
-		const serverConfig = {
-			...config.mcpServers[serverName],
-			...configUpdate,
-		}
-
-		// Ensure required fields exist
-		if (!serverConfig.alwaysAllow) {
-			serverConfig.alwaysAllow = []
-		}
-
-		config.mcpServers[serverName] = serverConfig
-
-		// Write the entire config back
-		const updatedConfig = {
-			mcpServers: config.mcpServers,
-		}
-
-		// Set flag to prevent file watcher from triggering server restart
-		if (this.flagResetTimer) {
-			clearTimeout(this.flagResetTimer)
-		}
-		this.isProgrammaticUpdate = true
-		try {
-			await safeWriteJson(configPath, updatedConfig, { prettyPrint: true })
-		} finally {
-			// Reset flag after watcher debounce period (non-blocking)
-			this.flagResetTimer = setTimeout(() => {
-				this.isProgrammaticUpdate = false
-				this.flagResetTimer = undefined
-			}, 600)
+		if (!existing) {
+			await this.configStore.admitServer({
+				name: serverName,
+				config: patch,
+				scope: source,
+				sourceKind: "manual_api",
+				intent: "preserve",
+			})
+		} else {
+			await this.configStore.patchServer(source, serverName, patch)
 		}
 	}
 
@@ -2104,62 +2088,19 @@ export class McpHub {
 
 	public async deleteServer(serverName: string, source?: "global" | "project"): Promise<void> {
 		try {
-			// Find the connection to determine if it's a global or project server
 			const connection = this.findConnection(serverName, source)
 			if (!connection) {
 				throw new Error(`Server ${serverName}${source ? ` with source ${source}` : ""} not found`)
 			}
 
 			const serverSource = connection.server.source || "global"
-			// Determine config file based on server source
-			const isProjectServer = serverSource === "project"
-			let configPath: string
-
-			if (isProjectServer) {
-				// Get project MCP config path
-				const projectMcpPath = await this.getProjectMcpPath()
-				if (!projectMcpPath) {
-					throw new Error("Project MCP configuration file not found")
+			const removed = await this.configStore.removeServer(serverSource, serverName)
+			if (removed) {
+				if (this.credentialVault) {
+					await this.credentialVault.deleteServerSecrets(serverSource, serverName)
 				}
-				configPath = projectMcpPath
-			} else {
-				// Get global MCP settings path
-				configPath = await this.getMcpSettingsFilePath()
-			}
-
-			// Ensure the settings file exists and is accessible
-			try {
-				await fs.access(configPath)
-			} catch (error) {
-				throw new Error("Settings file not accessible")
-			}
-
-			const content = await fs.readFile(configPath, "utf-8")
-			const config = JSON.parse(content)
-
-			// Validate the config structure
-			if (!config || typeof config !== "object") {
-				throw new Error("Invalid config structure")
-			}
-
-			if (!config.mcpServers || typeof config.mcpServers !== "object") {
-				config.mcpServers = {}
-			}
-
-			// Remove the server from the settings
-			if (config.mcpServers[serverName]) {
-				delete config.mcpServers[serverName]
-
-				// Write the entire config back
-				const updatedConfig = {
-					mcpServers: config.mcpServers,
-				}
-
-				await safeWriteJson(configPath, updatedConfig, { prettyPrint: true })
-
-				// Update server connections with the correct source
-				await this.updateServerConnections(config.mcpServers, serverSource)
-
+				const doc = await this.configStore.read(serverSource)
+				await this.updateServerConnections(doc.mcpServers, serverSource)
 				vscode.window.showInformationMessage(t("mcp:info.server_deleted", { serverName }))
 			} else {
 				vscode.window.showWarningMessage(t("mcp:info.server_not_found", { serverName }))
@@ -2304,74 +2245,39 @@ export class McpHub {
 		listName: "alwaysAllow" | "disabledTools",
 		addTool: boolean,
 	): Promise<void> {
-		// Find the connection with matching name and source
 		const connection = this.findConnection(serverName, source)
-
 		if (!connection) {
 			throw new Error(`Server ${serverName} with source ${source} not found`)
 		}
 
-		// Determine the correct config path based on the source
-		let configPath: string
-		if (source === "project") {
-			// Get project MCP config path
-			const projectMcpPath = await this.getProjectMcpPath()
-			if (!projectMcpPath) {
-				throw new Error("Project MCP configuration file not found")
-			}
-			configPath = projectMcpPath
-		} else {
-			// Get global MCP settings path
-			configPath = await this.getMcpSettingsFilePath()
-		}
-
-		// Normalize path for cross-platform compatibility
-		// Use a consistent path format for both reading and writing
-		const normalizedPath = process.platform === "win32" ? configPath.replace(/\\/g, "/") : configPath
-
-		// Read the appropriate config file
-		const content = await fs.readFile(normalizedPath, "utf-8")
-		const config = JSON.parse(content)
-
-		if (!config.mcpServers) {
-			config.mcpServers = {}
-		}
-
-		if (!config.mcpServers[serverName]) {
-			config.mcpServers[serverName] = {
+		let existing = await this.configStore.getServer(source, serverName)
+		if (!existing) {
+			existing = {
 				type: "stdio",
 				command: "node",
-				args: [], // Default to an empty array; can be set later if needed
+				args: [],
+				alwaysAllow: [],
+				disabledTools: [],
 			}
+			await this.configStore.admitServer({
+				name: serverName,
+				config: existing,
+				scope: source,
+				sourceKind: "manual_api",
+				intent: "preserve",
+			})
+			existing = (await this.configStore.getServer(source, serverName)) || existing
 		}
 
-		if (!config.mcpServers[serverName][listName]) {
-			config.mcpServers[serverName][listName] = []
-		}
-
-		const targetList = config.mcpServers[serverName][listName]
-		const toolIndex = targetList.indexOf(toolName)
-
+		const currentList: string[] = Array.isArray(existing[listName]) ? [...(existing[listName] as string[])] : []
+		const toolIndex = currentList.indexOf(toolName)
 		if (addTool && toolIndex === -1) {
-			targetList.push(toolName)
+			currentList.push(toolName)
 		} else if (!addTool && toolIndex !== -1) {
-			targetList.splice(toolIndex, 1)
+			currentList.splice(toolIndex, 1)
 		}
 
-		// Set flag to prevent file watcher from triggering server restart
-		if (this.flagResetTimer) {
-			clearTimeout(this.flagResetTimer)
-		}
-		this.isProgrammaticUpdate = true
-		try {
-			await safeWriteJson(normalizedPath, config, { prettyPrint: true })
-		} finally {
-			// Reset flag after watcher debounce period (non-blocking)
-			this.flagResetTimer = setTimeout(() => {
-				this.isProgrammaticUpdate = false
-				this.flagResetTimer = undefined
-			}, 600)
-		}
+		await this.configStore.patchServer(source, serverName, { [listName]: currentList })
 
 		if (connection) {
 			connection.server.tools = await this.fetchToolsList(serverName, source)
@@ -2414,55 +2320,56 @@ export class McpHub {
 	}
 
 	/**
-	 * Handles enabling/disabling MCP globally
-	 * @param enabled Whether MCP should be enabled or disabled
-	 * @returns Promise<void>
+	 * Handles enabling/disabling MCP globally.
+	 * Caller must persist mcpEnabled first (D1). Uses enabled override so connectToServer
+	 * does not read a stale getState() value.
 	 */
 	async handleMcpEnabledChange(enabled: boolean): Promise<void> {
-		if (!enabled) {
-			// If MCP is being disabled, disconnect all servers with error handling
-			const existingConnections = [...this.connections]
-			const disconnectionErrors: Array<{ serverName: string; error: string }> = []
+		this.mcpEnabledOverride = enabled
+		try {
+			if (!enabled) {
+				const existingConnections = [...this.connections]
+				const disconnectionErrors: Array<{ serverName: string; error: string }> = []
 
-			for (const conn of existingConnections) {
+				for (const conn of existingConnections) {
+					try {
+						await this.deleteConnection(conn.server.name, conn.server.source)
+					} catch (error) {
+						const errorMessage = error instanceof Error ? error.message : String(error)
+						disconnectionErrors.push({
+							serverName: conn.server.name,
+							error: errorMessage,
+						})
+						console.error(`Failed to disconnect MCP server ${conn.server.name}: ${errorMessage}`)
+					}
+				}
+
+				if (disconnectionErrors.length > 0) {
+					const errorSummary = disconnectionErrors.map((e) => `${e.serverName}: ${e.error}`).join("\n")
+					vscode.window.showWarningMessage(
+						t("mcp:errors.disconnect_servers_partial", {
+							count: disconnectionErrors.length,
+							errors: errorSummary,
+						}),
+					)
+				}
+
 				try {
-					await this.deleteConnection(conn.server.name, conn.server.source)
+					await this.refreshAllConnections()
 				} catch (error) {
-					const errorMessage = error instanceof Error ? error.message : String(error)
-					disconnectionErrors.push({
-						serverName: conn.server.name,
-						error: errorMessage,
-					})
-					console.error(`Failed to disconnect MCP server ${conn.server.name}: ${errorMessage}`)
+					console.error(`Failed to refresh MCP connections after disabling: ${error}`)
+					vscode.window.showErrorMessage(t("mcp:errors.refresh_after_disable"))
+				}
+			} else {
+				try {
+					await this.refreshAllConnections()
+				} catch (error) {
+					console.error(`Failed to refresh MCP connections after enabling: ${error}`)
+					vscode.window.showErrorMessage(t("mcp:errors.refresh_after_enable"))
 				}
 			}
-
-			// If there were errors, notify the user
-			if (disconnectionErrors.length > 0) {
-				const errorSummary = disconnectionErrors.map((e) => `${e.serverName}: ${e.error}`).join("\n")
-				vscode.window.showWarningMessage(
-					t("mcp:errors.disconnect_servers_partial", {
-						count: disconnectionErrors.length,
-						errors: errorSummary,
-					}),
-				)
-			}
-
-			// Re-initialize servers to track them in disconnected state
-			try {
-				await this.refreshAllConnections()
-			} catch (error) {
-				console.error(`Failed to refresh MCP connections after disabling: ${error}`)
-				vscode.window.showErrorMessage(t("mcp:errors.refresh_after_disable"))
-			}
-		} else {
-			// If MCP is being enabled, reconnect all servers
-			try {
-				await this.refreshAllConnections()
-			} catch (error) {
-				console.error(`Failed to refresh MCP connections after enabling: ${error}`)
-				vscode.window.showErrorMessage(t("mcp:errors.refresh_after_enable"))
-			}
+		} finally {
+			this.mcpEnabledOverride = undefined
 		}
 	}
 

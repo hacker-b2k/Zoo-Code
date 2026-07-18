@@ -2,10 +2,18 @@ import * as vscode from "vscode"
 import * as path from "path"
 import * as fs from "fs/promises"
 import * as yaml from "yaml"
-import type { MarketplaceItem, MarketplaceItemType, InstallMarketplaceItemOptions, McpParameter } from "@roo-code/types"
+import type {
+	MarketplaceItem,
+	MarketplaceItemType,
+	InstallMarketplaceItemOptions,
+	McpParameter,
+	McpActivationIntent,
+} from "@roo-code/types"
 import { GlobalFileNames } from "../../shared/globalFileNames"
 import { ensureSettingsDirectoryExists } from "../../utils/globalContext"
 import type { CustomModesManager } from "../../core/config/CustomModesManager"
+import { McpConfigStore, createDefaultMcpPathResolver } from "../mcp/mcpConfigStore"
+import { McpCredentialVault } from "../mcp/mcpCredentialVault"
 
 export interface InstallOptions extends InstallMarketplaceItemOptions {
 	target: "project" | "global"
@@ -223,59 +231,58 @@ export class SimpleInstaller {
 			}
 		}
 
-		const filePath = await this.getMcpFilePath(target)
-		const mcpData = JSON.parse(contentToUse)
-
-		// Read existing file or create new structure
-		let existingData: any = { mcpServers: {} }
+		const store = this.createMcpConfigStore()
+		const serverName = item.id
+		let mcpData: Record<string, unknown>
 		try {
-			const existing = await fs.readFile(filePath, "utf-8")
-			existingData = JSON.parse(existing) || { mcpServers: {} }
+			mcpData = JSON.parse(contentToUse) as Record<string, unknown>
+		} catch {
+			throw new Error("MCP item content is not valid JSON")
+		}
+
+		// D5: migrate secret-like env/headers into SecretStorage before admit
+		if (this.context.secrets) {
+			const vault = new McpCredentialVault(this.context.secrets)
+			mcpData = await vault.migratePlaintextFromConfig(target, serverName, mcpData)
+		}
+
+		const intent: McpActivationIntent =
+			options?.intent ?? (options?.startImmediately === true ? "start" : "install_only")
+
+		let result
+		try {
+			result = await store.admitServer({
+				name: serverName,
+				config: mcpData,
+				scope: target,
+				sourceKind: "marketplace",
+				intent,
+			})
 		} catch (error: any) {
-			if (error.code === "ENOENT") {
-				// File doesn't exist, use default structure
-				existingData = { mcpServers: {} }
-			} else if (error instanceof SyntaxError) {
-				// JSON parsing error - don't overwrite the file!
-				const fileName = target === "project" ? ".roo/mcp.json" : "mcp-settings.json"
+			if (error instanceof Error && error.message.includes("invalid JSON")) {
+				const fileName = target === "project" ? ".roo/mcp.json" : "mcp_settings.json"
 				throw new Error(
 					`Cannot install MCP server: The ${fileName} file contains invalid JSON. ` +
 						`Please fix the syntax errors in the file before installing new servers.`,
 				)
-			} else {
-				// Other unexpected errors - re-throw
-				throw error
 			}
+			throw error
 		}
 
-		// Ensure mcpServers object exists
-		if (!existingData.mcpServers) {
-			existingData.mcpServers = {}
-		}
-
-		// Use the item id as the server name
-		const serverName = item.id
-
-		// Add or update the single server
-		existingData.mcpServers[serverName] = mcpData
-
-		// Write back to file
-		await fs.mkdir(path.dirname(filePath), { recursive: true })
-		const jsonContent = JSON.stringify(existingData, null, 2)
-		await fs.writeFile(filePath, jsonContent, "utf-8")
-
-		// Calculate approximate line number where the new server was added
+		// Approximate line for editor jump
 		let line: number | undefined
-		if (serverName) {
+		try {
+			const jsonContent = await fs.readFile(result.path, "utf-8")
 			const lines = jsonContent.split("\n")
-			// Find the line containing the server name
 			const serverLineIndex = lines.findIndex((l) => l.includes(`"${serverName}"`))
 			if (serverLineIndex >= 0) {
-				line = serverLineIndex + 1 // Convert to 1-based line number
+				line = serverLineIndex + 1
 			}
+		} catch {
+			// ignore line calc
 		}
 
-		return { filePath, line }
+		return { filePath: result.path, line }
 	}
 
 	async removeItem(item: MarketplaceItem, options: InstallOptions): Promise<void> {
@@ -329,31 +336,23 @@ export class SimpleInstaller {
 	}
 
 	private async removeMcp(item: MarketplaceItem, target: "project" | "global"): Promise<void> {
-		const filePath = await this.getMcpFilePath(target)
-
 		try {
-			const existing = await fs.readFile(filePath, "utf-8")
-			const existingData = JSON.parse(existing)
-
-			if (existingData?.mcpServers) {
-				// Parse the item content to get server names
-				let content: string
-				if (Array.isArray(item.content)) {
-					// Array of McpInstallationMethod objects - use first method
-					content = item.content[0].content
-				} else {
-					content = item.content
-				}
-
-				const serverName = item.id
-				delete existingData.mcpServers[serverName]
-
-				// Always write back the file, even if empty
-				await fs.writeFile(filePath, JSON.stringify(existingData, null, 2), "utf-8")
-			}
-		} catch (error) {
+			const store = this.createMcpConfigStore()
+			await store.removeServer(target, item.id)
+		} catch {
 			// File doesn't exist or other error, nothing to remove
 		}
+	}
+
+	/** Shared store for marketplace MCP writes (preserves top-level keys + lifecycle policy). */
+	private createMcpConfigStore(): McpConfigStore {
+		return new McpConfigStore({
+			resolvePath: createDefaultMcpPathResolver({
+				getGlobalSettingsDir: () => ensureSettingsDirectoryExists(this.context),
+				getProjectRoot: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+				globalFileName: GlobalFileNames.mcpSettings,
+			}),
+		})
 	}
 
 	private async getModeFilePath(target: "project" | "global"): Promise<string> {

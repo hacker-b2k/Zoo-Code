@@ -7,6 +7,34 @@ import { z } from "zod"
 export const MAX_MCP_TOOLS_THRESHOLD = 60
 
 /**
+ * Activation intent for managed MCP admissions (marketplace, agent, import, etc.).
+ * - install_only: write config with disabled=true (do not start process)
+ * - start: write config with disabled=false (eligible to connect if mcpEnabled)
+ * - preserve: keep previous disabled when reinstalling/updating
+ */
+export const mcpActivationIntentSchema = z.enum(["install_only", "start", "preserve"])
+export type McpActivationIntent = z.infer<typeof mcpActivationIntentSchema>
+
+/**
+ * Provenance for managed writes (audit + policy; does not change default intent).
+ */
+export const mcpAdmissionSourceKindSchema = z.enum([
+	"marketplace",
+	"import",
+	"sync",
+	"template",
+	"git",
+	"manual_api",
+	"agent",
+	"unknown",
+])
+export type McpAdmissionSourceKind = z.infer<typeof mcpAdmissionSourceKindSchema>
+
+export type McpConfigScope = "global" | "project"
+
+export type McpLifecycleMode = "managed_admission" | "raw_load"
+
+/**
  * McpServerUse
  */
 

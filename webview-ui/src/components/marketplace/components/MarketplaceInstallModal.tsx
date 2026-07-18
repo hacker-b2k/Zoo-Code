@@ -33,6 +33,8 @@ export const MarketplaceInstallModal: React.FC<MarketplaceInstallModalProps> = (
 	const [parameterValues, setParameterValues] = useState<Record<string, string>>({})
 	const [validationError, setValidationError] = useState<string | null>(null)
 	const [installationComplete, setInstallationComplete] = useState(false)
+	/** MCP lifecycle UI adapter: false → install_only (disabled); true → start */
+	const [startImmediately, setStartImmediately] = useState(false)
 
 	// Reset state when item changes
 	React.useEffect(() => {
@@ -41,6 +43,7 @@ export const MarketplaceInstallModal: React.FC<MarketplaceInstallModalProps> = (
 			setParameterValues({})
 			setValidationError(null)
 			setInstallationComplete(false)
+			setStartImmediately(false)
 		}
 	}, [item])
 
@@ -176,7 +179,7 @@ export const MarketplaceInstallModal: React.FC<MarketplaceInstallModalProps> = (
 			}
 		}
 
-		// Send install message with parameters
+		// Send install message with parameters (+ MCP activation intent via startImmediately)
 		vscode.postMessage({
 			type: "installMarketplaceItem",
 			mpItem: item,
@@ -186,6 +189,8 @@ export const MarketplaceInstallModal: React.FC<MarketplaceInstallModalProps> = (
 					...finalParameters,
 					_selectedIndex: hasMultipleMethods ? selectedMethodIndex : undefined,
 				},
+				// Product activation is owned by mcpLifecyclePolicy — UI only maps intent.
+				...(item.type === "mcp" ? { startImmediately } : {}),
 			},
 		})
 
@@ -350,6 +355,30 @@ export const MarketplaceInstallModal: React.FC<MarketplaceInstallModalProps> = (
 								))}
 							</div>
 						)}
+
+						{/* MCP activation intent — default install_only (disabled until enable) */}
+						{item.type === "mcp" && (
+							<div className="space-y-1 rounded border border-vscode-panel-border p-3">
+								<label className="flex items-start gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={startImmediately}
+										onChange={(e) => setStartImmediately(e.target.checked)}
+										className="mt-1"
+										data-testid="mcp-start-immediately"
+									/>
+									<span className="space-y-0.5">
+										<span className="text-sm font-medium block">
+											{t("marketplace:install.startImmediately")}
+										</span>
+										<span className="text-xs text-muted-foreground block">
+											{t("marketplace:install.startImmediatelyDescription")}
+										</span>
+									</span>
+								</label>
+							</div>
+						)}
+
 						{/* Validation Error */}
 						{validationError && (
 							<div className="text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded p-2">

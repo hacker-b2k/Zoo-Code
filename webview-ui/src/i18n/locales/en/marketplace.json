@@ -106,7 +106,9 @@
 		"goToMcp": "Go to MCP Tab",
 		"goToModes": "Go to Modes Settings",
 		"moreInfoMcp": "View {{name}} MCP documentation",
-		"validationRequired": "Please provide a value for {{paramName}}"
+		"validationRequired": "Please provide a value for {{paramName}}",
+		"startImmediately": "Start server after install",
+		"startImmediatelyDescription": "When off (default), the server is saved as disabled until you enable it. When on, the server starts immediately if MCP is enabled globally."
 	},
 	"sources": {
 		"title": "Configure Marketplace Sources",

@@ -57,118 +57,143 @@ const McpView = () => {
 
 				<McpEnabledToggle />
 
-				{mcpEnabled && (
-					<>
-						{/* Too Many Tools Warning */}
-						{isOverThreshold && (
-							<div style={{ marginBottom: 15 }}>
-								<div
-									style={{
-										display: "flex",
-										alignItems: "center",
-										gap: "6px",
-										fontWeight: "500",
-										color: "var(--vscode-editorWarning-foreground)",
-										marginBottom: "5px",
-									}}>
-									<span className="codicon codicon-warning" />
-									{title}
-								</div>
-								<div
-									style={{
-										fontSize: "12px",
-										color: "var(--vscode-descriptionForeground)",
-									}}>
-									{message}
-								</div>
-							</div>
-						)}
-
-						{/* Server List */}
-						{servers.length > 0 && (
-							<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-								{servers.map((server) => (
-									<ServerRow
-										key={`${server.name}-${server.source || "global"}`}
-										server={server}
-										alwaysAllowMcp={alwaysAllowMcp}
-									/>
-								))}
-							</div>
-						)}
-
-						{/* Edit Settings Buttons */}
+				{/* D3: always list servers when global MCP is off (manage without processes) */}
+				{!mcpEnabled && (
+					<div
+						style={{
+							marginBottom: 12,
+							padding: "10px 12px",
+							borderRadius: 4,
+							border: "1px solid var(--vscode-editorWarning-border, var(--vscode-panel-border))",
+							background: "var(--vscode-inputValidation-warningBackground, transparent)",
+						}}
+						data-testid="mcp-disabled-banner">
 						<div
 							style={{
-								marginTop: "10px",
-								width: "100%",
-								display: "grid",
-								gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-								gap: "10px",
+								display: "flex",
+								alignItems: "center",
+								gap: 6,
+								fontWeight: 500,
+								color: "var(--vscode-editorWarning-foreground)",
+								marginBottom: 4,
 							}}>
-							<Button
-								variant="secondary"
-								style={{ width: "100%" }}
-								onClick={() => {
-									vscode.postMessage({ type: "openMcpSettings" })
-								}}>
-								<span className="codicon codicon-edit" style={{ marginRight: "6px" }}></span>
-								{t("mcp:editGlobalMCP")}
-							</Button>
-							<Button
-								variant="secondary"
-								style={{ width: "100%" }}
-								onClick={() => {
-									vscode.postMessage({ type: "openProjectMcpSettings" })
-								}}>
-								<span className="codicon codicon-edit" style={{ marginRight: "6px" }}></span>
-								{t("mcp:editProjectMCP")}
-							</Button>
-							<Button
-								variant="secondary"
-								style={{ width: "100%" }}
-								onClick={() => {
-									vscode.postMessage({ type: "refreshAllMcpServers" })
-								}}>
-								<span className="codicon codicon-refresh" style={{ marginRight: "6px" }}></span>
-								{t("mcp:refreshMCP")}
-							</Button>
-							<StandardTooltip content={t("mcp:marketplace")}>
-								<Button
-									variant="secondary"
-									style={{ width: "100%" }}
-									onClick={() => {
-										window.postMessage(
-											{
-												type: "action",
-												action: "marketplaceButtonClicked",
-												values: { marketplaceTab: "mcp" },
-											},
-											"*",
-										)
-									}}>
-									<span className="codicon codicon-extensions" style={{ marginRight: "6px" }}></span>
-									{t("mcp:marketplace")}
-								</Button>
-							</StandardTooltip>
+							<span className="codicon codicon-warning" />
+							{t("mcp:disabledBanner.title")}
+						</div>
+						<div style={{ fontSize: 12, color: "var(--vscode-descriptionForeground)" }}>
+							{t("mcp:disabledBanner.description")}
+						</div>
+					</div>
+				)}
+
+				{/* Too Many Tools Warning — only when MCP is enabled */}
+				{mcpEnabled && isOverThreshold && (
+					<div style={{ marginBottom: 15 }}>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								gap: "6px",
+								fontWeight: "500",
+								color: "var(--vscode-editorWarning-foreground)",
+								marginBottom: "5px",
+							}}>
+							<span className="codicon codicon-warning" />
+							{title}
 						</div>
 						<div
 							style={{
-								marginTop: "15px",
 								fontSize: "12px",
 								color: "var(--vscode-descriptionForeground)",
 							}}>
-							<VSCodeLink
-								href={buildDocLink(
-									"features/mcp/using-mcp-in-roo#editing-mcp-settings-files",
-									"mcp_edit_settings",
-								)}
-								style={{ display: "inline" }}>
-								{t("mcp:learnMoreEditingSettings")}
-							</VSCodeLink>
+							{message}
 						</div>
-					</>
+					</div>
 				)}
+
+				{/* Server List — always visible (R5 / D3) */}
+				{servers.length > 0 && (
+					<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+						{servers.map((server) => (
+							<ServerRow
+								key={`${server.name}-${server.source || "global"}`}
+								server={server}
+								alwaysAllowMcp={alwaysAllowMcp}
+							/>
+						))}
+					</div>
+				)}
+
+				{/* Edit Settings Buttons — always available for management */}
+				<div
+					style={{
+						marginTop: "10px",
+						width: "100%",
+						display: "grid",
+						gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+						gap: "10px",
+					}}>
+					<Button
+						variant="secondary"
+						style={{ width: "100%" }}
+						onClick={() => {
+							vscode.postMessage({ type: "openMcpSettings" })
+						}}>
+						<span className="codicon codicon-edit" style={{ marginRight: "6px" }}></span>
+						{t("mcp:editGlobalMCP")}
+					</Button>
+					<Button
+						variant="secondary"
+						style={{ width: "100%" }}
+						onClick={() => {
+							vscode.postMessage({ type: "openProjectMcpSettings" })
+						}}>
+						<span className="codicon codicon-edit" style={{ marginRight: "6px" }}></span>
+						{t("mcp:editProjectMCP")}
+					</Button>
+					<Button
+						variant="secondary"
+						style={{ width: "100%" }}
+						onClick={() => {
+							vscode.postMessage({ type: "refreshAllMcpServers" })
+						}}>
+						<span className="codicon codicon-refresh" style={{ marginRight: "6px" }}></span>
+						{t("mcp:refreshMCP")}
+					</Button>
+					<StandardTooltip content={t("mcp:marketplace")}>
+						<Button
+							variant="secondary"
+							style={{ width: "100%" }}
+							onClick={() => {
+								window.postMessage(
+									{
+										type: "action",
+										action: "marketplaceButtonClicked",
+										values: { marketplaceTab: "mcp" },
+									},
+									"*",
+								)
+							}}>
+							<span className="codicon codicon-extensions" style={{ marginRight: "6px" }}></span>
+							{t("mcp:marketplace")}
+						</Button>
+					</StandardTooltip>
+				</div>
+				<div
+					style={{
+						marginTop: "15px",
+						fontSize: "12px",
+						color: "var(--vscode-descriptionForeground)",
+					}}>
+					<VSCodeLink
+						href={buildDocLink(
+							"features/mcp/using-mcp-in-roo#editing-mcp-settings-files",
+							"mcp_edit_settings",
+						)}
+						style={{ display: "inline" }}>
+						{t("mcp:learnMoreEditingSettings")}
+					</VSCodeLink>
+				</div>
 			</Section>
 		</div>
 	)

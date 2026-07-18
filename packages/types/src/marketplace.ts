@@ -83,9 +83,18 @@ export type MarketplaceItem = z.infer<typeof marketplaceItemSchema>
 export const installMarketplaceItemOptionsSchema = z.object({
 	target: z.enum(["global", "project"]).optional().default("project"),
 	parameters: z.record(z.string(), z.any()).optional(),
+	/**
+	 * UI adapter: when true, map to activation intent "start"; otherwise "install_only".
+	 * Product activation is owned by mcpLifecyclePolicy — not marketplace-only flags.
+	 * Optional on the wire; installers default false → install_only.
+	 */
+	startImmediately: z.boolean().optional(),
+	/** Explicit lifecycle intent; wins over startImmediately when set. */
+	intent: z.enum(["install_only", "start", "preserve"]).optional(),
 })
 
-export type InstallMarketplaceItemOptions = z.infer<typeof installMarketplaceItemOptionsSchema>
+/** Wire / UI options — use input so defaults do not force required fields on constructors. */
+export type InstallMarketplaceItemOptions = z.input<typeof installMarketplaceItemOptionsSchema>
 
 export interface MarketplaceInstalledMetadata {
 	project: Record<string, { type: string }>
