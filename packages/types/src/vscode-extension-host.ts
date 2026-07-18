@@ -108,6 +108,8 @@ export interface ExtensionMessage {
 		| "fileContent"
 		| "rooHistoryImportProgress"
 	text?: string
+	/** For setAgenticMode: "classic" | "deepSequential" */
+	agenticMode?: "classic" | "deepSequential"
 	/** For fileContent: { path, content, error? } */
 	fileContent?: { path: string; content: string | null; error?: string }
 	payload?: any // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -266,6 +268,7 @@ export type ExtensionState = Pick<
 	| "currentApiConfigName"
 	| "listApiConfigMeta"
 	| "pinnedApiConfigs"
+	| "workerEnabledApiConfigs"
 	| "customInstructions"
 	| "dismissedUpsells"
 	| "autoApprovalEnabled"
@@ -367,6 +370,13 @@ export type ExtensionState = Pick<
 
 	experiments: Experiments // Map of experiment IDs to their enabled state
 
+	/**
+	 * Agentic orchestration mode. Defaults to "classic". Opt in to
+	 * the new Deep Sequential Agentic Pipeline (src/core/pipeline/)
+	 * by setting this to "deepSequential".
+	 */
+	agenticMode: "classic" | "deepSequential"
+
 	mcpEnabled: boolean
 
 	mode: string
@@ -431,6 +441,25 @@ export type ExtensionState = Pick<
 	 * (captured during async getStateToPostToWebview) from overwriting newer messages.
 	 */
 	clineMessagesSeq?: number
+
+	/**
+	 * Live multi-agent workers for the current main task (and any still-running workers).
+	 * Used by the chat WorkerSwitcher near BRRR — switch focus without aborting the main task.
+	 */
+	orchestrationWorkers?: Array<{
+		workerId: string
+		parentTaskId: string
+		name: string
+		role: string
+		state: string
+		/** Sticky spawn mode for the worker (default code). */
+		mode?: string
+		apiConfigName?: string
+		/** 1-based ordinal among workers for this parent (spawn order). */
+		index: number
+	}>
+	/** Last worker the user focused via WorkerSwitcher (workerId), for badge display. */
+	lastFocusedWorkerId?: string
 }
 
 export interface Command {
@@ -505,6 +534,7 @@ export interface WebviewMessage {
 		| "requestTerminalProfiles"
 		| "openTerminalProfilePicker"
 		| "updateCondensingPrompt"
+		| "setAgenticMode"
 		| "playSound"
 		| "playTts"
 		| "stopTts"
@@ -549,6 +579,7 @@ export interface WebviewMessage {
 		| "telemetrySetting"
 		| "searchFiles"
 		| "toggleApiConfigPin"
+		| "toggleWorkerApiConfig"
 		| "hasOpenedModeSelector"
 		| "lockApiConfigAcrossModes"
 		| "clearCloudAuthSkipModel"
@@ -840,6 +871,22 @@ export interface ClineSayTool {
 		| "runSlashCommand"
 		| "updateTodoList"
 		| "skill"
+		// provider_manage / mcp_manage (settings store only — not workspace source edits)
+		| "manageProviderProfile"
+		| "setProviderSecret"
+		| "activateProviderProfile"
+		| "deleteProviderProfile"
+		| "setModeProvider"
+		| "listProviderProfiles"
+		| "getProviderProfile"
+		| "listProviderTypes"
+		| "manageMcpServer"
+		| "setMcpSecret"
+		| "toggleMcpServer"
+		| "deleteMcpServer"
+		| "listMcpConfig"
+		| "getMcpServer"
+		| "refreshMcpServers"
 	path?: string
 	// For readCommandOutput
 	readStart?: number

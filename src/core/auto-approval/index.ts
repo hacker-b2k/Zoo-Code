@@ -9,7 +9,13 @@ import {
 
 import { ClineAskResponse } from "../../shared/WebviewMessage"
 
-import { isWriteToolAction, isReadOnlyToolAction } from "./tools"
+import {
+	isWriteToolAction,
+	isReadOnlyToolAction,
+	isProviderManageWriteTool,
+	isSettingsManageReadTool,
+	isMcpManageWriteTool,
+} from "./tools"
 import { isMcpToolAlwaysAllowed } from "./mcp"
 import { getCommandDecision } from "./commands"
 
@@ -159,12 +165,38 @@ export async function checkAutoApproval({
 			return { decision: "approve" }
 		}
 
+		// Multi-agent orchestration: spawn/list/collect must not require per-call Continue.
+		// When master auto-approval is on, these are always approved so workers can be
+		// launched in parallel without the user babysitting each spawn.
+		if (["spawnWorker", "listWorkers", "collectResults"].includes(tool.tool)) {
+			return { decision: "approve" }
+		}
+
 		if (tool?.tool === "switchMode") {
 			return state.alwaysAllowModeSwitch === true ? { decision: "approve" } : { decision: "ask" }
 		}
 
 		if (["newTask", "finishTask"].includes(tool?.tool)) {
 			return state.alwaysAllowSubtasks === true ? { decision: "approve" } : { decision: "ask" }
+		}
+
+		// Provider/MCP settings-manage tools (config store + SecretStorage only — not app source).
+		// Read tools follow alwaysAllowReadOnly; provider writes follow alwaysAllowWrite;
+		// MCP config writes follow alwaysAllowMcp (same toggle as MCP tool use).
+		if (isSettingsManageReadTool(tool)) {
+			return state.alwaysAllowReadOnly === true || state.alwaysAllowMcp === true
+				? { decision: "approve" }
+				: { decision: "ask" }
+		}
+
+		if (isProviderManageWriteTool(tool)) {
+			return state.alwaysAllowWrite === true ? { decision: "approve" } : { decision: "ask" }
+		}
+
+		if (isMcpManageWriteTool(tool)) {
+			return state.alwaysAllowMcp === true || state.alwaysAllowWrite === true
+				? { decision: "approve" }
+				: { decision: "ask" }
 		}
 
 		const isOutsideWorkspace = !!tool.isOutsideWorkspace

@@ -227,3 +227,70 @@ describe("filterNativeToolsForMode - access_mcp_resource allowlist", () => {
 		})
 	})
 })
+
+describe("filterNativeToolsForMode - always-on reviewer role", () => {
+	const nativeTools: OpenAI.Chat.ChatCompletionTool[] = [
+		makeTool("list_workers"),
+		makeTool("get_worker_status"),
+		makeTool("attempt_completion"),
+		makeTool("ask_followup_question"),
+		makeTool("read_file"),
+		makeTool("list_files"),
+		makeTool("search_files"),
+		makeTool("list_code_definition_names"),
+		makeTool("spawn_worker"),
+		makeTool("cancel_worker"),
+		makeTool("write_to_file"),
+		makeTool("apply_diff"),
+		makeTool("execute_command"),
+		makeTool("new_task"),
+	]
+
+	it("strips spawn/cancel/edit/command tools when workerRole is reviewer", () => {
+		const result = filterNativeToolsForMode(
+			nativeTools,
+			"ask",
+			undefined,
+			undefined,
+			undefined,
+			{},
+			undefined,
+			undefined,
+			"reviewer",
+		)
+		const resultNames = result.map((t) => (t as any).function.name)
+
+		expect(resultNames).toContain("list_workers")
+		expect(resultNames).toContain("get_worker_status")
+		expect(resultNames).toContain("attempt_completion")
+		expect(resultNames).toContain("read_file")
+		expect(resultNames).not.toContain("spawn_worker")
+		expect(resultNames).not.toContain("cancel_worker")
+		expect(resultNames).not.toContain("write_to_file")
+		expect(resultNames).not.toContain("apply_diff")
+		expect(resultNames).not.toContain("execute_command")
+		expect(resultNames).not.toContain("new_task")
+	})
+
+	it("does not strip implementer tools when workerRole is worker or omitted", () => {
+		const asWorker = filterNativeToolsForMode(
+			nativeTools,
+			"code",
+			undefined,
+			undefined,
+			undefined,
+			{},
+			undefined,
+			undefined,
+			"worker",
+		)
+		const asDefault = filterNativeToolsForMode(nativeTools, "code", undefined, undefined, undefined, {})
+
+		const workerNames = asWorker.map((t) => (t as any).function.name)
+		const defaultNames = asDefault.map((t) => (t as any).function.name)
+
+		// Mode groups decide availability; reviewer strip must not run for worker/default.
+		expect(workerNames).toEqual(expect.arrayContaining(["read_file", "write_to_file", "apply_diff"]))
+		expect(defaultNames).toEqual(expect.arrayContaining(["read_file", "write_to_file", "apply_diff"]))
+	})
+})

@@ -160,6 +160,21 @@ export interface TaskOptions extends CreateTaskOptions {
 	initialStatus?: "active" | "delegated" | "completed"
 	rateLimitClock?: RateLimitClock
 	diffFuzzyThreshold?: number
+	/**
+	 * Background multi-agent worker: not pushed to UI stack as sole open task.
+	 * Failover is owned by ProviderManager via OrchestrationRuntime — not this flag alone.
+	 */
+	isBackgroundWorker?: boolean
+	/** Orchestration registry id (often same as taskId for workers). */
+	workerId?: string
+	/** Sticky API config name when creating a worker with a resolved profile. */
+	initialApiConfigName?: string
+	/** Optional sticky mode slug (e.g. worker mode) — skips clobber from global state. */
+	initialMode?: string
+	/** Orchestration role: implementer worker vs always-on reviewer (watch+report). */
+	workerRole?: "worker" | "reviewer"
+	/** When workerRole is reviewer, optional target worker id for focused review. */
+	reviewTargetId?: string
 }
 
 export class Task extends EventEmitter<TaskEvents> implements TaskLike {
@@ -178,6 +193,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	readonly parentTask: Task | undefined = undefined
 	readonly taskNumber: number
 	readonly workspacePath: string
+
+	/** True when spawned via multi-agent orchestration (not serial new_task). */
+	readonly isBackgroundWorker: boolean
+	/** Worker id in OrchestrationRuntime registry (defaults to taskId for workers). */
+	readonly workerId?: string
+	/** "reviewer" = watch+report only (always-on digest); default "worker". */
+	readonly workerRole: "worker" | "reviewer"
+	/** Optional focus target when workerRole is reviewer. */
+	readonly reviewTargetId?: string
 
 	/**
 	 * The mode associated with this task. Persisted across sessions
@@ -457,6 +481,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		initialStatus,
 		rateLimitClock,
 		diffFuzzyThreshold,
+		isBackgroundWorker = false,
+		workerId,
+		initialApiConfigName,
+		initialMode,
+		workerRole = "worker",
+		reviewTargetId,
 	}: TaskOptions) {
 		super()
 
@@ -520,6 +550,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.parentTask = parentTask
 		this.taskNumber = taskNumber
 		this.initialStatus = initialStatus
+		this.isBackgroundWorker = isBackgroundWorker
+		this.workerId = workerId ?? (isBackgroundWorker ? this.taskId : undefined)
+		this.workerRole = workerRole === "reviewer" ? "reviewer" : "worker"
+		this.reviewTargetId = reviewTargetId
 
 		// Store the task's mode and API config name when it's created.
 		// For history items, use the stored values; for new tasks, we'll set them
@@ -530,6 +564,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			this.taskModeReady = Promise.resolve()
 			this.taskApiConfigReady = Promise.resolve()
 			TelemetryService.instance.captureTaskRestarted(this.taskId)
+		} else if (initialApiConfigName !== undefined || initialMode !== undefined) {
+			// Worker (or caller) already resolved sticky mode/profile — skip global clobber.
+			this._taskMode = initialMode
+			this._taskApiConfigName = initialApiConfigName
+			this.taskModeReady = initialMode !== undefined ? Promise.resolve() : this.initializeTaskMode(provider)
+			this.taskApiConfigReady =
+				initialApiConfigName !== undefined ? Promise.resolve() : this.initializeTaskApiConfigName(provider)
+			TelemetryService.instance.captureTaskCreated(this.taskId)
 		} else {
 			// For new tasks, don't set the mode/apiConfigName yet - wait for async initialization.
 			this._taskMode = undefined
@@ -546,21 +588,24 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.messageQueueStateChangedHandler = () => {
 			this.emit(RooCodeEventName.TaskUserMessage, this.taskId)
 			this.emit(RooCodeEventName.QueuedMessagesUpdated, this.taskId, this.messageQueueService.messages)
-			void this.providerRef
-				.deref()
-				?.postStateToWebviewWithoutTaskHistory()
-				.catch((error) => {
-					console.error(
-						"[Task#messageQueueStateChangedHandler] postStateToWebviewWithoutTaskHistory failed:",
-						error,
-					)
-				})
+			const provider = this.providerRef.deref()
+			if (provider?.getCurrentTask()?.instanceId !== this.instanceId) {
+				return
+			}
+			void provider.postStateToWebviewWithoutTaskHistory().catch((error) => {
+				console.error(
+					"[Task#messageQueueStateChangedHandler] postStateToWebviewWithoutTaskHistory failed:",
+					error,
+				)
+			})
 		}
 
 		this.messageQueueService.on("stateChanged", this.messageQueueStateChangedHandler)
 
-		// Listen for provider profile changes to update parser state
-		this.setupProviderProfileChangeListener(provider)
+		// Background workers own sticky profiles via ProviderManager — never follow global UI switches.
+		if (!this.isBackgroundWorker) {
+			this.setupProviderProfileChangeListener(provider)
+		}
 
 		// Set up diff strategy
 		this.diffStrategy = new MultiSearchReplaceDiffStrategy(diffFuzzyThreshold)
@@ -771,6 +816,27 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	public async getTaskMode(): Promise<string> {
 		await this.taskModeReady
 		return this._taskMode || defaultModeSlug
+	}
+
+	/**
+	 * Effective mode for system prompts, tool filtering, and validation.
+	 * Sticky `_taskMode` wins so background workers keep their spawn mode
+	 * even when the global UI mode is orchestrator (empty tool groups).
+	 */
+	public async getEffectiveMode(): Promise<string> {
+		try {
+			return await this.getTaskMode()
+		} catch {
+			return defaultModeSlug
+		}
+	}
+
+	/** Sync effective mode when already initialized; falls back to default. */
+	public getEffectiveModeSync(fallback?: string): string {
+		if (this._taskMode !== undefined && this._taskMode !== "") {
+			return this._taskMode
+		}
+		return fallback || defaultModeSlug
 	}
 
 	/**
@@ -1044,9 +1110,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private async addToClineMessages(message: ClineMessage) {
 		this.clineMessages.push(message)
 		const provider = this.providerRef.deref()
-		// Avoid resending large, mostly-static fields (notably taskHistory) on every chat message update.
-		// taskHistory is maintained in-memory in the webview and updated via taskHistoryItemUpdated.
-		await provider?.postStateToWebviewWithoutTaskHistory()
+		// Only push chat state when this task owns the UI focus.
+		// Background workers / unfocused live tasks must not overwrite main chat messages.
+		const isUiFocused = provider?.getCurrentTask()?.instanceId === this.instanceId
+		if (isUiFocused) {
+			// Avoid resending large, mostly-static fields (notably taskHistory) on every chat message update.
+			// taskHistory is maintained in-memory in the webview and updated via taskHistoryItemUpdated.
+			await provider?.postStateToWebviewWithoutTaskHistory()
+		}
 		this.emit(RooCodeEventName.Message, { action: "created", message })
 		await this.saveClineMessages()
 
@@ -1079,7 +1150,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	private async updateClineMessage(message: ClineMessage) {
 		const provider = this.providerRef.deref()
-		await provider?.postMessageToWebview({ type: "messageUpdated", clineMessage: message })
+		// Stream message patches only for the UI-focused task to prevent workers
+		// from clobbering the main chat stream.
+		const isUiFocused = provider?.getCurrentTask()?.instanceId === this.instanceId
+		if (isUiFocused) {
+			await provider?.postMessageToWebview({ type: "messageUpdated", clineMessage: message })
+		}
 		this.emit(RooCodeEventName.Message, { action: "updated", message })
 
 		// Check if we should sync to cloud and haven't already synced this message
@@ -1178,7 +1254,43 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// rendered, leaving them stuck on-screen).
 		const provider = this.providerRef.deref()
 		const state = provider ? await provider.getState() : undefined
-		const approval = await checkAutoApproval({ state, ask: type, text, isProtected })
+		let approval = await checkAutoApproval({ state, ask: type, text, isProtected })
+		// Background workers run off the UI stack — the user cannot click Continue on them.
+		// When master auto-approval is enabled, force-approve blocking asks so workers keep
+		// executing without sitting idle until the user finds them in All Chats.
+		if (
+			approval.decision === "ask" &&
+			this.isBackgroundWorker &&
+			state?.autoApprovalEnabled === true &&
+			(type === "tool" || type === "command" || type === "use_mcp_server")
+		) {
+			approval = { decision: "approve" }
+		}
+
+		// Notify orchestrator immediately when a worker needs a human/main answer (followup).
+		// Do not force-approve followups — main must see the question; user can answer via
+		// WorkerSwitcher focus or by messaging the worker. Still push to ResultInbox + wake main.
+		if (
+			!partial &&
+			this.isBackgroundWorker &&
+			approval.decision === "ask" &&
+			(type === "followup" || type === "completion_result")
+		) {
+			try {
+				const { getOrchestrationRuntime } = await import("../orchestration/OrchestrationRuntime")
+				const runtime = getOrchestrationRuntime(() => this.providerRef.deref() as any)
+				const wid = this.workerId ?? this.taskId
+				const q =
+					type === "followup"
+						? text?.trim() || "(worker asked a follow-up question)"
+						: `Worker awaiting completion acceptance: ${text?.trim() || "(empty)"}`
+				runtime.workerQuestion(wid, q)
+				runtime.reportWorkerActivity(wid, "waiting_user", { reason: q.slice(0, 500) })
+			} catch (err) {
+				console.error(`[Task#ask] workerQuestion notify failed: ${(err as Error)?.message ?? err}`)
+			}
+		}
+
 		const isAutoAnswered = approval.decision === "approve" || approval.decision === "deny"
 
 		if (partial !== undefined) {
@@ -1582,6 +1694,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const state = await this.providerRef.deref()?.getState()
 		const customCondensingPrompt = state?.customSupportPrompts?.CONDENSE
 		const { mode, apiConfiguration } = state ?? {}
+		const effectiveMode = this.getEffectiveModeSync(mode ?? defaultModeSlug)
 
 		const { contextTokens: prevContextTokens } = this.getTokenUsage()
 
@@ -1593,20 +1706,21 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const toolsResult = await buildNativeToolsArrayWithRestrictions({
 				provider,
 				cwd: this.cwd,
-				mode,
+				mode: effectiveMode,
 				customModes: state?.customModes,
 				experiments: state?.experiments,
 				apiConfiguration,
 				disabledTools: state?.disabledTools,
 				modelInfo,
 				includeAllToolsWithRestrictions: false,
+				workerRole: this.workerRole,
 			})
 			allTools = toolsResult.tools
 		}
 
 		// Build metadata with tools and taskId for the condensing API call
 		const metadata: ApiHandlerCreateMessageMetadata = {
-			mode,
+			mode: effectiveMode,
 			taskId: this.taskId,
 			...(this.currentRequestAbortController?.signal
 				? {
@@ -1877,6 +1991,23 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 	}
 
+	/**
+	 * Phase 1 helper for the Deep Sequential Agentic Mode seam.
+	 *
+	 * Returns true only when the provider has explicitly opted into the
+	 * new isolated pipeline via the `agenticMode` global setting. Any
+	 * missing/unknown value resolves to false so the classic loop always
+	 * runs by default.
+	 */
+	private _isDeepSequentialMode(provider: ClineProvider): boolean {
+		try {
+			const raw = provider.getValue("agenticMode") as unknown
+			return raw === "deepSequential"
+		} catch {
+			return false
+		}
+	}
+
 	private async startTask(task?: string, images?: string[]): Promise<void> {
 		try {
 			// `conversationHistory` (for API) and `clineMessages` (for webview)
@@ -1891,7 +2022,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			// The todo list is already set in the constructor if initialTodos were provided
 			// No need to add any messages - the todoList property is already set
 
-			await this.providerRef.deref()?.postStateToWebviewWithoutTaskHistory()
+			// Background workers must not replace the main UI chat on start.
+			const startProvider = this.providerRef.deref()
+			if (startProvider?.getCurrentTask()?.instanceId === this.instanceId) {
+				await startProvider.postStateToWebviewWithoutTaskHistory()
+			}
 
 			await this.say("text", task, images)
 
@@ -1916,21 +2051,104 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			const imageBlocks: Anthropic.ImageBlockParam[] = formatResponse.imageBlocks(images)
 
-			// Task starting
-			await this.initiateTaskLoop([
-				{
-					type: "text",
-					text: `<user_message>\n${task}\n</user_message>`,
-				},
-				...imageBlocks,
-			]).catch((error) => {
-				// Swallow loop rejection when the task was intentionally abandoned/aborted
-				// during delegation or user cancellation to prevent unhandled rejections.
-				if (this.abandoned === true || this.abortReason === "user_cancelled") {
-					return
+			// ------------------------------------------------------------------
+			// Deep Sequential Agentic Mode seam (Phase 1)
+			//
+			// When the user has opted into the new isolated pipeline, route the
+			// request into src/core/pipeline/ instead of the classic task loop.
+			// The classic code path below is completely unchanged for all
+			// existing users (agenticMode defaults to "classic").
+			// ------------------------------------------------------------------
+			const providerForSeam = this.providerRef.deref()
+			let _routedIntoPipeline = false
+			if (providerForSeam && this._isDeepSequentialMode(providerForSeam)) {
+				try {
+					// Lazy import keeps classic mode free of the pipeline bundle.
+					const { PipelineController, getAgenticMode } = await import("../pipeline/index.js")
+					if (getAgenticMode(providerForSeam) === "deepSequential") {
+						_routedIntoPipeline = true
+
+						// Wire the task's current request abort controller to the pipeline
+						const pipelineAbortController = new AbortController()
+						this.currentRequestAbortController?.signal.addEventListener("abort", () => {
+							pipelineAbortController.abort()
+						})
+
+						const controller = new PipelineController()
+						const result = await controller.run({
+							taskId: this.taskId,
+							userMessage: task ?? "",
+							userImages: images,
+							abortSignal: pipelineAbortController.signal,
+							api: this.api,
+							onProgress: (stageId, status) => {
+								const stageLabels: Record<string, string> = {
+									intent: "Intent Analysis",
+									planner: "Requirements & Planning",
+									architect: "Architecture Blueprint",
+									coder: "Implementation",
+									reviewer: "Live Review",
+									"final-review": "Final Review",
+									response: "Response",
+								}
+								const label = stageLabels[stageId] ?? stageId
+								const icon = status === "started" ? "⏳" : status === "completed" ? "✔" : "❌"
+								console.log(`[Pipeline] ${icon} ${label} — ${status}`)
+							},
+							onStageOutput: async (stageId, output) => {
+								const stageLabels: Record<string, string> = {
+									intent: "Intent Analysis",
+									planner: "Requirements & Planning",
+									architect: "Architecture Blueprint",
+									coder: "Implementation",
+									reviewer: "Live Review",
+									"final-review": "Final Review",
+									response: "Response",
+								}
+								const label = stageLabels[stageId] ?? stageId
+								const icon =
+									stageId === "coder"
+										? "🔨"
+										: stageId === "reviewer"
+											? "👀"
+											: stageId === "final-review"
+												? "✅"
+												: stageId === "response"
+													? "💬"
+													: "📋"
+								await this.say(
+									"text",
+									`${icon} **${label}** — Stage complete.\n\n\`\`\`json\n${output}\n\`\`\``,
+								)
+							},
+						})
+						await this.say("text", result.finalResponse ?? "(no response)")
+					}
+				} catch (err) {
+					console.error("[Task#startTask] deepSequential pipeline failed; falling back to classic loop:", err)
+					// Fall through to classic loop on any pipeline failure so
+					// users are never left with an unresponsive task.
+					_routedIntoPipeline = false
 				}
-				throw error
-			})
+			}
+
+			if (!_routedIntoPipeline) {
+				// Task starting (classic path — 100% unchanged)
+				await this.initiateTaskLoop([
+					{
+						type: "text",
+						text: `<user_message>\n${task}\n</user_message>`,
+					},
+					...imageBlocks,
+				]).catch((error) => {
+					// Swallow loop rejection when the task was intentionally abandoned/aborted
+					// during delegation or user cancellation to prevent unhandled rejections.
+					if (this.abandoned === true || this.abortReason === "user_cancelled") {
+						return
+					}
+					throw error
+				})
+			}
 		} catch (error) {
 			// In tests and some UX flows, tasks can be aborted while `startTask` is still
 			// initializing. Treat abort/abandon as expected and avoid unhandled rejections.
@@ -2532,6 +2750,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			await this.maybeWaitForProviderRateLimit(currentItem.retryAttempt ?? 0)
 			this.rateLimitClock.recordRequest()
 
+			this.reportWorkerLiveActivity("llm_request", {
+				model: this.api?.getModel?.()?.id,
+			})
+			this.reportWorkerLiveActivity("heartbeat", {
+				activity: "waiting_llm",
+				currentStep: "api_req_started",
+			})
+
 			await this.say(
 				"api_req_started",
 				JSON.stringify({
@@ -2545,7 +2771,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const showRooIgnoredFiles = state?.showRooIgnoredFiles ?? false
 			const includeDiagnosticMessages = state?.includeDiagnosticMessages ?? true
 			const maxDiagnosticMessages = state?.maxDiagnosticMessages ?? 50
-			const currentMode = state?.mode ?? defaultModeSlug
+			const currentMode = this.getEffectiveModeSync(state?.mode ?? defaultModeSlug)
 
 			const { content: parsedUserContent, mode: slashCommandMode } = await processUserContentMentions({
 				userContent: currentUserContent,
@@ -2618,7 +2844,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			} satisfies ClineApiReqInfo)
 
 			await this.saveClineMessages()
-			await this.providerRef.deref()?.postStateToWebviewWithoutTaskHistory()
+			{
+				const p = this.providerRef.deref()
+				if (p?.getCurrentTask()?.instanceId === this.instanceId) {
+					await p.postStateToWebviewWithoutTaskHistory()
+				}
+			}
 
 			try {
 				let cacheWriteTokens = 0
@@ -3235,6 +3466,46 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								`[Task#${this.taskId}.${this.instanceId}] Stream failed, will retry: ${streamingFailedMessage}`,
 							)
 
+							// Background workers: mid-stream failures also go through ProviderManager
+							// (retry_same / switch / fail) — never UI ask, never global profile switch.
+							if (this.isBackgroundWorker && this.workerId) {
+								const { getOrchestrationRuntime } =
+									await import("../orchestration/OrchestrationRuntime")
+								const provider = this.providerRef.deref()
+								const runtime =
+									provider &&
+									typeof (provider as { getOrchestrationRuntime?: () => any })
+										.getOrchestrationRuntime === "function"
+										? (provider as { getOrchestrationRuntime: () => any }).getOrchestrationRuntime()
+										: getOrchestrationRuntime(() => provider)
+								runtime.syncWorkerPoolFromProvider?.()
+								const decision = await runtime.handleWorkerApiFailure(this.workerId, error)
+								if (!decision.shouldRetry) {
+									// failWorker already aborted + inbox'd; exit stream loop without UI ask
+									this.abortReason = this.abortReason ?? "streaming_failed"
+									if (!this.abort) {
+										await this.abortTask()
+									}
+									break
+								}
+								if (decision.backoffMs && decision.backoffMs > 0) {
+									await delay(decision.backoffMs)
+								} else {
+									await this.backoffAndAnnounce(currentItem.retryAttempt ?? 0, error)
+								}
+								if (this.abort) {
+									this.abortReason = "user_cancelled"
+									await this.abortTask()
+									break
+								}
+								stack.push({
+									userContent: currentUserContent,
+									includeFileDetails: false,
+									retryAttempt: (currentItem.retryAttempt ?? 0) + 1,
+								})
+								continue
+							}
+
 							// Apply exponential backoff similar to first-chunk errors when auto-resubmit is enabled
 							const stateForBackoff = await this.providerRef.deref()?.getState()
 							if (stateForBackoff?.autoApprovalEnabled) {
@@ -3275,6 +3546,20 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						`[RooCode#recursivelyMakeRooRequests] task ${this.taskId}.${this.instanceId} aborted`,
 					)
 				}
+
+				// Evidence SSOT: successful LLM stream completion for background workers.
+				this.reportWorkerLlmResponse({
+					inputTokens,
+					outputTokens,
+					cacheWriteTokens,
+					cacheReadTokens,
+					totalCost,
+					model: this.api?.getModel?.()?.id,
+				})
+				this.reportWorkerLiveActivity("heartbeat", {
+					activity: "thinking",
+					currentStep: "llm_stream_complete",
+				})
 
 				this.didCompleteReadingStream = true
 
@@ -3370,7 +3655,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				}
 
 				await this.saveClineMessages()
-				await this.providerRef.deref()?.postStateToWebviewWithoutTaskHistory()
+				{
+					const p = this.providerRef.deref()
+					if (p?.getCurrentTask()?.instanceId === this.instanceId) {
+						await p.postStateToWebviewWithoutTaskHistory()
+					}
+				}
 
 				// No legacy text-stream tool parser state to reset.
 
@@ -3755,6 +4045,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			enableSubfolderRules,
 		} = state ?? {}
 
+		// Sticky task mode is authoritative (workers must not inherit orchestrator empty tools).
+		const effectiveMode = this.getEffectiveModeSync(mode ?? defaultModeSlug)
+
 		return await (async () => {
 			const provider = this.providerRef.deref()
 
@@ -3770,7 +4063,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				false,
 				mcpHub,
 				this.diffStrategy,
-				mode ?? defaultModeSlug,
+				effectiveMode,
 				customModePrompts,
 				customModes,
 				customInstructions,
@@ -3804,6 +4097,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private async handleContextWindowExceededError(): Promise<void> {
 		const state = await this.providerRef.deref()?.getState()
 		const { profileThresholds = {}, mode, apiConfiguration } = state ?? {}
+		const effectiveMode = this.getEffectiveModeSync(mode ?? defaultModeSlug)
 		const { contextTokens } = this.getTokenUsage()
 		const runtime = this.runtimeContextManager.resolveRuntimeContext({
 			apiHandler: this.api,
@@ -3824,19 +4118,20 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const toolsResult = await buildNativeToolsArrayWithRestrictions({
 				provider,
 				cwd: this.cwd,
-				mode,
+				mode: effectiveMode,
 				customModes: state?.customModes,
 				experiments: state?.experiments,
 				apiConfiguration,
 				disabledTools: state?.disabledTools,
 				modelInfo: runtime.modelInfo,
 				includeAllToolsWithRestrictions: false,
+				workerRole: this.workerRole,
 			})
 			allTools = toolsResult.tools
 		}
 
 		const metadata: ApiHandlerCreateMessageMetadata = {
-			mode,
+			mode: effectiveMode,
 			taskId: this.taskId,
 			...(this.currentRequestAbortController?.signal
 				? {
@@ -3917,6 +4212,69 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	}
 
 	/**
+	 * Public tool hooks for presentAssistantMessage (background workers only).
+	 */
+	public reportWorkerToolStart(tool: string, argsSummary?: string): void {
+		this.reportWorkerLiveActivity("tool_start", { tool, argsSummary })
+	}
+
+	public reportWorkerToolEnd(tool: string, success: boolean, error?: string): void {
+		this.reportWorkerLiveActivity("tool_end", { tool, success, error })
+	}
+
+	public reportWorkerLlmResponse(usage?: Record<string, unknown>): void {
+		this.reportWorkerLiveActivity("llm_response", usage)
+	}
+
+	/**
+	 * Report live activity into OrchestrationRuntime.WorkerStateService (evidence SSOT).
+	 * No-op for main tasks. Never invents status — only pushes observed events.
+	 */
+	private reportWorkerLiveActivity(
+		kind:
+			| "heartbeat"
+			| "llm_request"
+			| "llm_response"
+			| "tool_start"
+			| "tool_end"
+			| "rate_limited"
+			| "waiting_user"
+			| "file"
+			| "activity",
+		payload?: Record<string, unknown>,
+	): void {
+		if (!this.isBackgroundWorker) {
+			return
+		}
+		const workerId = this.workerId ?? this.taskId
+		if (!workerId) {
+			return
+		}
+		try {
+			// Sync require path kept light; OrchestrationRuntime is already loaded for workers.
+			const { getOrchestrationRuntime } =
+				require("../orchestration/OrchestrationRuntime") as typeof import("../orchestration/OrchestrationRuntime")
+			const provider = this.providerRef.deref()
+			const runtime =
+				provider &&
+				typeof (provider as { getOrchestrationRuntime?: () => ReturnType<typeof getOrchestrationRuntime> })
+					.getOrchestrationRuntime === "function"
+					? (
+							provider as { getOrchestrationRuntime: () => ReturnType<typeof getOrchestrationRuntime> }
+						).getOrchestrationRuntime()
+					: getOrchestrationRuntime(() => provider)
+			runtime.reportWorkerActivity(workerId, kind, {
+				...payload,
+				conversationLength: this.clineMessages?.length,
+				model: payload?.model ?? this.api?.getModel?.()?.id,
+				provider: payload?.provider ?? this.taskApiConfigName ?? this.apiConfiguration?.apiProvider,
+			})
+		} catch {
+			// non-fatal: never block the worker loop on telemetry to SSOT
+		}
+	}
+
+	/**
 	 * Enforce the user-configured provider rate limit.
 	 *
 	 * NOTE: This is intentionally treated as expected behavior and is surfaced via
@@ -3940,6 +4298,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 		// Only show the countdown UX on the first attempt. Retry flows have their own delay messaging.
 		if (rateLimitDelay > 0 && retryAttempt === 0) {
+			const untilMs = Date.now() + rateLimitDelay * 1000
+			this.reportWorkerLiveActivity("rate_limited", {
+				untilMs,
+				reason: `Provider rate limit wait ${rateLimitDelay}s`,
+			})
 			for (let i = rateLimitDelay; i > 0; i--) {
 				// Send structured JSON data for i18n-safe transport
 				const delayMessage = JSON.stringify({ seconds: i })
@@ -3948,6 +4311,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			}
 			// Finalize the partial message so the UI doesn't keep rendering an in-progress spinner.
 			await this.say("api_req_rate_limit_wait", undefined, undefined, false)
+			this.reportWorkerLiveActivity("heartbeat", { activity: "thinking", currentStep: "rate_limit_cleared" })
 		}
 	}
 
@@ -3966,6 +4330,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			autoCondenseContextPercent = 100,
 			profileThresholds = {},
 		} = state ?? {}
+
+		// Sticky mode for tools/metadata — workers keep spawn mode, not global UI mode.
+		const effectiveMode = this.getEffectiveModeSync(mode ?? defaultModeSlug)
 
 		// Get condensing configuration for automatic triggers.
 		const customCondensingPrompt = state?.customSupportPrompts?.CONDENSE
@@ -4018,13 +4385,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					const toolsResult = await buildNativeToolsArrayWithRestrictions({
 						provider,
 						cwd: this.cwd,
-						mode,
+						mode: effectiveMode,
 						customModes: state?.customModes,
 						experiments: state?.experiments,
 						apiConfiguration,
 						disabledTools: state?.disabledTools,
 						modelInfo: runtime.modelInfo,
 						includeAllToolsWithRestrictions: false,
+						workerRole: this.workerRole,
 					})
 					contextMgmtTools = toolsResult.tools
 				}
@@ -4032,7 +4400,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			// Build metadata with tools and taskId for the condensing API call
 			const contextMgmtMetadata: ApiHandlerCreateMessageMetadata = {
-				mode,
+				mode: effectiveMode,
 				taskId: this.taskId,
 				...(this.currentRequestAbortController?.signal
 					? {
@@ -4199,13 +4567,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const toolsResult = await buildNativeToolsArrayWithRestrictions({
 				provider,
 				cwd: this.cwd,
-				mode,
+				mode: effectiveMode,
 				customModes: state?.customModes,
 				experiments: state?.experiments,
 				apiConfiguration,
 				disabledTools: state?.disabledTools,
 				modelInfo,
 				includeAllToolsWithRestrictions: supportsAllowedFunctionNames,
+				workerRole: this.workerRole,
 			})
 			allTools = toolsResult.tools
 			allowedFunctionNames = toolsResult.allowedFunctionNames
@@ -4218,7 +4587,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const abortSignal = this.currentRequestAbortController.signal
 
 		const metadata: ApiHandlerCreateMessageMetadata = {
-			mode: mode,
+			mode: effectiveMode,
 			taskId: this.taskId,
 			suppressPreviousResponseId: this.skipPrevResponseIdOnce,
 			abortSignal,
@@ -4300,6 +4669,36 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			}
 
 			// note that this api_req_failed ask is unique in that we only present this option if the api hasn't streamed any content yet (ie it fails on the first chunk due), as it would allow them to hit a retry button. However if the api failed mid-stream, it could be in any arbitrary state where some tools may have executed, so that error is handled differently and requires cancelling the task entirely.
+
+			// Background workers: failover policy lives in ProviderManager (via OrchestrationRuntime).
+			// Workers never own provider-switch logic and never prompt the UI.
+			if (this.isBackgroundWorker && this.workerId) {
+				const { getOrchestrationRuntime } = await import("../orchestration/OrchestrationRuntime")
+				const provider = this.providerRef.deref()
+				const runtime =
+					provider &&
+					typeof (provider as { getOrchestrationRuntime?: () => any }).getOrchestrationRuntime === "function"
+						? (provider as { getOrchestrationRuntime: () => any }).getOrchestrationRuntime()
+						: getOrchestrationRuntime(() => provider)
+				runtime.syncWorkerPoolFromProvider?.()
+				const decision = await runtime.handleWorkerApiFailure(this.workerId, error)
+				if (!decision.shouldRetry) {
+					throw error instanceof Error ? error : new Error(String(error))
+				}
+				if (decision.backoffMs && decision.backoffMs > 0) {
+					await delay(decision.backoffMs)
+				} else {
+					await this.backoffAndAnnounce(retryAttempt, error)
+				}
+				if (this.abort) {
+					throw new Error(
+						`[Task#attemptApiRequest] worker ${this.taskId}.${this.instanceId} aborted during provider failover`,
+					)
+				}
+				yield* this.attemptApiRequest(retryAttempt + 1)
+				return
+			}
+
 			if (autoApprovalEnabled) {
 				// Apply shared exponential backoff and countdown UX
 				await this.backoffAndAnnounce(retryAttempt, error)

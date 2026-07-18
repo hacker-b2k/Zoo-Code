@@ -25,6 +25,16 @@ export class NewTaskTool extends BaseTool<"new_task"> {
 		const { askApproval, handleError, pushToolResult } = callbacks
 
 		try {
+			// Background multi-agent workers must not use serial new_task (would touch UI stack).
+			if (task.isBackgroundWorker) {
+				pushToolResult(
+					formatResponse.toolError(
+						"Background workers cannot use new_task. Complete your work with attempt_completion.",
+					),
+				)
+				return
+			}
+
 			// Validate required parameters.
 			if (!mode) {
 				task.consecutiveMistakeCount++

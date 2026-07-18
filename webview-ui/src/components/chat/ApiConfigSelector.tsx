@@ -20,6 +20,9 @@ interface ApiConfigSelectorProps {
 	listApiConfigMeta: Array<{ id: string; name: string; modelId?: string }>
 	pinnedApiConfigs?: Record<string, boolean>
 	togglePinnedApiConfig: (id: string) => void
+	/** Profile names enabled for the parallel worker pool (keyed by profile name). */
+	workerEnabledApiConfigs?: Record<string, boolean>
+	toggleWorkerApiConfig: (name: string) => void
 	lockApiConfigAcrossModes: boolean
 	onToggleLockApiConfig: () => void
 }
@@ -34,6 +37,8 @@ export const ApiConfigSelector = ({
 	listApiConfigMeta,
 	pinnedApiConfigs,
 	togglePinnedApiConfig,
+	workerEnabledApiConfigs,
+	toggleWorkerApiConfig,
 	lockApiConfigAcrossModes,
 	onToggleLockApiConfig,
 }: ApiConfigSelectorProps) => {
@@ -92,6 +97,8 @@ export const ApiConfigSelector = ({
 	const renderConfigItem = useCallback(
 		(config: { id: string; name: string; modelId?: string }, isPinned: boolean) => {
 			const isCurrentConfig = config.id === value
+			// Worker pool is keyed by profile NAME (matches spawn_worker / ProviderManager).
+			const isWorkerEnabled = !!workerEnabledApiConfigs?.[config.name]
 
 			return (
 				<div
@@ -121,6 +128,35 @@ export const ApiConfigSelector = ({
 								<span className="codicon codicon-check text-xs" />
 							</div>
 						)}
+						<StandardTooltip
+							content={
+								isWorkerEnabled
+									? "Disable for worker pool"
+									: "Enable for worker pool (parallel spawn_worker)"
+							}>
+							<Button
+								variant="ghost"
+								size="icon"
+								tabIndex={-1}
+								aria-label={isWorkerEnabled ? "Disable for worker pool" : "Enable for worker pool"}
+								onClick={(e) => {
+									e.stopPropagation()
+									toggleWorkerApiConfig(config.name)
+									vscode.postMessage({ type: "toggleWorkerApiConfig", text: config.name })
+								}}
+								className={cn("size-5 flex items-center justify-center", {
+									"opacity-0 group-hover:opacity-100": !isWorkerEnabled && !isCurrentConfig,
+									"bg-accent opacity-100 text-vscode-focusBorder": isWorkerEnabled,
+								})}>
+								<span
+									className={cn(
+										"codicon text-xs",
+										isWorkerEnabled ? "codicon-server-process" : "codicon-server",
+										!isWorkerEnabled && "opacity-50",
+									)}
+								/>
+							</Button>
+						</StandardTooltip>
 						<StandardTooltip content={isPinned ? t("chat:unpin") : t("chat:pin")}>
 							<Button
 								variant="ghost"
@@ -142,7 +178,7 @@ export const ApiConfigSelector = ({
 				</div>
 			)
 		},
-		[value, handleSelect, t, togglePinnedApiConfig],
+		[value, handleSelect, t, togglePinnedApiConfig, workerEnabledApiConfigs, toggleWorkerApiConfig],
 	)
 
 	return (

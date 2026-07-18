@@ -166,6 +166,12 @@ export class ClineProvider
 	private webviewDisposables: vscode.Disposable[] = []
 	private view?: vscode.WebviewView | vscode.WebviewPanel
 	private clineStack: Task[] = []
+	/**
+	 * Live (running) tasks that are NOT currently on the UI stack top.
+	 * Background workers and unfocused main/history tasks stay here so that
+	 * switching chat focus does not abort them (no Continue gate).
+	 */
+	private liveTasks: Map<string, Task> = new Map()
 	private delegationTransitionLocks?: Map<string, Promise<void>>
 	private cancelledDelegationChildIds = new Set<string>()
 	private codeIndexStatusSubscription?: vscode.Disposable
@@ -203,6 +209,9 @@ export class ClineProvider
 	 * Used by the frontend to reject stale state that arrives out-of-order.
 	 */
 	private clineMessagesSeq = 0
+
+	/** Last workerId the user focused via WorkerSwitcher (for badge in chat toolbar). */
+	private lastFocusedWorkerId: string | undefined
 
 	/**
 	 * Debounced state push — batches multiple postStateToWebview() calls
@@ -460,6 +469,7 @@ export class ClineProvider
 		// Add this cline instance into the stack that represents the order of
 		// all the called tasks.
 		this.clineStack.push(task)
+		this.liveTasks.set(task.taskId, task)
 		task.emit(RooCodeEventName.TaskFocused)
 
 		// Perform special setup provider specific tasks.
@@ -471,6 +481,73 @@ export class ClineProvider
 		if (!state || typeof state.mode !== "string") {
 			throw new Error(t("common:errors.retrieve_current_mode"))
 		}
+	}
+
+	/** Register a running task that must survive UI focus switches. */
+	public registerLiveTask(task: Task): void {
+		this.liveTasks.set(task.taskId, task)
+	}
+
+	/** Drop live registration (after abort/complete/dispose). */
+	public unregisterLiveTask(taskId: string): void {
+		this.liveTasks.delete(taskId)
+	}
+
+	/** Find a still-running Task by id (stack or live registry). */
+	public findLiveTask(taskId: string): Task | undefined {
+		const fromLive = this.liveTasks.get(taskId)
+		if (fromLive && !fromLive.abandoned && !fromLive.abort) {
+			return fromLive
+		}
+		const fromStack = this.clineStack.find((t) => t.taskId === taskId)
+		if (fromStack && !fromStack.abandoned && !fromStack.abort) {
+			return fromStack
+		}
+		return undefined
+	}
+
+	/**
+	 * Switch UI focus to an already-running Task without aborting anything.
+	 * Parks the current stack-top (if different) into liveTasks.
+	 */
+	public async focusLiveTask(task: Task): Promise<void> {
+		const current = this.getCurrentTask()
+		if (current?.taskId === task.taskId && current.instanceId === task.instanceId) {
+			return
+		}
+
+		if (current) {
+			current.emit(RooCodeEventName.TaskUnfocused)
+			// Keep running — do not abort. Remain registered in liveTasks.
+			this.liveTasks.set(current.taskId, current)
+			// Remove from stack top without dispose
+			if (this.clineStack.length > 0 && this.clineStack[this.clineStack.length - 1] === current) {
+				this.clineStack.pop()
+			} else {
+				const idx = this.clineStack.findIndex((t) => t.instanceId === current.instanceId)
+				if (idx >= 0) {
+					this.clineStack.splice(idx, 1)
+				}
+			}
+		}
+
+		// Avoid duplicate stack entries for same task
+		const existingIdx = this.clineStack.findIndex((t) => t.taskId === task.taskId)
+		if (existingIdx >= 0) {
+			this.clineStack.splice(existingIdx, 1)
+		}
+
+		this.clineStack.push(task)
+		this.liveTasks.set(task.taskId, task)
+		if (task.isBackgroundWorker) {
+			this.lastFocusedWorkerId = task.workerId ?? task.taskId
+		}
+		task.emit(RooCodeEventName.TaskFocused)
+		await this.postStateToWebview()
+		this.log(
+			`[focusLiveTask] UI focus → ${task.taskId}.${task.instanceId}` +
+				(task.isBackgroundWorker ? " (background worker, still running)" : " (live, still running)"),
+		)
 	}
 
 	async performPreparationTasks(cline: Task) {
@@ -491,10 +568,12 @@ export class ClineProvider
 		}
 	}
 
-	// Removes and destroys the top Cline instance (the current finished task),
-	// activating the previous one (resuming the parent task).
-	async removeClineFromStack(options?: { skipDelegationRepair?: boolean }) {
+	// Removes the top Cline instance from the UI stack.
+	// By default disposes/aborts it. Pass dispose:false to park it as a live
+	// background task so work continues while the user views another chat.
+	async removeClineFromStack(options?: { skipDelegationRepair?: boolean; dispose?: boolean }) {
 		const callerStack = new Error().stack
+		const dispose = options?.dispose !== false
 
 		if (this.clineStack.length === 0) {
 			return
@@ -510,6 +589,17 @@ export class ClineProvider
 			const parentTaskId = task.parentTaskId
 
 			task.emit(RooCodeEventName.TaskUnfocused)
+
+			if (!dispose) {
+				// Park: keep running, retain listeners, stay in liveTasks.
+				this.liveTasks.set(task.taskId, task)
+				this.log(
+					`[ClineProvider#removeClineFromStack] parked live task ${task.taskId}.${task.instanceId} (no abort)`,
+				)
+				return
+			}
+
+			this.liveTasks.delete(task.taskId)
 
 			try {
 				// Abort the running task and set isAbandoned to true so
@@ -990,7 +1080,7 @@ export class ClineProvider
 
 	public async createTaskWithHistoryItem(
 		historyItem: HistoryItem & { rootTask?: Task; parentTask?: Task },
-		options?: { startTask?: boolean },
+		options?: { startTask?: boolean; skipStackClear?: boolean; disposeCurrent?: boolean },
 	) {
 		const isCliRuntime = process.env.ROO_CLI_RUNTIME === "1"
 		// CLI injects runtime provider settings from command flags/env at startup.
@@ -1002,8 +1092,29 @@ export class ClineProvider
 		const currentTask = this.getCurrentTask()
 		const isRehydratingCurrentTask = currentTask && currentTask.taskId === historyItem.id
 
-		if (!isRehydratingCurrentTask) {
-			await this.removeClineFromStack()
+		// Prefer attaching an already-running live instance of this history id
+		// (e.g. background worker) instead of aborting + rehydrate → Continue.
+		//
+		// CRITICAL: run this even when isRehydratingCurrentTask is true.
+		// Previously we skipped findLiveTask when the task was already stack-top, then
+		// aborted it and built a new Task from getState().apiConfiguration (global main
+		// profile). That discarded the worker's assigned provider settings while keeping
+		// the same taskId — log symptom: rehydrated ….<newInstanceId> after focusLiveTask
+		// on the original worker instance. Keep the live instance; do not rebuild.
+		const liveExisting = this.findLiveTask(historyItem.id)
+		if (liveExisting) {
+			if (currentTask?.instanceId === liveExisting.instanceId) {
+				return liveExisting
+			}
+			await this.focusLiveTask(liveExisting)
+			return liveExisting
+		}
+
+		if (!isRehydratingCurrentTask && !options?.skipStackClear) {
+			// Park running tasks by default so switching history does not kill workers/main.
+			// Explicit disposeCurrent:true restores legacy hard-abort behavior (e.g. cancel/new).
+			const dispose = options?.disposeCurrent === true
+			await this.removeClineFromStack({ dispose })
 		}
 
 		// If the history item has a saved mode, restore it and its associated API configuration.
@@ -1582,31 +1693,49 @@ export class ClineProvider
 			const id = await this.providerSettingsManager.saveConfig(name, providerSettings)
 
 			if (activate) {
-				const { mode } = await this.getState()
+				const currentTask = this.getCurrentTask()
+				// Background workers own their sticky profile. Saving/activating while a
+				// worker is focused must not rewrite the global main profile or broadcast
+				// ProviderProfileChanged (that would force the main agent onto the worker's
+				// provider when the user only switched in the worker chat).
+				if (currentTask?.isBackgroundWorker) {
+					await this.updateGlobalState("listApiConfigMeta", await this.providerSettingsManager.listConfig())
+					currentTask.updateApiConfiguration(providerSettings)
+					await this.persistStickyProviderProfileToCurrentTask(name)
+				} else {
+					const { mode } = await this.getState()
 
-				// These promises do the following:
-				// 1. Adds or updates the list of provider profiles.
-				// 2. Sets the current provider profile.
-				// 3. Sets the current mode's provider profile.
-				// 4. Copies the provider settings to the context.
-				//
-				// Note: 1, 2, and 4 can be done in one `ContextProxy` call:
-				// this.contextProxy.setValues({ ...providerSettings, listApiConfigMeta: ..., currentApiConfigName: ... })
-				// We should probably switch to that and verify that it works.
-				// I left the original implementation in just to be safe.
-				await Promise.all([
-					this.updateGlobalState("listApiConfigMeta", await this.providerSettingsManager.listConfig()),
-					this.updateGlobalState("currentApiConfigName", name),
-					this.providerSettingsManager.setModeConfig(mode, id),
-					this.contextProxy.setProviderSettings(providerSettings),
-				])
+					// These promises do the following:
+					// 1. Adds or updates the list of provider profiles.
+					// 2. Sets the current provider profile.
+					// 3. Sets the current mode's provider profile.
+					// 4. Copies the provider settings to the context.
+					//
+					// Note: 1, 2, and 4 can be done in one `ContextProxy` call:
+					// this.contextProxy.setValues({ ...providerSettings, listApiConfigMeta: ..., currentApiConfigName: ... })
+					// We should probably switch to that and verify that it works.
+					// I left the original implementation in just to be safe.
+					await Promise.all([
+						this.updateGlobalState("listApiConfigMeta", await this.providerSettingsManager.listConfig()),
+						this.updateGlobalState("currentApiConfigName", name),
+						this.providerSettingsManager.setModeConfig(mode, id),
+						this.contextProxy.setProviderSettings(providerSettings),
+					])
 
-				// Change the provider for the current task.
-				// TODO: We should rename `buildApiHandler` for clarity (e.g. `getProviderClient`).
-				this.updateTaskApiHandlerIfNeeded(providerSettings, { forceRebuild: true })
+					// Change the provider for the current task.
+					// TODO: We should rename `buildApiHandler` for clarity (e.g. `getProviderClient`).
+					this.updateTaskApiHandlerIfNeeded(providerSettings, { forceRebuild: true })
 
-				// Keep the current task's sticky provider profile in sync with the newly-activated profile.
-				await this.persistStickyProviderProfileToCurrentTask(name)
+					// Keep the current task's sticky provider profile in sync with the newly-activated profile.
+					await this.persistStickyProviderProfileToCurrentTask(name)
+
+					if (providerSettings.apiProvider) {
+						this.emit(RooCodeEventName.ProviderProfileChanged, {
+							name,
+							provider: providerSettings.apiProvider,
+						})
+					}
+				}
 			} else {
 				await this.updateGlobalState("listApiConfigMeta", await this.providerSettingsManager.listConfig())
 			}
@@ -1682,6 +1811,23 @@ export class ClineProvider
 
 		const persistModeConfig = options?.persistModeConfig ?? true
 		const persistTaskHistory = options?.persistTaskHistory ?? true
+		const currentTask = this.getCurrentTask()
+
+		// Worker chats must not hijack the global UI profile. Manual provider
+		// switch while a background worker is focused previously:
+		// 1) rewrote currentApiConfigName / context provider settings
+		// 2) rebuilt the focused worker handler
+		// 3) emitted ProviderProfileChanged → main Task listener rebuilt main
+		//    onto the same profile — so main and worker always mirrored each other.
+		if (currentTask?.isBackgroundWorker) {
+			await this.contextProxy.setValue("listApiConfigMeta", await this.providerSettingsManager.listConfig())
+			currentTask.updateApiConfiguration(providerSettings)
+			if (persistTaskHistory) {
+				await this.persistStickyProviderProfileToCurrentTask(name)
+			}
+			await this.postStateToWebview()
+			return
+		}
 
 		// See `upsertProviderProfile` for a description of what this is doing.
 		await Promise.all([
@@ -1951,11 +2097,30 @@ export class ClineProvider
 	}
 
 	async showTaskWithId(id: string) {
-		if (id !== this.getCurrentTask()?.taskId) {
-			// Non-current task.
-			const { historyItem } = await this.getTaskWithId(id)
-			await this.createTaskWithHistoryItem(historyItem) // Clears existing task.
+		if (id === this.getCurrentTask()?.taskId) {
+			await this.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
+			return
 		}
+
+		// Prefer live (still-running) task — switch focus without abort / Continue.
+		const live = this.findLiveTask(id)
+		if (live) {
+			await this.focusLiveTask(live)
+			await this.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
+			return
+		}
+
+		// History item not currently running: park the current live task (if any),
+		// then rehydrate from disk. Previous stack-top keeps running in liveTasks.
+		const current = this.getCurrentTask()
+		if (current && !current.abandoned && !current.abort) {
+			await this.removeClineFromStack({ dispose: false })
+		} else if (current) {
+			await this.removeClineFromStack()
+		}
+
+		const { historyItem } = await this.getTaskWithId(id)
+		await this.createTaskWithHistoryItem(historyItem, { startTask: true, skipStackClear: true })
 
 		await this.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
 	}
@@ -2316,6 +2481,7 @@ export class ClineProvider
 			currentApiConfigName,
 			listApiConfigMeta,
 			pinnedApiConfigs,
+			workerEnabledApiConfigs,
 			mode,
 			customModePrompts,
 			customSupportPrompts,
@@ -2407,7 +2573,18 @@ export class ClineProvider
 		const mergedDeniedCommands = this.mergeDeniedCommands(deniedCommands)
 		const cwd = this.cwd
 		const currentTask = this.getCurrentTask()
-		const selectedModelCapabilities = this.resolveSelectedModelCapabilities(apiConfiguration)
+		// When a background worker is focused, the chat provider dropdown must show
+		// that worker's sticky handler — not the global main profile. Otherwise
+		// main↔worker switches look shared even when task.api is already isolated.
+		const webviewApiConfiguration =
+			currentTask?.isBackgroundWorker && currentTask.apiConfiguration
+				? currentTask.apiConfiguration
+				: apiConfiguration
+		const webviewApiConfigName =
+			currentTask?.isBackgroundWorker && currentTask.taskApiConfigName
+				? currentTask.taskApiConfigName
+				: currentApiConfigName
+		const selectedModelCapabilities = this.resolveSelectedModelCapabilities(webviewApiConfiguration)
 		let zooCodeState: {
 			zooCodeIsAuthenticated: boolean
 			zooCodeUserName: string | undefined
@@ -2442,7 +2619,7 @@ export class ClineProvider
 
 		return {
 			version: this.context.extension?.packageJSON?.version ?? "",
-			apiConfiguration,
+			apiConfiguration: webviewApiConfiguration,
 			selectedModelCapabilities,
 			customInstructions,
 			alwaysAllowReadOnly: alwaysAllowReadOnly ?? false,
@@ -2463,6 +2640,8 @@ export class ClineProvider
 			currentTaskItem: currentTask?.taskId ? this.taskHistoryStore.get(currentTask.taskId) : undefined,
 			clineMessages: currentTask?.clineMessages || [],
 			currentTaskTodos: currentTask?.todoList || [],
+			orchestrationWorkers: this.getOrchestrationWorkersForWebview(currentTask),
+			lastFocusedWorkerId: this.lastFocusedWorkerId,
 			messageQueue: currentTask?.messageQueueService?.messages,
 			taskHistory: this.taskHistoryStore.getAll().filter((item: HistoryItem) => item.ts && item.task),
 			soundEnabled: soundEnabled ?? false,
@@ -2487,9 +2666,10 @@ export class ClineProvider
 			terminalZdotdir: terminalZdotdir ?? false,
 			terminalProfile,
 			mcpEnabled: mcpEnabled ?? true,
-			currentApiConfigName: currentApiConfigName ?? "default",
+			currentApiConfigName: webviewApiConfigName ?? "default",
 			listApiConfigMeta: listApiConfigMeta ?? [],
 			pinnedApiConfigs: pinnedApiConfigs ?? {},
+			workerEnabledApiConfigs: workerEnabledApiConfigs ?? {},
 			mode: mode ?? defaultModeSlug,
 			customModePrompts: customModePrompts ?? {},
 			customSupportPrompts: customSupportPrompts ?? {},
@@ -2716,9 +2896,14 @@ export class ClineProvider
 			language: stateValues.language ?? formatLanguage(vscode.env.language),
 			mcpEnabled: stateValues.mcpEnabled ?? true,
 			mcpServers: this.mcpHub?.getAllServers() ?? [],
+
+			// Deep Sequential Agentic Mode toggle. Default: "classic" so the
+			// existing behavior is preserved 100% until the user opts in.
+			agenticMode: (stateValues.agenticMode as "classic" | "deepSequential" | undefined) ?? "classic",
 			currentApiConfigName: stateValues.currentApiConfigName ?? "default",
 			listApiConfigMeta: stateValues.listApiConfigMeta ?? [],
 			pinnedApiConfigs: stateValues.pinnedApiConfigs ?? {},
+			workerEnabledApiConfigs: stateValues.workerEnabledApiConfigs ?? {},
 			modeApiConfigs: stateValues.modeApiConfigs ?? ({} as Record<Mode, string>),
 			customModePrompts: stateValues.customModePrompts ?? {},
 			customSupportPrompts: stateValues.customSupportPrompts ?? {},
@@ -3276,6 +3461,154 @@ export class ClineProvider
 		)
 
 		return task
+	}
+
+	/**
+	 * Spawn a multi-agent background worker Task without single-open stack push.
+	 * Does NOT dispose or replace the main UI task. Does NOT call setProviderProfile.
+	 * Provider selection is resolved by OrchestrationRuntime / ProviderManager before call.
+	 */
+	public async createBackgroundWorkerTask(params: {
+		workerId: string
+		parentTask: Task
+		message: string
+		mode?: string
+		apiConfiguration: ProviderSettings
+		apiConfigName: string
+		customTitle?: string
+		workerRole?: "worker" | "reviewer"
+		reviewTargetId?: string
+	}): Promise<Task> {
+		const { enableCheckpoints, checkpointTimeout, experiments, organizationAllowList, diffFuzzyThreshold } =
+			await this.getState()
+
+		if (!ProfileValidator.isProfileAllowed(params.apiConfiguration, organizationAllowList)) {
+			throw new OrganizationAllowListViolationError(t("common:errors.violated_organization_allowlist"))
+		}
+
+		const task = new Task({
+			provider: this,
+			apiConfiguration: params.apiConfiguration,
+			enableCheckpoints,
+			checkpointTimeout,
+			consecutiveMistakeLimit: params.apiConfiguration.consecutiveMistakeLimit,
+			task: params.message,
+			taskId: params.workerId,
+			experiments,
+			rootTask: params.parentTask.rootTask ?? params.parentTask,
+			parentTask: params.parentTask,
+			taskNumber: this.clineStack.length + 1,
+			// Lightweight listener attach only — do not treat as UI current task.
+			onCreated: (instance) => {
+				this.emit(RooCodeEventName.TaskCreated, instance)
+				const onTaskCompleted = (taskId: string, tokenUsage: TokenUsage, toolUsage: ToolUsage) => {
+					this.emit(RooCodeEventName.TaskCompleted, taskId, tokenUsage, toolUsage)
+					this.unregisterLiveTask(taskId)
+				}
+				const onTaskAborted = () => {
+					this.emit(RooCodeEventName.TaskAborted, instance.taskId)
+					this.unregisterLiveTask(instance.taskId)
+					// Never rehydrate background workers onto the UI stack.
+				}
+				instance.on(RooCodeEventName.TaskCompleted, onTaskCompleted)
+				instance.on(RooCodeEventName.TaskAborted, onTaskAborted)
+				this.taskEventListeners.set(instance, [
+					() => instance.off(RooCodeEventName.TaskCompleted, onTaskCompleted),
+					() => instance.off(RooCodeEventName.TaskAborted, onTaskAborted),
+				])
+			},
+			startTask: false,
+			diffFuzzyThreshold,
+			rateLimitClock: this.rateLimitClock,
+			isBackgroundWorker: true,
+			workerId: params.workerId,
+			initialApiConfigName: params.apiConfigName,
+			initialMode: params.mode,
+			initialStatus: "active",
+			workerRole: params.workerRole === "reviewer" ? "reviewer" : "worker",
+			reviewTargetId: params.reviewTargetId,
+		})
+
+		// NOTE: intentionally NOT addClineToStack — main remains sole UI open task.
+		// Register in liveTasks so history/focus switches can view without abort.
+		this.registerLiveTask(task)
+		task.start()
+
+		// Best-effort display name in history (does not put worker on UI stack).
+		if (params.customTitle?.trim()) {
+			try {
+				const title = params.customTitle.trim().slice(0, 120)
+				await this.renameTask(task.taskId, title)
+			} catch (err) {
+				this.log(
+					`[createBackgroundWorkerTask] renameTask failed for ${task.taskId}: ${(err as Error)?.message ?? err}`,
+				)
+			}
+		}
+
+		this.log(
+			`[createBackgroundWorkerTask] worker ${task.taskId}.${task.instanceId} ` +
+				`parent=${params.parentTask.taskId} profile=${params.apiConfigName} ` +
+				`title=${params.customTitle ?? ""} (off-stack, main keeps UI focus)`,
+		)
+
+		return task
+	}
+
+	public getOrchestrationRuntime() {
+		// Lazy require keeps ClineProvider free of hard circular import at module load.
+		const { getOrchestrationRuntime } =
+			require("../orchestration/OrchestrationRuntime") as typeof import("../orchestration/OrchestrationRuntime")
+		const runtime = getOrchestrationRuntime(() => this)
+		// Sync worker-enabled provider pool from persisted global state.
+		try {
+			const workerMap = (this.contextProxy.getValue("workerEnabledApiConfigs") ?? {}) as Record<string, boolean>
+			const enabledNames = Object.keys(workerMap).filter((k) => workerMap[k])
+			runtime.updateSettings({ workerEnabledProviderNames: enabledNames })
+		} catch {
+			// Non-fatal: pool remains default (all profiles).
+		}
+		return runtime
+	}
+
+	/**
+	 * Workers for the WorkerSwitcher: prefer current main task's children;
+	 * if focused on a worker, use that worker's parent; else all known workers.
+	 */
+	private getOrchestrationWorkersForWebview(currentTask?: Task): Array<{
+		workerId: string
+		parentTaskId: string
+		name: string
+		role: string
+		state: string
+		mode?: string
+		apiConfigName?: string
+		index: number
+	}> {
+		try {
+			const runtime = this.getOrchestrationRuntime()
+			let parentId: string | undefined
+			if (currentTask?.isBackgroundWorker) {
+				parentId = currentTask.parentTask?.taskId
+			} else if (currentTask) {
+				parentId = currentTask.taskId
+			}
+			const snapshots = runtime.listWorkers(parentId)
+			// Spawn order ≈ createdAt ascending; index is 1-based for badge display.
+			const sorted = [...snapshots].sort((a, b) => a.createdAt - b.createdAt)
+			return sorted.map((s, i) => ({
+				workerId: s.workerId,
+				parentTaskId: s.parentTaskId,
+				name: s.name,
+				role: s.role,
+				state: s.state,
+				mode: s.mode,
+				apiConfigName: s.apiConfigName,
+				index: i + 1,
+			}))
+		} catch {
+			return []
+		}
 	}
 
 	public async cancelTask(): Promise<void> {

@@ -91,6 +91,11 @@ export const globalSettingsSchema = z.object({
 	currentApiConfigName: z.string().optional(),
 	listApiConfigMeta: z.array(providerSettingsEntrySchema).optional(),
 	pinnedApiConfigs: z.record(z.string(), z.boolean()).optional(),
+	/**
+	 * Provider profile names the user enabled for the parallel worker pool.
+	 * Keyed by profile name (not id). Empty / missing = all profiles allowed.
+	 */
+	workerEnabledApiConfigs: z.record(z.string(), z.boolean()).optional(),
 
 	lastShownAnnouncementId: z.string().optional(),
 	customInstructions: z.string().optional(),
@@ -254,6 +259,17 @@ export const globalSettingsSchema = z.object({
 	customModes: z.array(modeConfigSchema).optional(),
 	customModePrompts: customModePromptsSchema.optional(),
 	customSupportPrompts: customSupportPromptsSchema.optional(),
+
+	/**
+	 * Agentic orchestration mode.
+	 *
+	 * - "classic"        → existing Classic Orchestration (unchanged)
+	 * - "deepSequential" → the new Deep Sequential Agentic Pipeline
+	 *                      (src/core/pipeline/, opt-in, fully isolated)
+	 *
+	 * Defaults to "classic" to guarantee zero behavior change.
+	 */
+	agenticMode: z.enum(["classic", "deepSequential"]).optional(),
 	enhancementApiConfigId: z.string().optional(),
 	includeTaskHistoryInEnhance: z.boolean().optional(),
 	historyPreviewCollapsed: z.boolean().optional(),

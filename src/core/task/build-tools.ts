@@ -32,6 +32,8 @@ interface BuildToolsOptions {
 	 * to pass all tool definitions while restricting callable tools.
 	 */
 	includeAllToolsWithRestrictions?: boolean
+	/** Multi-agent role: "reviewer" strips to watch+report tools only. */
+	workerRole?: "worker" | "reviewer"
 }
 
 interface BuildToolsResult {
@@ -91,6 +93,7 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 		disabledTools,
 		modelInfo,
 		includeAllToolsWithRestrictions,
+		workerRole,
 	} = options
 
 	const mcpHub = provider.getMcpHub()
@@ -121,6 +124,7 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 	// Filter native tools based on mode restrictions. The allowlist is forwarded so the
 	// access_mcp_resource availability check only considers resources from allowed servers;
 	// otherwise a restricted mode could still read resources from disallowed servers.
+	// Reviewer role further restricts to watch+report tools only.
 	const filteredNativeTools = filterNativeToolsForMode(
 		nativeTools,
 		mode,
@@ -130,6 +134,7 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 		filterSettings,
 		mcpHub,
 		allowedMcpServers,
+		workerRole,
 	)
 
 	// Filter MCP tools based on mode restrictions.

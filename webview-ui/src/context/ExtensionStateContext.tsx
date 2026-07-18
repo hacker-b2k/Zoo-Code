@@ -126,6 +126,9 @@ export interface ExtensionStateContextType extends ExtensionState {
 	pinnedApiConfigs?: Record<string, boolean>
 	setPinnedApiConfigs: (value: Record<string, boolean>) => void
 	togglePinnedApiConfig: (configName: string) => void
+	workerEnabledApiConfigs?: Record<string, boolean>
+	setWorkerEnabledApiConfigs: (value: Record<string, boolean>) => void
+	toggleWorkerApiConfig: (configName: string) => void
 	setHistoryPreviewCollapsed: (value: boolean) => void
 	setReasoningBlockCollapsed: (value: boolean) => void
 	autoCollapseLongMessages?: boolean
@@ -269,6 +272,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		maxImageFileSize: 5, // Default max image file size in MB
 		maxTotalImageSize: 20, // Default max total image size in MB
 		pinnedApiConfigs: {}, // Empty object for pinned API configs
+		workerEnabledApiConfigs: {}, // Empty = all profiles allowed for workers
 		terminalZshOhMy: false, // Default Oh My Zsh integration setting
 		terminalZshP10k: false, // Default Powerlevel10k integration setting
 		terminalZdotdir: false, // Default ZDOTDIR handling setting
@@ -662,6 +666,17 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 				}
 
 				return { ...prevState, pinnedApiConfigs: newPinned }
+			}),
+		setWorkerEnabledApiConfigs: (value) =>
+			setState((prevState) => ({ ...prevState, workerEnabledApiConfigs: value })),
+		toggleWorkerApiConfig: (configName) =>
+			setState((prevState) => {
+				const current = prevState.workerEnabledApiConfigs || {}
+				const next = { ...current, [configName]: !current[configName] }
+				if (!next[configName]) {
+					delete next[configName]
+				}
+				return { ...prevState, workerEnabledApiConfigs: next }
 			}),
 		setHistoryPreviewCollapsed: (value) =>
 			setState((prevState) => ({ ...prevState, historyPreviewCollapsed: value })),

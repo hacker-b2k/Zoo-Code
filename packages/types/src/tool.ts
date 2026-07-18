@@ -4,7 +4,7 @@ import { z } from "zod"
  * ToolGroup
  */
 
-export const toolGroups = ["read", "edit", "command", "mcp", "modes"] as const
+export const toolGroups = ["read", "edit", "command", "mcp", "modes", "provider_manage", "mcp_manage"] as const
 
 export const toolGroupsSchema = z.enum(toolGroups)
 
@@ -40,12 +40,32 @@ export const toolNames = [
 	"attempt_completion",
 	"switch_mode",
 	"new_task",
+	"spawn_worker",
+	"list_workers",
+	"collect_results",
+	"cancel_worker",
+	"get_worker_status",
 	"codebase_search",
 	"update_todo_list",
 	"run_slash_command",
 	"skill",
 	"generate_image",
 	"custom_tool",
+	"list_provider_profiles",
+	"get_provider_profile",
+	"list_provider_types",
+	"manage_provider_profile",
+	"set_provider_secret",
+	"activate_provider_profile",
+	"delete_provider_profile",
+	"set_mode_provider",
+	"list_mcp_config",
+	"get_mcp_server",
+	"manage_mcp_server",
+	"set_mcp_secret",
+	"toggle_mcp_server",
+	"delete_mcp_server",
+	"refresh_mcp_servers",
 ] as const
 
 export const toolNamesSchema = z.enum(toolNames)

@@ -81,6 +81,28 @@ export const toolParamNames = [
 	// read_file legacy format parameter (backward compatibility)
 	"files",
 	"line_ranges",
+	// provider_manage tools
+	"name",
+	"action",
+	"settings",
+	"activate",
+	"key",
+	"value",
+	"profile_name",
+	"secrets",
+	// mcp_manage tools
+	"scope",
+	"intent",
+	"config",
+	"channel",
+	"disabled",
+	// multi-agent orchestration
+	"api_config_name",
+	"fallback_api_config_names",
+	"role",
+	"review_target_id",
+	"include_completed",
+	"unread_only",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
@@ -103,6 +125,19 @@ export type NativeToolArgs = {
 	apply_patch: { patch: string }
 	list_files: { path: string; recursive?: boolean }
 	new_task: { mode: string; message: string; todos?: string }
+	spawn_worker: {
+		name: string
+		message: string
+		mode?: string | null
+		api_config_name?: string | null
+		fallback_api_config_names?: string | null
+		role?: string | null
+		review_target_id?: string | null
+	}
+	list_workers: { include_completed?: boolean | string | null }
+	collect_results: { unread_only?: boolean | string | null }
+	cancel_worker: { worker_id: string; reason?: string | null }
+	get_worker_status: { worker_id: string }
 	ask_followup_question: {
 		question: string
 		follow_up: Array<{ text: string; mode?: string }>
@@ -116,7 +151,39 @@ export type NativeToolArgs = {
 	update_todo_list: { todos: string }
 	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
 	write_to_file: { path: string; content: string }
-	// Add more tools as they are migrated to native protocol
+	list_provider_profiles: Record<string, never>
+	get_provider_profile: { name: string }
+	list_provider_types: Record<string, never>
+	manage_provider_profile: {
+		action: "create" | "update" | "upsert"
+		name: string
+		activate?: boolean
+		settings: Record<string, unknown>
+		secrets?: Record<string, string>
+	}
+	set_provider_secret: { name: string; key: string; value?: string }
+	activate_provider_profile: { name: string }
+	delete_provider_profile: { name: string }
+	set_mode_provider: { mode_slug: string; name: string }
+	list_mcp_config: { scope?: "project" | "global" | "all" }
+	get_mcp_server: { name: string; scope: "project" | "global" }
+	manage_mcp_server: {
+		action: "admit" | "update" | "patch"
+		name: string
+		scope: "project" | "global"
+		intent?: "install_only" | "start" | "preserve"
+		config: Record<string, unknown>
+	}
+	set_mcp_secret: {
+		name: string
+		scope: "project" | "global"
+		channel: "env" | "header"
+		key: string
+		value?: string
+	}
+	toggle_mcp_server: { name: string; scope: "project" | "global"; disabled: boolean }
+	delete_mcp_server: { name: string; scope: "project" | "global" }
+	refresh_mcp_servers: Record<string, never>
 }
 
 /**
@@ -284,12 +351,32 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	attempt_completion: "complete tasks",
 	switch_mode: "switch modes",
 	new_task: "create new task",
+	spawn_worker: "spawn background worker",
+	list_workers: "list workers",
+	collect_results: "collect worker results",
+	cancel_worker: "cancel background worker",
+	get_worker_status: "get worker live status",
 	codebase_search: "codebase search",
 	update_todo_list: "update todo list",
 	run_slash_command: "run slash command",
 	skill: "load skill",
 	generate_image: "generate images",
 	custom_tool: "use custom tools",
+	list_provider_profiles: "list provider profiles",
+	get_provider_profile: "get provider profile",
+	list_provider_types: "list provider types",
+	manage_provider_profile: "manage provider profile",
+	set_provider_secret: "set provider secret",
+	activate_provider_profile: "activate provider profile",
+	delete_provider_profile: "delete provider profile",
+	set_mode_provider: "set mode provider",
+	list_mcp_config: "list MCP config",
+	get_mcp_server: "get MCP server",
+	manage_mcp_server: "manage MCP server",
+	set_mcp_secret: "set MCP secret",
+	toggle_mcp_server: "toggle MCP server",
+	delete_mcp_server: "delete MCP server",
+	refresh_mcp_servers: "refresh MCP servers",
 } as const
 
 // Define available tool groups.
@@ -308,8 +395,39 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 		tools: ["use_mcp_tool", "access_mcp_resource"],
 	},
 	modes: {
-		tools: ["switch_mode", "new_task"],
+		tools: [
+			"switch_mode",
+			"new_task",
+			"spawn_worker",
+			"list_workers",
+			"collect_results",
+			"cancel_worker",
+			"get_worker_status",
+		],
 		alwaysAvailable: true,
+	},
+	provider_manage: {
+		tools: [
+			"list_provider_profiles",
+			"get_provider_profile",
+			"list_provider_types",
+			"manage_provider_profile",
+			"set_provider_secret",
+			"activate_provider_profile",
+			"delete_provider_profile",
+			"set_mode_provider",
+		],
+	},
+	mcp_manage: {
+		tools: [
+			"list_mcp_config",
+			"get_mcp_server",
+			"manage_mcp_server",
+			"set_mcp_secret",
+			"toggle_mcp_server",
+			"delete_mcp_server",
+			"refresh_mcp_servers",
+		],
 	},
 }
 
@@ -319,6 +437,11 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"attempt_completion",
 	"switch_mode",
 	"new_task",
+	"spawn_worker",
+	"list_workers",
+	"collect_results",
+	"cancel_worker",
+	"get_worker_status",
 	"update_todo_list",
 	"run_slash_command",
 	"skill",

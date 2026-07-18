@@ -79,7 +79,109 @@ export class AttemptCompletionTool extends BaseTool<"attempt_completion"> {
 
 			task.consecutiveMistakeCount = 0
 
+			// Main orchestrator must not declare victory while implementer workers still run.
+			// Legacy role=reviewer workers (if any) do not block main completion; prefer no LLM reviewer.
+			if (!task.isBackgroundWorker) {
+				try {
+					const { getOrchestrationRuntime } = await import("../orchestration/OrchestrationRuntime")
+					const provider = task.providerRef.deref()
+					const runtime = getOrchestrationRuntime(() => provider as any)
+					const running = runtime.countRunningImplementers(task.taskId)
+					if (running > 0) {
+						const workers = runtime
+							.listWorkers(task.taskId)
+							.filter(
+								(s) =>
+									s.role !== "reviewer" &&
+									(s.state === "running" ||
+										s.state === "retrying" ||
+										s.state === "switched" ||
+										s.state === "queued"),
+							)
+						const lines = workers
+							.map(
+								(w) =>
+									`- "${w.name}" id=${w.workerId} state=${w.state}` +
+									(w.mode ? ` mode=${w.mode}` : "") +
+									(w.apiConfigName ? ` provider=${w.apiConfigName}` : ""),
+							)
+							.join("\n")
+						const err =
+							`Cannot attempt_completion while ${running} worker(s) are still active.\n` +
+							`${lines}\n\n` +
+							`Wait for workers, use list_workers / get_worker_status / collect_results for evidence, ` +
+							`or call cancel_worker(worker_id) to stop a worker. ` +
+							`Worker completions are also pushed into this chat automatically. ` +
+							`Never guess worker status from silence.`
+						task.consecutiveMistakeCount++
+						task.recordToolError("attempt_completion")
+						await task.say("error", err)
+						pushToolResult(formatResponse.toolError(err))
+						return
+					}
+				} catch {
+					// If orchestration runtime unavailable, allow normal completion.
+				}
+			}
+
 			await task.say("completion_result", result, undefined, false)
+
+			// Background multi-agent workers: deliver to ResultInbox, do not reopen parent UI
+			// and do not run serial subtask delegation / completion_result ask.
+			if (task.isBackgroundWorker) {
+				try {
+					const { getOrchestrationRuntime } = await import("../orchestration/OrchestrationRuntime")
+					const provider = task.providerRef.deref()
+					const runtime = getOrchestrationRuntime(() => provider as any)
+					const wid = task.workerId ?? task.taskId
+
+					// Always-on reviewer: short digest to main, keep task alive and re-cue watch loop.
+					if (task.workerRole === "reviewer") {
+						runtime.reportReviewerDigest(wid, result)
+						const continueCue =
+							"REVIEWER DIGEST DELIVERED to Main (kind=review_digest). " +
+							"You are still the always-on reviewer — DO NOT stop. " +
+							"Immediately call list_workers (and get_worker_status for any risk), " +
+							"then attempt_completion again with the next SHORT evidence-only digest. " +
+							"Never invent status. Never edit code or spawn/cancel workers."
+						pushToolResult(formatResponse.toolResult(continueCue))
+						// Soft re-queue so the agent loop continues without waiting for user click.
+						try {
+							if (typeof task.messageQueueService?.addMessage === "function") {
+								task.messageQueueService.addMessage(
+									"[system] Continue watching: list_workers → short digest via attempt_completion. Fleet may have changed.",
+								)
+							}
+							const status = String(task.taskStatus ?? "").toLowerCase()
+							if (
+								typeof task.processQueuedMessages === "function" &&
+								(status === "idle" || status === "resumable" || status === "interactive")
+							) {
+								task.processQueuedMessages()
+							}
+						} catch {
+							// non-fatal — tool result already instructs continue
+						}
+						return
+					}
+
+					// Emit completion before runtime cleanup/dispose so listeners see a live Task.
+					this.emitTaskCompleted(task)
+					runtime.completeWorker(wid, result)
+					pushToolResult(
+						formatResponse.toolResult("Worker task completed. Result delivered to orchestrator inbox."),
+					)
+					return
+				} catch (err) {
+					const provider = task.providerRef.deref() as { log?: (m: string) => void } | undefined
+					provider?.log?.(
+						`[AttemptCompletionTool] background worker complete failed: ${(err as Error)?.message ?? err}`,
+					)
+					// Still avoid parent delegation for workers.
+					pushToolResult(formatResponse.toolError("Worker completion failed to register with orchestrator"))
+					return
+				}
+			}
 
 			// Check for subtask using parentTaskId (metadata-driven delegation)
 			if (task.parentTaskId) {

@@ -210,6 +210,22 @@ export function applyModelToolCustomization(
 }
 
 /**
+ * Always-on reviewer (role=reviewer): watch + short digest only.
+ * No spawn/cancel/edit/command — evidence tools + optional read for file inspection.
+ */
+export const REVIEWER_ALLOWED_TOOLS = new Set<string>([
+	"list_workers",
+	"get_worker_status",
+	"attempt_completion",
+	"ask_followup_question",
+	"read_file",
+	"list_files",
+	"search_files",
+	"list_code_definition_names",
+	"codebase_search",
+])
+
+/**
  * Filters native tools based on mode restrictions and model customization.
  * This ensures native tools are filtered consistently with mode/tool permissions.
  *
@@ -223,6 +239,7 @@ export function applyModelToolCustomization(
  * @param allowedMcpServers - Optional allowlist of MCP server names for the current mode. When
  *   provided, the resource-availability check only considers servers in this list, so a mode that
  *   restricts MCP servers cannot retain `access_mcp_resource` based on resources from disallowed servers.
+ * @param workerRole - When "reviewer", restrict to REVIEWER_ALLOWED_TOOLS (always-on watch+report).
  * @returns Filtered array of tools allowed for the mode
  */
 export function filterNativeToolsForMode(
@@ -234,6 +251,7 @@ export function filterNativeToolsForMode(
 	settings?: Record<string, any>,
 	mcpHub?: McpHub,
 	allowedMcpServers?: string[],
+	workerRole?: "worker" | "reviewer",
 ): OpenAI.Chat.ChatCompletionTool[] {
 	// Get mode configuration and all tools for this mode
 	const modeSlug = mode ?? defaultModeSlug
@@ -302,6 +320,15 @@ export function filterNativeToolsForMode(
 			// also disables the canonical tool (e.g. "edit").
 			const resolvedToolName = resolveToolAlias(toolName)
 			allowedToolNames.delete(resolvedToolName)
+		}
+	}
+
+	// Always-on reviewer: only evidence + light read tools (no boss/implementer surface).
+	if (workerRole === "reviewer") {
+		for (const name of [...allowedToolNames]) {
+			if (!REVIEWER_ALLOWED_TOOLS.has(name)) {
+				allowedToolNames.delete(name)
+			}
 		}
 	}
 

@@ -761,12 +761,16 @@ export const webviewMessageHandler = async (
 					} else if (key === "execaShellPath") {
 						Terminal.setExecaShellPath(value as string | undefined)
 					} else if (key === "mcpEnabled") {
+						// D1: persist first, then hub refresh with the same value as override
+						// so connectToServer does not read stale getState().
 						newValue = value ?? true
+						await provider.contextProxy.setValue(key as keyof RooCodeSettings, newValue)
 						const mcpHub = provider.getMcpHub()
-
 						if (mcpHub) {
 							await mcpHub.handleMcpEnabledChange(newValue as boolean)
 						}
+						// Skip the generic setValue below (already persisted)
+						continue
 					} else if (key === "experiments") {
 						if (!value) {
 							continue
@@ -1880,6 +1884,17 @@ export const webviewMessageHandler = async (
 			setTtsEnabled(ttsEnabled)
 			await provider.postStateToWebview()
 			break
+		case "setAgenticMode": {
+			// Phase 1 minimal plumbing: persist the toggle and push
+			// the updated state back to the webview. The UI control
+			// itself is added in Phase 2 alongside the ExperimentalSettings
+			// panel. Validation: only "classic" / "deepSequential".
+			const requested = message.agenticMode
+			const agenticMode = requested === "deepSequential" ? "deepSequential" : "classic"
+			await updateGlobalState("agenticMode", agenticMode)
+			await provider.postStateToWebview()
+			break
+		}
 		case "ttsSpeed":
 			const ttsSpeed = message.value ?? 1.0
 			await updateGlobalState("ttsSpeed", ttsSpeed)
@@ -2045,6 +2060,37 @@ export const webviewMessageHandler = async (
 				}
 
 				await updateGlobalState("pinnedApiConfigs", updatedPinned)
+				await provider.postStateToWebview()
+			}
+			break
+		case "toggleWorkerApiConfig":
+			if (message.text) {
+				// message.text is the provider profile NAME (same as spawn_worker api_config_name).
+				const currentWorker = getGlobalState("workerEnabledApiConfigs") ?? {}
+				const updatedWorker: Record<string, boolean> = { ...currentWorker }
+
+				if (currentWorker[message.text]) {
+					delete updatedWorker[message.text]
+				} else {
+					updatedWorker[message.text] = true
+				}
+
+				await updateGlobalState("workerEnabledApiConfigs", updatedWorker)
+
+				// Keep orchestration ProviderManager in sync immediately.
+				const enabledNames = Object.keys(updatedWorker).filter((k) => updatedWorker[k])
+				try {
+					provider.getOrchestrationRuntime().updateSettings({
+						workerEnabledProviderNames: enabledNames,
+					})
+				} catch (err) {
+					provider.log(
+						`[toggleWorkerApiConfig] failed to update orchestration settings: ${
+							err instanceof Error ? err.message : String(err)
+						}`,
+					)
+				}
+
 				await provider.postStateToWebview()
 			}
 			break

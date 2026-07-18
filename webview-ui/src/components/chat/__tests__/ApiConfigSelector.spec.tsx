@@ -59,6 +59,7 @@ vi.mock("@/components/ui", () => ({
 describe("ApiConfigSelector", () => {
 	const mockOnChange = vi.fn()
 	const mockTogglePinnedApiConfig = vi.fn()
+	const mockToggleWorkerApiConfig = vi.fn()
 
 	const defaultProps = {
 		value: "config1",
@@ -72,6 +73,8 @@ describe("ApiConfigSelector", () => {
 		],
 		pinnedApiConfigs: { config1: true },
 		togglePinnedApiConfig: mockTogglePinnedApiConfig,
+		workerEnabledApiConfigs: {},
+		toggleWorkerApiConfig: mockToggleWorkerApiConfig,
 		lockApiConfigAcrossModes: false,
 		onToggleLockApiConfig: vi.fn(),
 	}
