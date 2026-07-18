@@ -763,6 +763,26 @@ export const ChatRowContent = ({
 						</div>
 					</>
 				)
+			case "openTabs":
+				return (
+					<>
+						<div style={headerStyle}>
+							<ListTree className="w-4 shrink-0" aria-label="Open tabs icon" />
+							<span style={{ fontWeight: "bold" }}>
+								{message.type === "ask" ? "Wants to open browser tabs" : "Opened browser tabs"}
+							</span>
+						</div>
+						<div className="pl-6">
+							<CodeAccordion
+								path={`${tool.browser || "auto"} (${tool.openedCount || tool.urls?.length || 0} tabs)`}
+								code={tool.content || (Array.isArray(tool.urls) ? tool.urls.join("\n") : "")}
+								language="shell-session"
+								isExpanded={isExpanded}
+								onToggleExpand={handleToggleExpand}
+							/>
+						</div>
+					</>
+				)
 			case "listFilesRecursive":
 				return (
 					<>
@@ -1577,6 +1597,29 @@ export const ChatRowContent = ({
 										</span>
 									)}
 								</div>
+							)
+						}
+						case "openTabs": {
+							const openTabsInfo = sayTool
+							return (
+								<>
+									<div style={headerStyle}>
+										<ListTree className="w-4 shrink-0" aria-label="Open tabs icon" />
+										<span style={{ fontWeight: "bold" }}>Opened browser tabs</span>
+									</div>
+									<div className="pl-6">
+										<CodeAccordion
+											path={`${openTabsInfo.browser || "auto"} (${openTabsInfo.openedCount || openTabsInfo.urls?.length || 0} tabs)`}
+											code={
+												openTabsInfo.content ||
+												(Array.isArray(openTabsInfo.urls) ? openTabsInfo.urls.join("\n") : "")
+											}
+											language="shell-session"
+											isExpanded={isExpanded}
+											onToggleExpand={handleToggleExpand}
+										/>
+									</div>
+								</>
 							)
 						}
 						default:

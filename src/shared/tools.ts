@@ -32,6 +32,10 @@ export const toolParamNames = [
 	"recursive",
 	"action",
 	"url",
+	"urls",
+	"browser",
+	"reuseExisting",
+	"visible",
 	"coordinate",
 	"text",
 	"server_name",
@@ -95,6 +99,38 @@ export type NativeToolArgs = {
 	read_command_output: { artifact_id: string; search?: string; offset?: number; limit?: number }
 	attempt_completion: { result: string }
 	execute_command: { command: string; cwd?: string; timeout?: number | null }
+	open_tabs: {
+		urls: string[]
+		browser?: "auto" | "chrome" | "edge"
+		reuseExisting?: boolean
+		visible?: boolean
+	}
+	web_research: {
+		action: "search" | "read_url"
+		query?: string | null
+		url?: string | null
+		max_results?: number | null
+	}
+	open_browser_page: { url: string }
+	read_browser_page: { pageId: string }
+	navigate_browser_page: { pageId: string; url: string }
+	extract_browser_urls: { pageId: string; sameOriginOnly?: boolean | null; limit?: number | null }
+	extract_browser_data: {
+		pageId: string
+		selector?: string | null
+		extractType?: string | null
+		maxRows?: number | null
+	}
+	list_browser_tabs: Record<string, never>
+	click_browser_element: { pageId: string; selector: string }
+	type_browser_text: { pageId: string; selector: string; text: string }
+	click_browser_by_text: { pageId: string; text: string }
+	evaluate_browser_js: { pageId: string; script: string }
+	read_all_browser_tabs: Record<string, never>
+	batch_browser_actions: {
+		pageId: string
+		actions: Array<{ type: string; selector?: string; text?: string; url?: string; script?: string }>
+	}
 	apply_diff: { path: string; diff: string }
 	edit: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
 	search_and_replace: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
@@ -170,6 +206,11 @@ export interface ExecuteCommandToolUse extends ToolUse<"execute_command"> {
 	name: "execute_command"
 	// Pick<Record<ToolParamName, string>, "command"> makes "command" required, but Partial<> makes it optional
 	params: Partial<Pick<Record<ToolParamName, string>, "command" | "cwd" | "timeout">>
+}
+
+export interface OpenTabsToolUse extends ToolUse<"open_tabs"> {
+	name: "open_tabs"
+	params: Partial<Pick<Record<ToolParamName, string>, "urls" | "browser" | "reuseExisting" | "visible">>
 }
 
 export interface ReadFileToolUse extends ToolUse<"read_file"> {
@@ -267,6 +308,20 @@ export type ToolGroupConfig = {
 
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	execute_command: "run commands",
+	open_tabs: "open browser tabs",
+	web_research: "web research",
+	open_browser_page: "open browser page",
+	read_browser_page: "read browser page",
+	navigate_browser_page: "navigate browser page",
+	extract_browser_urls: "extract browser URLs",
+	extract_browser_data: "extract browser data",
+	list_browser_tabs: "list browser tabs",
+	click_browser_element: "click browser element",
+	type_browser_text: "type browser text",
+	click_browser_by_text: "click browser by text",
+	evaluate_browser_js: "evaluate browser JS",
+	read_all_browser_tabs: "read all browser tabs",
+	batch_browser_actions: "batch browser actions",
 	read_file: "read files",
 	read_command_output: "read command output",
 	write_to_file: "write files",
@@ -302,7 +357,24 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 		customTools: ["edit", "search_replace", "edit_file", "apply_patch"],
 	},
 	command: {
-		tools: ["execute_command", "read_command_output"],
+		tools: ["execute_command", "open_tabs", "web_research", "read_command_output"],
+	},
+	browser: {
+		tools: [
+			"open_browser_page",
+			"read_browser_page",
+			"navigate_browser_page",
+			"extract_browser_urls",
+			"extract_browser_data",
+			"list_browser_tabs",
+			"click_browser_element",
+			"type_browser_text",
+			"click_browser_by_text",
+			"evaluate_browser_js",
+			"read_all_browser_tabs",
+			"batch_browser_actions",
+		],
+		alwaysAvailable: true,
 	},
 	mcp: {
 		tools: ["use_mcp_tool", "access_mcp_resource"],
@@ -322,6 +394,19 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"update_todo_list",
 	"run_slash_command",
 	"skill",
+	"web_research",
+	"open_browser_page",
+	"read_browser_page",
+	"navigate_browser_page",
+	"extract_browser_urls",
+	"extract_browser_data",
+	"list_browser_tabs",
+	"click_browser_element",
+	"type_browser_text",
+	"click_browser_by_text",
+	"evaluate_browser_js",
+	"read_all_browser_tabs",
+	"batch_browser_actions",
 ] as const
 
 /**

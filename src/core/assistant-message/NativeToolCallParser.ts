@@ -464,6 +464,98 @@ export class NativeToolCallParser {
 				}
 				break
 
+			case "open_tabs":
+				if (partialArgs.urls !== undefined) {
+					nativeArgs = {
+						urls: Array.isArray(partialArgs.urls) ? partialArgs.urls : [],
+						browser: partialArgs.browser,
+						reuseExisting: this.coerceOptionalBoolean(partialArgs.reuseExisting),
+						visible: this.coerceOptionalBoolean(partialArgs.visible),
+					}
+				}
+				break
+
+			case "web_research":
+				if (partialArgs.action !== undefined) {
+					nativeArgs = {
+						action: partialArgs.action,
+						query: partialArgs.query,
+						url: partialArgs.url,
+						max_results: partialArgs.max_results != null ? Number(partialArgs.max_results) : null,
+					}
+				}
+				break
+
+			case "open_browser_page":
+				if (partialArgs.url !== undefined) {
+					nativeArgs = { url: partialArgs.url }
+				}
+				break
+			case "read_browser_page":
+				if (partialArgs.pageId !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId }
+				}
+				break
+			case "navigate_browser_page":
+				if (partialArgs.pageId !== undefined || partialArgs.url !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId, url: partialArgs.url }
+				}
+				break
+			case "extract_browser_urls":
+				if (partialArgs.pageId !== undefined) {
+					nativeArgs = {
+						pageId: partialArgs.pageId,
+						sameOriginOnly: this.coerceOptionalBoolean(partialArgs.sameOriginOnly),
+						limit: partialArgs.limit != null ? Number(partialArgs.limit) : null,
+					}
+				}
+				break
+			case "extract_browser_data":
+				if (partialArgs.pageId !== undefined) {
+					nativeArgs = {
+						pageId: partialArgs.pageId,
+						selector: partialArgs.selector,
+						extractType: partialArgs.extractType,
+						maxRows: partialArgs.maxRows != null ? Number(partialArgs.maxRows) : null,
+					}
+				}
+				break
+			case "list_browser_tabs":
+				nativeArgs = {}
+				break
+			case "click_browser_element":
+				if (partialArgs.pageId !== undefined || partialArgs.selector !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId, selector: partialArgs.selector }
+				}
+				break
+			case "type_browser_text":
+				if (
+					partialArgs.pageId !== undefined ||
+					partialArgs.selector !== undefined ||
+					partialArgs.text !== undefined
+				) {
+					nativeArgs = { pageId: partialArgs.pageId, selector: partialArgs.selector, text: partialArgs.text }
+				}
+				break
+			case "click_browser_by_text":
+				if (partialArgs.pageId !== undefined || partialArgs.text !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId, text: partialArgs.text }
+				}
+				break
+			case "evaluate_browser_js":
+				if (partialArgs.pageId !== undefined || partialArgs.script !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId, script: partialArgs.script }
+				}
+				break
+			case "read_all_browser_tabs":
+				nativeArgs = {}
+				break
+			case "batch_browser_actions":
+				if (partialArgs.pageId !== undefined || partialArgs.actions !== undefined) {
+					nativeArgs = { pageId: partialArgs.pageId, actions: partialArgs.actions ?? [] }
+				}
+				break
+
 			case "write_to_file":
 				if (partialArgs.path || partialArgs.content) {
 					nativeArgs = {
@@ -790,6 +882,98 @@ export class NativeToolCallParser {
 							cwd: args.cwd,
 							timeout: args.timeout,
 						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "open_tabs":
+					if (Array.isArray(args.urls)) {
+						nativeArgs = {
+							urls: args.urls,
+							browser: args.browser,
+							reuseExisting: this.coerceOptionalBoolean(args.reuseExisting),
+							visible: this.coerceOptionalBoolean(args.visible),
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "web_research":
+					if (args.action) {
+						nativeArgs = {
+							action: args.action,
+							query: args.query ?? null,
+							url: args.url ?? null,
+							max_results: args.max_results != null ? Number(args.max_results) : null,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "open_browser_page":
+					if (args.url) {
+						nativeArgs = { url: args.url } as NativeArgsFor<TName>
+					}
+					break
+				case "read_browser_page":
+					if (args.pageId) {
+						nativeArgs = { pageId: args.pageId } as NativeArgsFor<TName>
+					}
+					break
+				case "navigate_browser_page":
+					if (args.pageId && args.url) {
+						nativeArgs = { pageId: args.pageId, url: args.url } as NativeArgsFor<TName>
+					}
+					break
+				case "extract_browser_urls":
+					if (args.pageId) {
+						nativeArgs = {
+							pageId: args.pageId,
+							sameOriginOnly: this.coerceOptionalBoolean(args.sameOriginOnly),
+							limit: args.limit != null ? Number(args.limit) : null,
+						} as NativeArgsFor<TName>
+					}
+					break
+				case "extract_browser_data":
+					if (args.pageId) {
+						nativeArgs = {
+							pageId: args.pageId,
+							selector: args.selector ?? null,
+							extractType: args.extractType ?? null,
+							maxRows: args.maxRows != null ? Number(args.maxRows) : null,
+						} as NativeArgsFor<TName>
+					}
+					break
+				case "list_browser_tabs":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+				case "click_browser_element":
+					if (args.pageId && args.selector) {
+						nativeArgs = { pageId: args.pageId, selector: args.selector } as NativeArgsFor<TName>
+					}
+					break
+				case "type_browser_text":
+					if (args.pageId && args.selector && args.text !== undefined) {
+						nativeArgs = {
+							pageId: args.pageId,
+							selector: args.selector,
+							text: args.text,
+						} as NativeArgsFor<TName>
+					}
+					break
+				case "click_browser_by_text":
+					if (args.pageId && args.text) {
+						nativeArgs = { pageId: args.pageId, text: args.text } as NativeArgsFor<TName>
+					}
+					break
+				case "evaluate_browser_js":
+					if (args.pageId && args.script) {
+						nativeArgs = { pageId: args.pageId, script: args.script } as NativeArgsFor<TName>
+					}
+					break
+				case "read_all_browser_tabs":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+				case "batch_browser_actions":
+					if (args.pageId && Array.isArray(args.actions)) {
+						nativeArgs = { pageId: args.pageId, actions: args.actions } as NativeArgsFor<TName>
 					}
 					break
 

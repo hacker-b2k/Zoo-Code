@@ -32,3 +32,6 @@
 !assets/icons/**
 !assets/images/**
 !assets/marketplace/**
+
+# Include playwright-core (externalized by esbuild, needed at runtime for browser tools)
+!node_modules/playwright-core/**

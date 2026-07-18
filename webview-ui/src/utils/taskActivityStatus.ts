@@ -196,6 +196,8 @@ function classifyToolName(toolName: string): ActivityStatusKey {
 
 		case "listFilesTopLevel":
 		case "listFilesRecursive":
+		case "openTabs":
+		case "webResearch":
 			return "browsing"
 
 		case "generateImage":
@@ -308,6 +310,8 @@ function countToolName(toolName: string, summary: ActivitySummary): void {
 		case "runSlashCommand":
 		case "readCommandOutput":
 			summary.commands++
+			break
+		case "openTabs":
 			break
 		// Other tools (listFiles, generateImage, skill, etc.) are counted
 		// in toolUses but not given dedicated counters.

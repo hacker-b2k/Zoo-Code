@@ -4,7 +4,7 @@ import { z } from "zod"
  * ToolGroup
  */
 
-export const toolGroups = ["read", "edit", "command", "mcp", "modes"] as const
+export const toolGroups = ["read", "edit", "command", "mcp", "modes", "browser"] as const
 
 export const toolGroupsSchema = z.enum(toolGroups)
 
@@ -23,6 +23,20 @@ export type ToolGroup = z.infer<typeof toolGroupsSchema>
 
 export const toolNames = [
 	"execute_command",
+	"open_tabs",
+	"web_research",
+	"open_browser_page",
+	"read_browser_page",
+	"navigate_browser_page",
+	"extract_browser_urls",
+	"extract_browser_data",
+	"list_browser_tabs",
+	"click_browser_element",
+	"type_browser_text",
+	"click_browser_by_text",
+	"evaluate_browser_js",
+	"read_all_browser_tabs",
+	"batch_browser_actions",
 	"read_file",
 	"read_command_output",
 	"write_to_file",

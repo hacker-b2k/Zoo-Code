@@ -89,13 +89,17 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 		const { id: model, info } = this.getModel()
 
 		// Centralized cap: clamp to 20% of the context window (unless provider-specific exceptions apply)
-		const max_tokens =
+		const computedMaxTokens =
 			getModelMaxOutputTokens({
 				modelId: model,
 				model: info,
 				settings: this.options,
 				format: "openai",
 			}) ?? undefined
+
+		// Guard: -1 is an internal sentinel meaning "unknown/unlimited" and must
+		// never be sent to the API — many providers reject negative values.
+		const max_tokens = computedMaxTokens != null && computedMaxTokens > 0 ? computedMaxTokens : undefined
 
 		const temperature = this.options.modelTemperature ?? info.defaultTemperature ?? this.defaultTemperature
 

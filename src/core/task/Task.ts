@@ -1044,9 +1044,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private async addToClineMessages(message: ClineMessage) {
 		this.clineMessages.push(message)
 		const provider = this.providerRef.deref()
-		// Avoid resending large, mostly-static fields (notably taskHistory) on every chat message update.
-		// taskHistory is maintained in-memory in the webview and updated via taskHistoryItemUpdated.
-		await provider?.postStateToWebviewWithoutTaskHistory()
+		// Send only the new message to the webview instead of the full clineMessages array.
+		// This avoids replacing the entire message list on every new message, which caused
+		// Virtuoso to re-render all items and produced visual duplication / "old messages
+		// reappearing" artifacts in the chat view.
+		await provider?.postMessageToWebview({ type: "messageAdded", clineMessage: message })
 		this.emit(RooCodeEventName.Message, { action: "created", message })
 		await this.saveClineMessages()
 
@@ -1079,8 +1081,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	private async updateClineMessage(message: ClineMessage) {
 		const provider = this.providerRef.deref()
-		await provider?.postMessageToWebview({ type: "messageUpdated", clineMessage: message })
-		this.emit(RooCodeEventName.Message, { action: "updated", message })
+		// Snapshot before post: host mutates messages in place during streaming.
+		// A shared object identity makes ChatRow's memo(deepEqual) skip updates.
+		const messageSnapshot: ClineMessage = { ...message }
+		await provider?.postMessageToWebview({ type: "messageUpdated", clineMessage: messageSnapshot })
+		this.emit(RooCodeEventName.Message, { action: "updated", message: messageSnapshot })
 
 		// Check if we should sync to cloud and haven't already synced this message
 		const shouldCaptureMessage = message.partial !== true && CloudService.isEnabled()
@@ -1426,6 +1431,18 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Clear any pending auto-approval timeout when user responds
 		this.cancelAutoApprovalTimeout()
 
+		// Finalize any leftover partial messages before processing the new response.
+		// Without this, a partial message from a previous interrupted response would
+		// be updated in-place by the next response's streaming say() calls, causing
+		// the old partial content to merge with the new response text.
+		this.finalizePendingPartialMessages()
+
+		// Push the authoritative message state to the webview after finalization.
+		// This ensures the webview sees partial:false before the new response starts,
+		// preventing the next say() from updating an old partial message in-place.
+		const provider = this.providerRef.deref()
+		void provider?.postStateToWebviewWithoutTaskHistory()
+
 		this.askResponse = askResponse
 		this.askResponseText = text
 		this.askResponseImages = images
@@ -1683,6 +1700,38 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.processQueuedMessages()
 	}
 
+	/**
+	 * Finalize any leftover partial messages in clineMessages. This prevents
+	 * a new response's streaming say() calls from updating an old partial
+	 * message in-place (which would merge old and new response text).
+	 */
+	private finalizePendingPartialMessages(): void {
+		for (let i = this.clineMessages.length - 1; i >= 0; i--) {
+			const msg = this.clineMessages[i]
+			if (msg.partial === true) {
+				msg.partial = false
+				// Notify the webview so it re-renders the finalized message
+				this.updateClineMessage(msg).catch((error) => {
+					console.error("[Task#finalizePendingPartialMessages] updateClineMessage failed:", error)
+				})
+			} else if (msg.type === "say") {
+				// Stop at the first non-partial say message — only trailing
+				// partials need finalization.
+				break
+			}
+		}
+	}
+
+	/**
+	 * Strip internal-only XML tags that may leak from the system prompt into
+	 * assistant responses. Currently handles `<skill_check_completed>`.
+	 */
+	private sanitizeAssistantText(text: string | undefined): string | undefined {
+		if (!text) return text
+		// Remove <skill_check_completed>...</skill_check_completed> and surrounding whitespace
+		return text.replace(/\s*<skill_check_completed>[^<]*<\/skill_check_completed>\s*/g, "").trim() || text
+	}
+
 	async say(
 		type: ClineSay,
 		text?: string,
@@ -1699,6 +1748,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		if (this.abort) {
 			throw new Error(`[RooCode#say] task ${this.taskId}.${this.instanceId} aborted`)
 		}
+
+		// Strip any internal-only tags that may have leaked from the system prompt
+		// into the assistant's visible response text.
+		text = this.sanitizeAssistantText(text)
 
 		if (partial !== undefined) {
 			const lastMessage = this.clineMessages.at(-1)

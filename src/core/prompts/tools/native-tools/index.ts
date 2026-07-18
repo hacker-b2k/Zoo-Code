@@ -10,6 +10,20 @@ import executeCommand from "./execute_command"
 import generateImage from "./generate_image"
 import listFiles from "./list_files"
 import newTask from "./new_task"
+import openTabs from "./open_tabs"
+import webResearch from "./web_research"
+import openBrowserPage from "./open_browser_page"
+import readBrowserPage from "./read_browser_page"
+import navigateBrowserPage from "./navigate_browser_page"
+import extractBrowserUrls from "./extract_browser_urls"
+import extractBrowserData from "./extract_browser_data"
+import listBrowserTabs from "./list_browser_tabs"
+import clickBrowserElement from "./click_browser_element"
+import typeBrowserText from "./type_browser_text"
+import clickBrowserByText from "./click_browser_by_text"
+import evaluateBrowserJs from "./evaluate_browser_js"
+import readAllBrowserTabs from "./read_all_browser_tabs"
+import batchBrowserActions from "./batch_browser_actions"
 import readCommandOutput from "./read_command_output"
 import { createReadFileTool, type ReadFileToolOptions } from "./read_file"
 import runSlashCommand from "./run_slash_command"
@@ -57,6 +71,20 @@ export function getNativeTools(options: NativeToolsOptions = {}): OpenAI.Chat.Ch
 		generateImage,
 		listFiles,
 		newTask,
+		openTabs,
+		webResearch,
+		openBrowserPage,
+		readBrowserPage,
+		navigateBrowserPage,
+		extractBrowserUrls,
+		extractBrowserData,
+		listBrowserTabs,
+		clickBrowserElement,
+		typeBrowserText,
+		clickBrowserByText,
+		evaluateBrowserJs,
+		readAllBrowserTabs,
+		batchBrowserActions,
 		readCommandOutput,
 		createReadFileTool(readFileOptions),
 		runSlashCommand,

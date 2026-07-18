@@ -155,6 +155,11 @@ describe("classifyActivity", () => {
 		expect(classifyActivity(messages)).toBe("browsing")
 	})
 
+	it('classifies say:"tool" with openTabs as browsing', () => {
+		const messages = [makeToolSay("openTabs")]
+		expect(classifyActivity(messages)).toBe("browsing")
+	})
+
 	it('classifies say:"tool" with generateImage as generatingImage', () => {
 		const messages = [makeToolSay("generateImage")]
 		expect(classifyActivity(messages)).toBe("generatingImage")
@@ -335,6 +340,17 @@ describe("summarizeActivity", () => {
 		const result = summarizeActivity(messages)
 		expect(result.searches).toBe(1)
 		expect(result.toolUses).toBe(1)
+	})
+
+	it("counts openTabs as a tool use but not as a command/search/file counter", () => {
+		const messages = [makeToolSay("openTabs")]
+		const result = summarizeActivity(messages)
+		expect(result.toolUses).toBe(1)
+		expect(result.commands).toBe(0)
+		expect(result.searches).toBe(0)
+		expect(result.filesRead).toBe(0)
+		expect(result.filesEdited).toBe(0)
+		expect(result.filesCreated).toBe(0)
 	})
 
 	it("counts codebaseSearch tool say as searches", () => {

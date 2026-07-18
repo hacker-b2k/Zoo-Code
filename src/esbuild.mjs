@@ -82,6 +82,16 @@ async function main() {
 						srcDir,
 						buildDir,
 					)
+
+					// Copy playwright-core into dist/node_modules so the externalized
+					// require("playwright-core") in the bundled extension.js resolves
+					// at runtime. The VSIX includes dist/ but not node_modules/, so
+					// this is the only way to ship the dependency alongside the bundle.
+					const pwSrc = path.join(srcDir, "node_modules", "playwright-core")
+					const pwDest = path.join(buildDir, "dist", "node_modules", "playwright-core")
+					if (fs.existsSync(pwSrc)) {
+						fs.cpSync(pwSrc, pwDest, { recursive: true, dereference: true })
+					}
 				})
 			},
 		},
@@ -126,7 +136,7 @@ async function main() {
 		// global-agent must be external because it dynamically patches Node.js http/https modules
 		// which breaks when bundled. It needs access to the actual Node.js module instances.
 		// undici must be bundled because our VSIX is packaged with `--no-dependencies`.
-		external: ["vscode", "esbuild", "global-agent", "@vscode/ripgrep"],
+		external: ["vscode", "esbuild", "global-agent", "@vscode/ripgrep", "playwright-core"],
 	}
 
 	/**

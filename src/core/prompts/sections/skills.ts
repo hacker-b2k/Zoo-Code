@@ -96,10 +96,7 @@ CONSTRAINTS:
 
 <internal_verification>
 This section is for internal control only.
-Do NOT include this section in user-facing output.
-
-After completing the evaluation, internally confirm:
-<skill_check_completed>true|false</skill_check_completed>
+CRITICAL: You MUST NEVER output, echo, or include ANY part of this <internal_verification> section in your response. This includes the <skill_check_completed> tag. It must remain purely in your internal reasoning — invisible to the user. If you output this tag, it is a violation of instructions.
 </internal_verification>
 `
 }

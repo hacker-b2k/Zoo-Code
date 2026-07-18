@@ -15,6 +15,22 @@ import { AskIgnoredError } from "../task/AskIgnoredError"
 import { Task } from "../task/Task"
 
 import { listFilesTool } from "../tools/ListFilesTool"
+import { openTabsTool } from "../tools/OpenTabsTool"
+import { webResearchTool } from "../tools/WebResearchTool"
+import {
+	openBrowserPageTool,
+	readBrowserPageTool,
+	navigateBrowserPageTool,
+	extractBrowserUrlsTool,
+	extractBrowserDataTool,
+	listBrowserTabsTool,
+	clickBrowserElementTool,
+	typeBrowserTextTool,
+	clickBrowserByTextTool,
+	evaluateBrowserJsTool,
+	readAllBrowserTabsTool,
+	batchBrowserActionsTool,
+} from "../tools/BrowserTools"
 import { readFileTool } from "../tools/ReadFileTool"
 import { readCommandOutputTool } from "../tools/ReadCommandOutputTool"
 import { writeToFileTool } from "../tools/WriteToFileTool"
@@ -328,6 +344,34 @@ export async function presentAssistantMessage(cline: Task) {
 				switch (block.name) {
 					case "execute_command":
 						return `[${block.name} for '${block.params.command}']`
+					case "open_tabs":
+						return `[${block.name} for ${block.params.browser ?? "auto"} (${block.params.urls ?? "[]"})]`
+					case "web_research":
+						return `[${block.name} ${block.params.action ?? "?"} ${block.params.query ?? block.params.url ?? ""}]`
+					case "open_browser_page":
+						return `[${block.name} for ${block.params.url ?? "?"}]`
+					case "read_browser_page":
+						return `[${block.name} for ${block.params.pageId ?? "?"}]`
+					case "navigate_browser_page":
+						return `[${block.name} to ${block.params.url ?? "?"}]`
+					case "extract_browser_urls":
+						return `[${block.name} from ${block.params.pageId ?? "?"}]`
+					case "extract_browser_data":
+						return `[${block.name} from ${block.params.pageId ?? "?"}]`
+					case "list_browser_tabs":
+						return `[${block.name}]`
+					case "click_browser_element":
+						return `[${block.name} ${block.params.selector ?? "?"}]`
+					case "type_browser_text":
+						return `[${block.name} into ${block.params.selector ?? "?"}]`
+					case "click_browser_by_text":
+						return `[${block.name} "${block.params.text ?? "?"}"]`
+					case "evaluate_browser_js":
+						return `[${block.name} on ${block.params.pageId ?? "?"}]`
+					case "read_all_browser_tabs":
+						return `[${block.name}]`
+					case "batch_browser_actions":
+						return `[${block.name} ${Array.isArray(block.params.actions) ? block.params.actions.length : 0} actions]`
 					case "read_file":
 						// Prefer native typed args when available; fall back to legacy params
 						// Check if nativeArgs exists (native protocol)
@@ -742,6 +786,104 @@ export async function presentAssistantMessage(cline: Task) {
 					break
 				case "list_files":
 					await listFilesTool.handle(cline, block as ToolUse<"list_files">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "open_tabs":
+					await openTabsTool.handle(cline, block as ToolUse<"open_tabs">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "web_research":
+					await webResearchTool.handle(cline, block as ToolUse<"web_research">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "open_browser_page":
+					await openBrowserPageTool.handle(cline, block as ToolUse<"open_browser_page">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "read_browser_page":
+					await readBrowserPageTool.handle(cline, block as ToolUse<"read_browser_page">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "navigate_browser_page":
+					await navigateBrowserPageTool.handle(cline, block as ToolUse<"navigate_browser_page">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "extract_browser_urls":
+					await extractBrowserUrlsTool.handle(cline, block as ToolUse<"extract_browser_urls">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "extract_browser_data":
+					await extractBrowserDataTool.handle(cline, block as ToolUse<"extract_browser_data">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "list_browser_tabs":
+					await listBrowserTabsTool.handle(cline, block as ToolUse<"list_browser_tabs">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "click_browser_element":
+					await clickBrowserElementTool.handle(cline, block as ToolUse<"click_browser_element">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "type_browser_text":
+					await typeBrowserTextTool.handle(cline, block as ToolUse<"type_browser_text">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "click_browser_by_text":
+					await clickBrowserByTextTool.handle(cline, block as ToolUse<"click_browser_by_text">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "evaluate_browser_js":
+					await evaluateBrowserJsTool.handle(cline, block as ToolUse<"evaluate_browser_js">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "read_all_browser_tabs":
+					await readAllBrowserTabsTool.handle(cline, block as ToolUse<"read_all_browser_tabs">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "batch_browser_actions":
+					await batchBrowserActionsTool.handle(cline, block as ToolUse<"batch_browser_actions">, {
 						askApproval,
 						handleError,
 						pushToolResult,

@@ -832,6 +832,7 @@ export interface ClineSayTool {
 		| "listFilesTopLevel"
 		| "listFilesRecursive"
 		| "searchFiles"
+		| "openTabs"
 		| "switchMode"
 		| "newTask"
 		| "finishTask"
@@ -895,6 +896,12 @@ export interface ClineSayTool {
 	args?: string
 	source?: string
 	description?: string
+	// Properties for openTabs tool
+	urls?: string[]
+	browser?: "auto" | "chrome" | "edge"
+	reuseExisting?: boolean
+	visible?: boolean
+	openedCount?: number
 	// Properties for skill tool
 	skill?: string
 }
