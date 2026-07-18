@@ -107,11 +107,26 @@ export const ThinkingBudget = ({ apiConfiguration, setApiConfigurationField, mod
 		: "disable"
 	// Current reasoning effort from settings, or fall back to default.
 	// Clamp to availableOptions so the Select trigger always renders a valid option.
+	// When reasoning is enabled but the stored value is missing/"disable" (common for
+	// OpenAI-compat where parent uses enableReasoningEffort + openAiCustomModelInfo),
+	// prefer model default or "high" — never fall through to availableOptions[0] ("low").
 	const storedReasoningEffort = apiConfiguration.reasoningEffort as ReasoningEffortOption | undefined
 	const rawReasoningEffort: ReasoningEffortOption = storedReasoningEffort || defaultReasoningEffort
+	const preferredFallback: ReasoningEffortOption = (() => {
+		if (
+			modelDefaultReasoningEffort &&
+			availableOptions.includes(modelDefaultReasoningEffort as ReasoningEffortOption)
+		) {
+			return modelDefaultReasoningEffort as ReasoningEffortOption
+		}
+		for (const preferred of ["high", "xhigh", "medium", "low"] as const) {
+			if (availableOptions.includes(preferred)) return preferred
+		}
+		return availableOptions.find((o) => o !== "disable") ?? availableOptions[0] ?? rawReasoningEffort
+	})()
 	const currentReasoningEffort: ReasoningEffortOption = availableOptions.includes(rawReasoningEffort)
 		? rawReasoningEffort
-		: (availableOptions[0] ?? rawReasoningEffort)
+		: preferredFallback
 
 	// Set default reasoning effort when model supports it and no value is set
 	useEffect(() => {

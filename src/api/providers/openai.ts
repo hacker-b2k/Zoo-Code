@@ -5,7 +5,7 @@ import axios from "axios"
 import {
 	type ModelInfo,
 	azureOpenAiDefaultApiVersion,
-	openAiModelInfoSaneDefaults,
+	mergeOpenAiCompatibleModelInfo,
 	DEEP_SEEK_DEFAULT_TEMPERATURE,
 	OPENAI_AZURE_AI_INFERENCE_PATH,
 } from "@roo-code/types"
@@ -417,7 +417,8 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 	override getModel() {
 		const id = this.options.openAiModelId ?? ""
-		const info: ModelInfo = this.options.openAiCustomModelInfo ?? openAiModelInfoSaneDefaults
+		// Merge so partial openAiCustomModelInfo does not drop supportsImages / defaults
+		const info: ModelInfo = mergeOpenAiCompatibleModelInfo(this.options.openAiCustomModelInfo)
 		const params = getModelParams({
 			format: "openai",
 			modelId: id,

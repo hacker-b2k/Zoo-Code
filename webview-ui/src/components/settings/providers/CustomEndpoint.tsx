@@ -113,7 +113,7 @@ export const CustomEndpoint = ({
 			<div>
 				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.format")}</label>
 				<Select
-					value={apiConfiguration?.customEndpointFormat || "openai"}
+					value={apiConfiguration?.customEndpointFormat || "custom"}
 					onValueChange={(value) => setApiConfigurationField("customEndpointFormat", value as any)}>
 					<SelectTrigger className="w-full">
 						<SelectValue placeholder={t("settings:common.select")} />

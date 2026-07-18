@@ -631,6 +631,39 @@ export const openAiModelInfoSaneDefaults: ModelInfo = {
 	outputPrice: 0,
 }
 
+/**
+ * Merge partial OpenAI-compatible custom model info with sane defaults.
+ *
+ * Partial objects (e.g. agent-written openAiCustomModelInfo with only
+ * contextWindow/reasoningEffort) must not shadow defaults for capability
+ * flags like supportsImages — Settings UI uses `?? true` for the checkbox
+ * while chat gates on `!model.supportsImages` (undefined disables upload).
+ *
+ * Explicit false/0/-1 values are preserved; only nullish fields fall back.
+ */
+export function mergeOpenAiCompatibleModelInfo(custom?: Partial<ModelInfo> | null): ModelInfo {
+	if (!custom) {
+		return { ...openAiModelInfoSaneDefaults }
+	}
+
+	const defaults = openAiModelInfoSaneDefaults
+	return {
+		...defaults,
+		...custom,
+		// Re-apply nullish coalescing so explicit `undefined` keys on partial
+		// objects (or keys omitted then set undefined) do not wipe defaults.
+		maxTokens: custom.maxTokens ?? defaults.maxTokens,
+		contextWindow: custom.contextWindow ?? defaults.contextWindow,
+		supportsImages: custom.supportsImages ?? defaults.supportsImages,
+		supportsPromptCache: custom.supportsPromptCache ?? defaults.supportsPromptCache,
+		inputPrice: custom.inputPrice ?? defaults.inputPrice,
+		outputPrice: custom.outputPrice ?? defaults.outputPrice,
+		cacheWritesPrice: custom.cacheWritesPrice ?? defaults.cacheWritesPrice,
+		cacheReadsPrice: custom.cacheReadsPrice ?? defaults.cacheReadsPrice,
+		maxThinkingTokens: custom.maxThinkingTokens ?? defaults.maxThinkingTokens,
+	}
+}
+
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#api-specs
 export const azureOpenAiDefaultApiVersion = "2024-08-01-preview"

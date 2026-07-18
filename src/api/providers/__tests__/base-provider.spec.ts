@@ -31,6 +31,11 @@ class TestProvider extends BaseProvider {
 	public testConvertToolsForOpenAI(tools: any[] | undefined): any[] | undefined {
 		return this.convertToolsForOpenAI(tools)
 	}
+
+	// Expose private method for testing
+	public testHasFreeFormObjects(schema: any): boolean {
+		return this.hasFreeFormObjects(schema)
+	}
 }
 
 describe("BaseProvider", () => {
@@ -153,6 +158,23 @@ describe("BaseProvider", () => {
 			expect(result.properties.name.type).toBe("string")
 		})
 
+		it("should strip null from enum when converting nullable types", () => {
+			const schema = {
+				type: "object",
+				properties: {
+					scope: {
+						type: ["string", "null"],
+						enum: ["project", "global", "all", null],
+					},
+				},
+			}
+
+			const result = provider.testConvertToolSchemaForOpenAI(schema)
+
+			expect(result.properties.scope.type).toBe("string")
+			expect(result.properties.scope.enum).toEqual(["project", "global", "all"])
+		})
+
 		it("should return non-object schemas unchanged", () => {
 			const schema = { type: "string" }
 			const result = provider.testConvertToolSchemaForOpenAI(schema)
@@ -175,6 +197,61 @@ describe("BaseProvider", () => {
 
 			expect(result.additionalProperties).toBe(false)
 			expect(result.required).toEqual([])
+		})
+	})
+
+	describe("hasFreeFormObjects", () => {
+		it("should detect free-form objects at root", () => {
+			expect(provider.testHasFreeFormObjects({ type: "object", additionalProperties: true })).toBe(true)
+		})
+
+		it("should detect free-form objects with additionalProperties schema", () => {
+			expect(provider.testHasFreeFormObjects({ type: "object", additionalProperties: { type: "string" } })).toBe(
+				true,
+			)
+		})
+
+		it("should not flag objects with properties", () => {
+			expect(provider.testHasFreeFormObjects({ type: "object", properties: { name: { type: "string" } } })).toBe(
+				false,
+			)
+		})
+
+		it("should detect nested free-form objects in properties", () => {
+			const schema = {
+				type: "object",
+				properties: {
+					name: { type: "string" },
+					settings: { type: "object", additionalProperties: true },
+				},
+			}
+			expect(provider.testHasFreeFormObjects(schema)).toBe(true)
+		})
+
+		it("should detect free-form objects in array items", () => {
+			const schema = {
+				type: "object",
+				properties: {
+					items: {
+						type: "array",
+						items: { type: "object", additionalProperties: true },
+					},
+				},
+			}
+			expect(provider.testHasFreeFormObjects(schema)).toBe(true)
+		})
+
+		it("should not flag when all nested objects have properties", () => {
+			const schema = {
+				type: "object",
+				properties: {
+					user: {
+						type: "object",
+						properties: { name: { type: "string" } },
+					},
+				},
+			}
+			expect(provider.testHasFreeFormObjects(schema)).toBe(false)
 		})
 	})
 
@@ -278,6 +355,60 @@ describe("BaseProvider", () => {
 			const result = provider.testConvertToolsForOpenAI(tools)
 
 			expect(result?.[0]).toEqual(tools[0])
+		})
+
+		it("should set strict: false for tools with free-form object parameters", () => {
+			const tools = [
+				{
+					type: "function",
+					function: {
+						name: "manage_provider_profile",
+						description: "Manage provider profile",
+						parameters: {
+							type: "object",
+							properties: {
+								action: { type: "string" },
+								settings: {
+									type: "object",
+									additionalProperties: true,
+								},
+							},
+							required: ["action", "settings"],
+						},
+					},
+				},
+			]
+
+			const result = provider.testConvertToolsForOpenAI(tools)
+
+			expect(result?.[0].function.strict).toBe(false)
+		})
+
+		it("should not apply schema conversion to tools with free-form objects", () => {
+			const tools = [
+				{
+					type: "function",
+					function: {
+						name: "manage_provider_profile",
+						description: "Manage provider profile",
+						parameters: {
+							type: "object",
+							properties: {
+								settings: {
+									type: "object",
+									additionalProperties: true,
+								},
+							},
+							required: ["settings"],
+						},
+					},
+				},
+			]
+
+			const result = provider.testConvertToolsForOpenAI(tools)
+
+			// Parameters should be passed through unchanged (no strict schema conversion)
+			expect(result?.[0].function.parameters.properties.settings.additionalProperties).toBe(true)
 		})
 	})
 })

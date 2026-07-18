@@ -14,6 +14,7 @@ import {
 	geminiModels,
 	mistralModels,
 	openAiModelInfoSaneDefaults,
+	mergeOpenAiCompatibleModelInfo,
 	openAiNativeModels,
 	vertexModels,
 	xaiModels,
@@ -315,14 +316,14 @@ function getSelectedModel({
 		}
 		case "openai": {
 			const id = apiConfiguration.openAiModelId ?? ""
-			const customInfo = apiConfiguration?.openAiCustomModelInfo
-			const info = customInfo ?? openAiModelInfoSaneDefaults
+			// Merge partial custom info with sane defaults so missing supportsImages
+			// (etc.) does not disable chat features while Settings shows ?? defaults.
+			const info = mergeOpenAiCompatibleModelInfo(apiConfiguration?.openAiCustomModelInfo)
 			return { id, info }
 		}
 		case "custom-endpoint": {
 			const id = apiConfiguration.customEndpointModelId ?? ""
-			const customInfo = apiConfiguration?.customEndpointModelInfo
-			const info = customInfo ?? openAiModelInfoSaneDefaults
+			const info = mergeOpenAiCompatibleModelInfo(apiConfiguration?.customEndpointModelInfo)
 			return { id, info }
 		}
 		case "ollama": {
