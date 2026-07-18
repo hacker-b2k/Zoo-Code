@@ -1,143 +1,95 @@
 {
+	"_autoMaintenance": {
+		"description": "MACHINE-READABLE AUTO-MAINTENANCE RULES — DO NOT REMOVE",
+		"rules": {
+			"trigger": "Whenever an upstream commit is cherry-picked or merged into the fork, ALL three .upstream/ tracking files MUST be updated automatically. No user instruction is required.",
+			"files": [".upstream/STATE.json", ".upstream/IMPLEMENTATION_STATE.md", ".upstream/UPSTREAM_DECISIONS.md"],
+			"statusTransitions": {
+				"SKIPPED": {
+					"onSuccess": "IMPLEMENTED",
+					"onFailure": "SKIPPED (unchanged)"
+				},
+				"IGNORED": {
+					"onSuccess": "IGNORED (NEVER changes)",
+					"onFailure": "IGNORED (NEVER changes)"
+				},
+				"IMPLEMENTED": {
+					"note": "Already done — no change needed"
+				}
+			},
+			"onSuccessfulCherryPick": [
+				"1. Find the commit hash in reviewedCommits[].status",
+				"2. If status is SKIPPED → change to IMPLEMENTED",
+				"3. If status is IGNORED → DO NOT CHANGE (this is a permanent rejection)",
+				"4. Update lastSyncCommit to the newly cherry-picked commit hash",
+				"5. Update lastSyncAt to current ISO 8601 UTC timestamp",
+				"6. Update lastSyncMessage to the commit title",
+				"7. In UPSTREAM_DECISIONS.md: change Status line from SKIPPED to IMPLEMENTED, add 'Imported:' date",
+				"8. In IMPLEMENTATION_STATE.md: move commit from 'Awaiting Import' to 'Implemented', update summary counts"
+			],
+			"onFailedCherryPick": [
+				"1. Keep the commit's status as SKIPPED — do not change",
+				"2. Log the failure reason in UPSTREAM_DECISIONS.md as a note",
+				"3. Do NOT update lastSyncCommit"
+			],
+			"crossFileConsistency": {
+				"rule": "STATE.json reviewedCommits[] MUST be a superset of UPSTREAM_DECISIONS.md entries. Every hash in UPSTREAM_DECISIONS.md MUST appear in reviewedCommits[] with matching status. IMPLEMENTATION_STATE.md summaries MUST reflect the same counts.",
+				"validation": "Before committing any .upstream/ changes, verify: (a) reviewedCommits count matches UPSTREAM_DECISIONS.md entry count, (b) every status matches between files, (c) lastSyncCommit equals the most recently IMPLEMENTED commit (or original baseline if none implemented)"
+			},
+			"reviewWindowAutoAdvance": {
+				"rule": "When new upstream commits are fetched, lastFetchedCommit updates to the new upstream HEAD. The review window advances from old lastFetchedCommit to new upstream/main HEAD. Already-reviewed commits (those in reviewedCommits[] or UPSTREAM_DECISIONS.md) are automatically filtered out."
+			}
+		}
+	},
+
 	"repo": "Zoo-Code-Org/Zoo-Code",
 	"upstreamUrl": "https://github.com/Zoo-Code-Org/Zoo-Code.git",
 	"forkUrl": "https://github.com/hacker-b2k/Zoo-Code.git",
 	"forkBranch": "fix/activation-crashes-and-perf-optimizations",
 
-	"lastFetchedCommit": "e8acc6a498a794d5e07f5a4238155326ec82e1c4",
-	"lastFetchedAt": "2026-06-24T03:35:00Z",
-	"lastFetchedMessage": "test(mcp): fix McpHub Windows command wrapping test ordering (#632)",
+	"lastFetchedCommit": "29c2d2e2284fe9a492e32a78d1c2367d7cad4cd5",
+	"lastFetchedAt": "2026-07-02T01:53:00Z",
+	"lastFetchedMessage": "fix(gemini): base64 encoding though signature (#776)",
 
-	"upstreamHead": "e8acc6a498a794d5e07f5a4238155326ec82e1c4",
-	"upstreamHeadAt": "2026-06-24T03:35:00Z",
+	"upstreamHead": "29c2d2e2284fe9a492e32a78d1c2367d7cad4cd5",
+	"upstreamHeadAt": "2026-07-02T01:53:00Z",
+
+	"lastSyncCommit": "e8acc6a498a794d5e07f5a4238155326ec82e1c4",
+	"lastSyncAt": "2026-06-24T03:35:00Z",
+	"lastSyncMessage": "test(mcp): fix McpHub Windows command wrapping test ordering (#632)",
 
 	"reviewedCommits": [
-		{
-			"hash": "31b7c51ff",
-			"title": "docs(prompt): enhance apply_diff tool instructions (#619)",
-			"status": "SKIPPED"
-		},
-		{ "hash": "0084cc899", "title": "Add completion change actions (#633)", "status": "SKIPPED" },
-		{
-			"hash": "667096238",
-			"title": "fix(delegation): serialize delegateParentAndOpenChild (#691)",
-			"status": "SKIPPED"
-		},
-		{
-			"hash": "1b26b6a69",
-			"title": "fix(diff-view): make auto-closing edited files opt-in (#720)",
-			"status": "IGNORED"
-		},
-		{ "hash": "f75b64e28", "title": "feat(settings): add rules management UI (#657)", "status": "SKIPPED" },
-		{ "hash": "34898d2bc", "title": "fix: parse Gemma 4 reasoning tags (#324)", "status": "SKIPPED" },
-		{ "hash": "6705e67fd", "title": "chore: prepare v3.64.0 release (#729)", "status": "SKIPPED" },
-		{
-			"hash": "1e9559198",
-			"title": "chore(deps): update dependency only-allow to v1.2.2 (#737)",
-			"status": "SKIPPED"
-		},
-		{
-			"hash": "fdb07e6c0",
-			"title": "chore(deps): update dependency pdf-parse to v1.1.4 (#739)",
-			"status": "SKIPPED"
-		},
-		{
-			"hash": "12af5dee1",
-			"title": "chore(deps): update dependency react-use to v17.6.1 (#740)",
-			"status": "SKIPPED"
-		},
-		{ "hash": "16dc13f27", "title": "chore(deps): update dependency ovsx to v0.10.12 (#738)", "status": "SKIPPED" },
-		{
-			"hash": "4e68b5959",
-			"title": "chore(deps): update dependency reconnecting-eventsource to v1.6.5 (#741)",
-			"status": "SKIPPED"
-		},
-		{ "hash": "5b7ae240b", "title": "chore: upgrade @anthropic-ai/sdk to 0.104.1 (#600)", "status": "SKIPPED" },
-		{ "hash": "f63f7a9b3", "title": "fix(deps): update ai sdks and providers (#744)", "status": "SKIPPED" },
-		{
-			"hash": "5587e2d36",
-			"title": "chore(deps): update dependency posthog-js to v1.393.4 (#746)",
-			"status": "SKIPPED"
-		},
-		{ "hash": "d4741f608", "title": "chore(deps): update dependency ajv to v8.20.0 (#747)", "status": "SKIPPED" },
-		{
-			"hash": "9bc4e397c",
-			"title": "chore(deps): update dependency mermaid to v11.16.0 (#742)",
-			"status": "SKIPPED"
-		},
-		{
-			"hash": "83fc6bbf1",
-			"title": "chore(deps): update build, lint, and test tooling (#745)",
-			"status": "SKIPPED"
-		},
-		{ "hash": "78e11a766", "title": "fix: LiteLLM cache key collision (#647)", "status": "SKIPPED" },
-		{ "hash": "515437b45", "title": "fix: shell default profile name type guard (#687)", "status": "SKIPPED" },
-		{
-			"hash": "8849f1a00",
-			"title": "chore: enforce no-floating-promises (#253)",
-			"status": "IMPLEMENTED",
-			"localSHA": "2490eeb08",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "80fb15906",
-			"title": "ci: improve PR label reconciliation (#228)",
-			"status": "IMPLEMENTED",
-			"localSHA": "c99e1e6f4",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "67df9f9c6",
-			"title": "fix(delegation): serialize reopenParentFromDelegation (#725)",
-			"status": "IMPLEMENTED",
-			"localSHA": "063405457",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "9a2e8d866",
-			"title": "fix(vscode-lm): reliable auto context condensing (#710)",
-			"status": "IMPLEMENTED",
-			"localSHA": "cd0906b0e",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "211d36063",
-			"title": "fix(ThinkingBudget): support extended reasoning effort (#774)",
-			"status": "IMPLEMENTED",
-			"localSHA": "5ef31ba",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "f845f2aa5",
-			"title": "feat: implement Claude Sonnet 5 support (#778)",
-			"status": "IMPLEMENTED",
-			"localSHA": "dd2f18a",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "7476c6794",
-			"title": "feat(task-lifecycle): task status transition guard (#692)",
-			"status": "IMPLEMENTED",
-			"localSHA": "d0871ec81",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "63dec51c1",
-			"title": "fix(#689): provider cache reset after settings import (#726)",
-			"status": "IMPLEMENTED",
-			"localSHA": "9b9a750",
-			"importedAt": "2026-07-02"
-		},
-		{
-			"hash": "29c2d2e22",
-			"title": "fix(gemini): base64 encoding (#776)",
-			"status": "IMPLEMENTED",
-			"localSHA": "c64bf09",
-			"importedAt": "2026-07-02"
-		}
+		{ "hash": "31b7c51ff", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "0084cc899", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "667096238", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "1b26b6a69", "status": "IGNORED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "f75b64e28", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "34898d2bc", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "6705e67fd", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "1e9559198", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "fdb07e6c0", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "12af5dee1", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "16dc13f27", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "4e68b5959", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "5b7ae240b", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "f63f7a9b3", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "5587e2d36", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "d4741f608", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "9bc4e397c", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "83fc6bbf1", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "78e11a766", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "515437b45", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "8849f1a00", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "80fb15906", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "67df9f9c6", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "9a2e8d866", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "211d36063", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "f845f2aa5", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "7476c6794", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "63dec51c1", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" },
+		{ "hash": "29c2d2e22", "status": "SKIPPED", "reviewedAt": "2026-07-02T01:53:00Z" }
 	],
 
-	"lastSyncCommit": "29c2d2e2284fe9a492e32a78d1c2367d7cad4cd5",
-	"lastSyncAt": "2026-07-02T02:47:00Z",
-	"lastSyncMessage": "fix(gemini): base64 encoding (#776)"
+	"importedCommits": [],
+	"pendingCommits": []
 }
