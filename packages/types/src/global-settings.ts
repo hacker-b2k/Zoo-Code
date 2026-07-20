@@ -1,0 +1,390 @@
+import { z } from "zod"
+
+import { codebaseIndexConfigSchema, codebaseIndexModelsSchema } from "./codebase-index.js"
+import { experimentsSchema } from "./experiment.js"
+import { historyItemSchema } from "./history.js"
+import { customModePromptsSchema, customSupportPromptsSchema, modeConfigSchema } from "./mode.js"
+import {
+	type ProviderSettings,
+	PROVIDER_SETTINGS_KEYS,
+	providerSettingsEntrySchema,
+	providerSettingsSchema,
+} from "./provider-settings.js"
+import { telemetrySettingsSchema } from "./telemetry.js"
+import { toolNamesSchema } from "./tool.js"
+import { type Keys } from "./type-fu.js"
+import { languagesSchema } from "./vscode.js"
+
+/**
+ * Default delay in milliseconds after writes to allow diagnostics to detect potential problems.
+ * This delay is particularly important for Go and other languages where tools like goimports
+ * need time to automatically clean up unused imports.
+ */
+export const DEFAULT_WRITE_DELAY_MS = 1000
+
+/**
+ * Default fuzzy matching threshold for the multi-search-replace diff strategy.
+ * A value of 1.0 (exact match) is used by default for safety, especially when
+ * auto-approval for writes is enabled. This prevents unintended changes from
+ * being applied due to minor mismatches. Users can lower this threshold manually
+ * in settings to reduce "Edit Unsuccessful" errors caused by minor whitespace
+ * or formatting differences, accepting a higher risk of unintended edits.
+ */
+export const DEFAULT_DIFF_FUZZY_THRESHOLD = 1.0
+
+/**
+ * Terminal output preview size options for persisted command output.
+ *
+ * Controls how much command output is kept in memory as a "preview" before
+ * the LLM decides to retrieve more via `read_command_output`. Larger previews
+ * mean more immediate context but consume more of the context window.
+ *
+ * - `small`: 5KB preview - Best for long-running commands with verbose output
+ * - `medium`: 10KB preview - Balanced default for most use cases
+ * - `large`: 20KB preview - Best when commands produce critical info early
+ *
+ * @see OutputInterceptor - Uses this setting to determine when to spill to disk
+ * @see PersistedCommandOutput - Contains the resulting preview and artifact reference
+ */
+export type TerminalOutputPreviewSize = "small" | "medium" | "large"
+
+/**
+ * Byte limits for each terminal output preview size.
+ *
+ * Maps preview size names to their corresponding byte thresholds.
+ * When command output exceeds these thresholds, the excess is persisted
+ * to disk and made available via the `read_command_output` tool.
+ */
+export const TERMINAL_PREVIEW_BYTES: Record<TerminalOutputPreviewSize, number> = {
+	small: 5 * 1024, // 5KB
+	medium: 10 * 1024, // 10KB
+	large: 20 * 1024, // 20KB
+}
+
+/**
+ * Default terminal output preview size.
+ * The "medium" (10KB) setting provides a good balance between immediate
+ * visibility and context window conservation for most use cases.
+ */
+export const DEFAULT_TERMINAL_OUTPUT_PREVIEW_SIZE: TerminalOutputPreviewSize = "medium"
+
+/**
+ * Minimum checkpoint timeout in seconds.
+ */
+export const MIN_CHECKPOINT_TIMEOUT_SECONDS = 10
+
+/**
+ * Maximum checkpoint timeout in seconds.
+ */
+export const MAX_CHECKPOINT_TIMEOUT_SECONDS = 60
+
+/**
+ * Default checkpoint timeout in seconds.
+ */
+export const DEFAULT_CHECKPOINT_TIMEOUT_SECONDS = 15
+
+/**
+ * GlobalSettings
+ */
+
+export const globalSettingsSchema = z.object({
+	currentApiConfigName: z.string().optional(),
+	listApiConfigMeta: z.array(providerSettingsEntrySchema).optional(),
+	pinnedApiConfigs: z.record(z.string(), z.boolean()).optional(),
+	/**
+	 * Provider profile names the user enabled for the parallel worker pool.
+	 * Keyed by profile name (not id). Empty / missing = all profiles allowed.
+	 */
+	workerEnabledApiConfigs: z.record(z.string(), z.boolean()).optional(),
+
+	lastShownAnnouncementId: z.string().optional(),
+	customInstructions: z.string().optional(),
+	taskHistory: z.array(historyItemSchema).optional(),
+	dismissedUpsells: z.array(z.string()).optional(),
+
+	// Image generation settings (experimental) - OpenAI-compatible and custom endpoint configuration.
+	imageGenerationProvider: z
+		.enum(["openai-compatible", "openrouter", "vertex-ai", "google-express", "custom"])
+		.optional(),
+	imageGenerationBaseUrl: z.string().optional(),
+	imageGenerationApiKey: z.string().optional(),
+	imageGenerationHeaders: z.record(z.string(), z.string()).optional(),
+	imageGenerationSelectedModel: z.string().optional(),
+	imageGenerationApiMethod: z.enum(["chat_completions", "images_api", "async_submit_poll", "direct_post"]).optional(),
+	imageGenerationCustomProvider: z
+		.object({
+			name: z.string().optional(),
+			presetId: z.enum(["openai-images", "openai-chat", "cloudflare-workers-ai", "poyo-ai", "manual"]).optional(),
+			directPath: z.string().optional(),
+			directBodyTemplate: z.string().optional(),
+			directImagePath: z.string().optional(),
+			directErrorPath: z.string().optional(),
+			submitPath: z.string().optional(),
+			submitMethod: z.enum(["POST", "PUT", "PATCH"]).optional(),
+			submitBodyTemplate: z.string().optional(),
+			taskIdPath: z.string().optional(),
+			pollPath: z.string().optional(),
+			pollMethod: z.enum(["GET", "POST"]).optional(),
+			statusPath: z.string().optional(),
+			successStatus: z.string().optional(),
+			failureStatus: z.string().optional(),
+			imageUrlPath: z.string().optional(),
+			errorPath: z.string().optional(),
+			pollIntervalMs: z.number().optional(),
+			pollMaxAttempts: z.number().optional(),
+			outputFormat: z.enum(["png", "jpeg", "jpg", "webp"]).optional(),
+		})
+		.optional(),
+	vertexImageProjectId: z.string().optional(),
+	vertexImageRegion: z.string().optional(),
+	vertexImageModel: z.string().optional(),
+	vertexImageAuthMode: z.enum(["access_token", "service_account_json", "api_key"]).optional(),
+	vertexImageAccessToken: z.string().optional(),
+	vertexImageServiceAccountJson: z.string().optional(),
+	// Legacy OpenRouter image fields kept for import/migration compatibility.
+	openRouterImageApiKey: z.string().optional(),
+	openRouterImageGenerationSelectedModel: z.string().optional(),
+
+	customCondensingPrompt: z.string().optional(),
+
+	autoApprovalEnabled: z.boolean().optional(),
+	alwaysAllowReadOnly: z.boolean().optional(),
+	alwaysAllowReadOnlyOutsideWorkspace: z.boolean().optional(),
+	alwaysAllowWrite: z.boolean().optional(),
+	alwaysAllowWriteOutsideWorkspace: z.boolean().optional(),
+	alwaysAllowWriteProtected: z.boolean().optional(),
+	writeDelayMs: z.number().min(0).optional(),
+	/**
+	 * Fuzzy matching threshold for the multi-search-replace diff strategy.
+	 * Range: 0.5 (50% minimum similarity) to 1.0 (exact match only).
+	 * `@default` 1.0
+	 */
+	diffFuzzyThreshold: z.number().min(0.5).max(1).optional(),
+	requestDelaySeconds: z.number().optional(),
+	alwaysAllowMcp: z.boolean().optional(),
+	alwaysAllowModeSwitch: z.boolean().optional(),
+	alwaysAllowSubtasks: z.boolean().optional(),
+	alwaysAllowExecute: z.boolean().optional(),
+	alwaysAllowFollowupQuestions: z.boolean().optional(),
+	followupAutoApproveTimeoutMs: z.number().optional(),
+	allowedCommands: z.array(z.string()).optional(),
+	deniedCommands: z.array(z.string()).optional(),
+	commandExecutionTimeout: z.number().optional(),
+	commandTimeoutAllowlist: z.array(z.string()).optional(),
+	preventCompletionWithOpenTodos: z.boolean().optional(),
+	allowedMaxRequests: z.number().nullish(),
+	allowedMaxCost: z.number().nullish(),
+	autoCondenseContext: z.boolean().optional(),
+	autoCondenseContextPercent: z.number().optional(),
+
+	/**
+	 * Whether to include current time in the environment details
+	 * @default true
+	 */
+	includeCurrentTime: z.boolean().optional(),
+	/**
+	 * Whether to include current cost in the environment details
+	 * @default true
+	 */
+	includeCurrentCost: z.boolean().optional(),
+	/**
+	 * Maximum number of git status file entries to include in the environment details.
+	 * Set to 0 to disable git status. The header (branch, commits) is always included when > 0.
+	 * @default 0
+	 */
+	maxGitStatusFiles: z.number().optional(),
+
+	/**
+	 * Whether to include diagnostic messages (errors, warnings) in tool outputs
+	 * @default true
+	 */
+	includeDiagnosticMessages: z.boolean().optional(),
+	/**
+	 * Maximum number of diagnostic messages to include in tool outputs
+	 * @default 50
+	 */
+	maxDiagnosticMessages: z.number().optional(),
+
+	enableCheckpoints: z.boolean().optional(),
+	checkpointTimeout: z
+		.number()
+		.int()
+		.min(MIN_CHECKPOINT_TIMEOUT_SECONDS)
+		.max(MAX_CHECKPOINT_TIMEOUT_SECONDS)
+		.optional(),
+
+	ttsEnabled: z.boolean().optional(),
+	ttsSpeed: z.number().optional(),
+	soundEnabled: z.boolean().optional(),
+	soundVolume: z.number().optional(),
+
+	maxOpenTabsContext: z.number().optional(),
+	maxWorkspaceFiles: z.number().optional(),
+	showRooIgnoredFiles: z.boolean().optional(),
+	enableSubfolderRules: z.boolean().optional(),
+	maxImageFileSize: z.number().optional(),
+	maxTotalImageSize: z.number().optional(),
+
+	terminalOutputPreviewSize: z.enum(["small", "medium", "large"]).optional(),
+	terminalShellIntegrationTimeout: z.number().optional(),
+	terminalShellIntegrationDisabled: z.boolean().optional(),
+	terminalCommandDelay: z.number().optional(),
+	terminalPowershellCounter: z.boolean().optional(),
+	terminalZshClearEolMark: z.boolean().optional(),
+	terminalZshOhMy: z.boolean().optional(),
+	terminalZshP10k: z.boolean().optional(),
+	terminalZdotdir: z.boolean().optional(),
+	terminalProfile: z.string().optional(),
+	execaShellPath: z.string().optional(),
+
+	diagnosticsEnabled: z.boolean().optional(),
+	autoCloseZooOpenedFiles: z.boolean().optional(),
+	autoCloseZooOpenedFilesAfterUserEdited: z.boolean().optional(),
+	autoCloseZooOpenedNewFiles: z.boolean().optional(),
+
+	rateLimitSeconds: z.number().optional(),
+	experiments: experimentsSchema.optional(),
+
+	codebaseIndexModels: codebaseIndexModelsSchema.optional(),
+	codebaseIndexConfig: codebaseIndexConfigSchema.optional(),
+
+	language: languagesSchema.optional(),
+
+	telemetrySetting: telemetrySettingsSchema.optional(),
+
+	mcpEnabled: z.boolean().optional(),
+
+	mode: z.string().optional(),
+	modeApiConfigs: z.record(z.string(), z.string()).optional(),
+	customModes: z.array(modeConfigSchema).optional(),
+	customModePrompts: customModePromptsSchema.optional(),
+	customSupportPrompts: customSupportPromptsSchema.optional(),
+
+	enhancementApiConfigId: z.string().optional(),
+	includeTaskHistoryInEnhance: z.boolean().optional(),
+	historyPreviewCollapsed: z.boolean().optional(),
+	reasoningBlockCollapsed: z.boolean().optional(),
+	autoCollapseLongMessages: z.boolean().optional(),
+	longMessageCollapseThreshold: z.number().int().min(5).max(500).optional(),
+	autoCollapseTaskActivity: z.boolean().optional(),
+	/**
+	 * Font size (in pixels) for the Zoo Code chat/webview UI.
+	 * When unset (or `null`), the webview inherits VS Code's `--vscode-font-size`.
+	 */
+	chatFontSize: z.number().int().min(8).max(32).nullish(),
+	/**
+	 * Controls the keyboard behavior for sending messages in the chat input.
+	 * - "send": Enter sends message, Shift+Enter creates newline (default)
+	 * - "newline": Enter creates newline, Shift+Enter/Ctrl+Enter sends message
+	 * @default "send"
+	 */
+	enterBehavior: z.enum(["send", "newline"]).optional(),
+	profileThresholds: z.record(z.string(), z.number()).optional(),
+	hasOpenedModeSelector: z.boolean().optional(),
+	lastModeExportPath: z.string().optional(),
+	lastModeImportPath: z.string().optional(),
+	lastSettingsExportPath: z.string().optional(),
+	lastTaskExportPath: z.string().optional(),
+	lastImageSavePath: z.string().optional(),
+
+	/**
+	 * Path to worktree to auto-open after switching workspaces.
+	 * Used by the worktree feature to open the Roo Code sidebar in a new window.
+	 */
+	worktreeAutoOpenPath: z.string().optional(),
+	/**
+	 * Whether to show the worktree selector in the home screen.
+	 * @default true
+	 */
+	showWorktreesInHomeScreen: z.boolean().optional(),
+
+	/**
+	 * List of native tool names to globally disable.
+	 * Tools in this list will be excluded from prompt generation and rejected at execution time.
+	 */
+	disabledTools: z.array(toolNamesSchema).optional(),
+})
+
+export type GlobalSettings = z.infer<typeof globalSettingsSchema>
+
+export const GLOBAL_SETTINGS_KEYS = globalSettingsSchema.keyof().options
+
+/**
+ * RooCodeSettings
+ */
+
+export const rooCodeSettingsSchema = providerSettingsSchema.merge(globalSettingsSchema)
+
+export type RooCodeSettings = GlobalSettings & ProviderSettings
+
+/**
+ * SecretState
+ */
+export const SECRET_STATE_KEYS = [
+	"apiKey",
+	"openRouterApiKey",
+	"awsAccessKey",
+	"awsApiKey",
+	"awsSecretKey",
+	"awsSessionToken",
+	"openAiApiKey",
+	"ollamaApiKey",
+	"geminiApiKey",
+	"openAiNativeApiKey",
+	"deepSeekApiKey",
+	"moonshotApiKey",
+	"mistralApiKey",
+	"minimaxApiKey",
+	"requestyApiKey",
+	"unboundApiKey",
+	"xaiApiKey",
+	"litellmApiKey",
+	"codeIndexOpenAiKey",
+	"codeIndexQdrantApiKey",
+	"codebaseIndexOpenAiCompatibleApiKey",
+	"codebaseIndexGeminiApiKey",
+	"codebaseIndexMistralApiKey",
+	"codebaseIndexVercelAiGatewayApiKey",
+	"codebaseIndexOpenRouterApiKey",
+	"sambaNovaApiKey",
+	"zaiApiKey",
+	"fireworksApiKey",
+	"vercelAiGatewayApiKey",
+	"opencodeGoApiKey",
+	"basetenApiKey",
+	"customEndpointApiKey",
+	"vertexApiKey",
+] as const
+
+// Global secrets that are part of GlobalSettings (not ProviderSettings)
+export const GLOBAL_SECRET_KEYS = [
+	"imageGenerationApiKey", // For generic image generation
+	"vertexImageAccessToken", // For Vertex AI image generation access-token auth
+	"vertexImageServiceAccountJson", // For Vertex AI image generation service-account JSON auth
+	"openRouterImageApiKey", // Legacy image generation key
+] as const
+
+// Type for the actual secret storage keys
+type ProviderSecretKey = (typeof SECRET_STATE_KEYS)[number]
+type GlobalSecretKey = (typeof GLOBAL_SECRET_KEYS)[number]
+
+// Type representing all secrets that can be stored
+export type SecretState = Pick<ProviderSettings, Extract<ProviderSecretKey, keyof ProviderSettings>> & {
+	[K in GlobalSecretKey]?: string
+}
+
+export const isSecretStateKey = (key: string): key is Keys<SecretState> =>
+	SECRET_STATE_KEYS.includes(key as ProviderSecretKey) || GLOBAL_SECRET_KEYS.includes(key as GlobalSecretKey)
+
+/**
+ * GlobalState
+ */
+
+export type GlobalState = Omit<RooCodeSettings, Keys<SecretState>>
+
+export const GLOBAL_STATE_KEYS = [...GLOBAL_SETTINGS_KEYS, ...PROVIDER_SETTINGS_KEYS].filter(
+	(key: Keys<RooCodeSettings>) => !isSecretStateKey(key),
+) as Keys<GlobalState>[]
+
+export const isGlobalStateKey = (key: string): key is Keys<GlobalState> =>
+	GLOBAL_STATE_KEYS.includes(key as Keys<GlobalState>)
