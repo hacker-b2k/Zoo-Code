@@ -2150,6 +2150,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			await this.overwriteClineMessages(modifiedClineMessages)
 			this.clineMessages = await this.getSavedClineMessages()
 
+			// Push the full restored message history to the webview so the UI
+			// renders the previous conversation immediately on resume, rather
+			// than waiting for the user to respond to the resume prompt.
+			const resumeProvider = this.providerRef.deref()
+			if (resumeProvider) {
+				await resumeProvider.postStateToWebview()
+			}
+
 			// Now present the cline messages to the user and ask if they want to
 			// resume (NOTE: we ran into a bug before where the
 			// apiConversationHistory wouldn't be initialized when opening a old
