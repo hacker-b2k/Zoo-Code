@@ -21,6 +21,7 @@
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)                             | Deep technical architecture of the extension.                  |
 | [`DEV_SETUP.md`](DEV_SETUP.md)                                   | Zero-to-running dev environment guide.                         |
 | [`BRANCH_AND_UPSTREAM_POLICY.md`](BRANCH_AND_UPSTREAM_POLICY.md) | **Official branch model + forbidden systems + upstream rules** |
+| [`MARKETPLACE_PUBLISH.md`](MARKETPLACE_PUBLISH.md)               | Fix/setup VSCE_PAT + pre-release/stable marketplace publish    |
 
 ---
 

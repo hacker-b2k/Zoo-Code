@@ -1,9 +1,12 @@
 name: Publish Pre-release Extension
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch: # Allows manual triggering.
+  # Intentional only: baseline syncs to main must not auto-deploy.
+  # Run from Actions → "Publish Pre-release Extension" → Run workflow.
+  workflow_dispatch:
+  # Optional scheduled pre-release (UTC). Comment out if not desired.
+  # schedule:
+  #   - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -40,6 +43,31 @@ jobs:
             echo "Pre-release publishes must run from main, not ${GITHUB_REF_NAME}."
             exit 1
           fi
+
+      - name: Validate VSCE_PAT secret
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSCE_PAT secret is missing."
+            echo "Create an Azure DevOps Personal Access Token with Marketplace (Publish) scope"
+            echo "for publisher ZooCodeOrganization, then add it as a repository or"
+            echo "marketplace-prerelease environment secret named VSCE_PAT."
+            echo "Docs: docs/MARKETPLACE_PUBLISH.md"
+            exit 1
+          fi
+
+          # Empty/placeholder tokens often surface as unauthorized dummy GUIDs from Azure.
+          if [ "${#VSCE_PAT}" -lt 20 ]; then
+            echo "::error::VSCE_PAT secret is too short to be a valid Marketplace PAT."
+            echo "Replace the secret with a real Azure DevOps PAT that can publish as ZooCodeOrganization."
+            echo "Docs: docs/MARKETPLACE_PUBLISH.md"
+            exit 1
+          fi
+
+          echo "VSCE_PAT secret is present (value not logged)."
 
       - name: Set pre-release version
         id: version
@@ -105,5 +133,22 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           VERSION_NUMBER: ${{ steps.version.outputs.number }}
         run: |
-          npx @vscode/vsce publish --pre-release --packagePath "bin/zoo-code-${VERSION_NUMBER}.vsix"
+          set -euo pipefail
+          set +e
+          output=$(npx @vscode/vsce publish --pre-release --packagePath "bin/zoo-code-${VERSION_NUMBER}.vsix" 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+
+          if [ $status -ne 0 ]; then
+            if echo "$output" | grep -Eqi "Personal Access Token verification has failed|not authorized|Unauthorized|401|403"; then
+              echo "::error::Marketplace rejected VSCE_PAT for publisher ZooCodeOrganization."
+              echo "Create/replace a PAT with Marketplace Publish scope for that publisher,"
+              echo "store it as secret VSCE_PAT on the marketplace-prerelease environment,"
+              echo "then re-run this workflow from main."
+              echo "Docs: docs/MARKETPLACE_PUBLISH.md"
+            fi
+            exit $status
+          fi
+
           echo "Published ZooCodeOrganization.zoo-code ${VERSION_NUMBER} as a VS Code Marketplace pre-release"

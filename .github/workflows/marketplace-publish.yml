@@ -74,6 +74,29 @@ jobs:
           test "$package_name" = "zoo-code"
           test "$publisher" = "ZooCodeOrganization"
 
+      - name: Validate VSCE_PAT secret
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSCE_PAT secret is missing."
+            echo "Create an Azure DevOps Personal Access Token with Marketplace (Publish) scope"
+            echo "for publisher ZooCodeOrganization, then add it as a marketplace-production"
+            echo "environment secret named VSCE_PAT. Docs: docs/MARKETPLACE_PUBLISH.md"
+            exit 1
+          fi
+
+          if [ "${#VSCE_PAT}" -lt 20 ]; then
+            echo "::error::VSCE_PAT secret is too short to be a valid Marketplace PAT."
+            echo "Replace the secret with a real Azure DevOps PAT that can publish as ZooCodeOrganization."
+            echo "Docs: docs/MARKETPLACE_PUBLISH.md"
+            exit 1
+          fi
+
+          echo "VSCE_PAT secret is present (value not logged)."
+
       - name: Validate publish ref
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "main" ]; then
