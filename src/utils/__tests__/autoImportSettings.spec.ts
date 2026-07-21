@@ -1,20 +1,25 @@
-// Mock dependencies
-vi.mock("vscode", () => ({
-	workspace: {
-		getConfiguration: vi.fn(),
-	},
-	window: {
-		showInformationMessage: vi.fn(),
-		showWarningMessage: vi.fn(),
-	},
+/**
+ * Auto-import one-shot behavior.
+ *
+ * After vi.resetModules() we re-import both ./fs and the importExport module,
+ * then spy on their exports so the module under test binds to the spies.
+ * (vi.mock alone was not intercepting exports in this package layout.)
+ */
+
+const { mockGetConfiguration, mockShowInformationMessage, mockShowWarningMessage } = vi.hoisted(() => ({
+	mockGetConfiguration: vi.fn(),
+	mockShowInformationMessage: vi.fn(),
+	mockShowWarningMessage: vi.fn(),
 }))
 
-vi.mock("fs/promises", () => ({
-	__esModule: true,
-	default: {
-		readFile: vi.fn(),
+vi.mock("vscode", () => ({
+	workspace: {
+		getConfiguration: mockGetConfiguration,
 	},
-	readFile: vi.fn(),
+	window: {
+		showInformationMessage: mockShowInformationMessage,
+		showWarningMessage: mockShowWarningMessage,
+	},
 }))
 
 vi.mock("path", async (importOriginal) => {
@@ -23,13 +28,13 @@ vi.mock("path", async (importOriginal) => {
 		...actual,
 		default: {
 			...actual,
-			join: vi.fn((...args: string[]) => args.join("/")),
-			isAbsolute: vi.fn((p: string) => p.startsWith("/")),
-			basename: vi.fn((p: string) => p.split("/").pop() || ""),
+			join: (...args: string[]) => args.join("/"),
+			isAbsolute: (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p),
+			basename: (p: string) => p.split(/[\\/]/).pop() || "",
 		},
-		join: vi.fn((...args: string[]) => args.join("/")),
-		isAbsolute: vi.fn((p: string) => p.startsWith("/")),
-		basename: vi.fn((p: string) => p.split("/").pop() || ""),
+		join: (...args: string[]) => args.join("/"),
+		isAbsolute: (p: string) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p),
+		basename: (p: string) => p.split(/[\\/]/).pop() || "",
 	}
 })
 
@@ -39,135 +44,80 @@ vi.mock("os", async (importOriginal) => {
 		...actual,
 		default: {
 			...actual,
-			homedir: vi.fn(() => "/home/user"),
+			homedir: () => "/home/user",
 		},
-		homedir: vi.fn(() => "/home/user"),
+		homedir: () => "/home/user",
 	}
 })
-
-vi.mock("../fs", () => ({
-	fileExistsAtPath: vi.fn(),
-}))
-
-vi.mock("../../core/config/ProviderSettingsManager", async (importOriginal) => {
-	const originalModule = await importOriginal()
-	return {
-		__esModule: true,
-		// We need to mock the class constructor and its methods,
-		// but keep other exports (like schemas) as their original values.
-		...(originalModule || {}), // Spread original exports
-		ProviderSettingsManager: vi.fn().mockImplementation(function () {
-			return {
-				// Mock the class
-				export: vi.fn().mockResolvedValue({
-					apiConfigs: {},
-					modeApiConfigs: {},
-					currentApiConfigName: "default",
-				}),
-				import: vi.fn().mockResolvedValue({ success: true }),
-				listConfig: vi.fn().mockResolvedValue([]),
-			}
-		}),
-	}
-})
-vi.mock("../../core/config/ContextProxy")
-vi.mock("../../core/config/CustomModesManager")
-
-import { autoImportSettings } from "../autoImportSettings"
-import * as vscode from "vscode"
-import fsPromises from "fs/promises"
-import { fileExistsAtPath } from "../fs"
 
 describe("autoImportSettings", () => {
+	let autoImportSettings: typeof import("../autoImportSettings").autoImportSettings
+	let AUTO_IMPORT_COMPLETED_STATE_KEY: typeof import("../autoImportSettings").AUTO_IMPORT_COMPLETED_STATE_KEY
+	let fileExistsAtPathSpy: ReturnType<typeof vi.spyOn>
+	let importSettingsFromPathSpy: ReturnType<typeof vi.spyOn>
 	let mockProviderSettingsManager: any
 	let mockContextProxy: any
 	let mockCustomModesManager: any
 	let mockOutputChannel: any
-	let mockProvider: any
+	let mockExtensionContext: any
 
-	beforeEach(() => {
-		// Reset all mocks
-		vi.clearAllMocks()
+	const deps = () => ({
+		providerSettingsManager: mockProviderSettingsManager,
+		contextProxy: mockContextProxy,
+		customModesManager: mockCustomModesManager,
+	})
 
-		// Mock output channel
-		mockOutputChannel = {
-			appendLine: vi.fn(),
+	beforeEach(async () => {
+		vi.resetModules()
+		mockGetConfiguration.mockReset()
+		mockShowInformationMessage.mockReset()
+		mockShowWarningMessage.mockReset()
+
+		mockOutputChannel = { appendLine: vi.fn() }
+		mockProviderSettingsManager = { export: vi.fn(), import: vi.fn(), listConfig: vi.fn() }
+		mockContextProxy = { setValues: vi.fn(), setValue: vi.fn(), setProviderSettings: vi.fn() }
+		mockCustomModesManager = { updateCustomMode: vi.fn() }
+		mockExtensionContext = {
+			globalState: {
+				get: vi.fn().mockReturnValue(undefined),
+				update: vi.fn().mockResolvedValue(undefined),
+			},
 		}
 
-		// Mock provider settings manager
-		mockProviderSettingsManager = {
-			export: vi.fn().mockResolvedValue({
-				apiConfigs: {},
-				modeApiConfigs: {},
-				currentApiConfigName: "default",
-			}),
-			import: vi.fn().mockResolvedValue({ success: true }),
-			listConfig: vi.fn().mockResolvedValue([]),
-		}
+		const fsMod = await import("../fs")
+		fileExistsAtPathSpy = vi.spyOn(fsMod, "fileExistsAtPath").mockResolvedValue(false)
 
-		// Mock context proxy
-		mockContextProxy = {
-			setValues: vi.fn().mockResolvedValue(undefined),
-			setValue: vi.fn().mockResolvedValue(undefined),
-			setProviderSettings: vi.fn().mockResolvedValue(undefined),
-		}
+		const importExportMod = await import("../../core/config/importExport")
+		importSettingsFromPathSpy = vi
+			.spyOn(importExportMod, "importSettingsFromPath")
+			.mockResolvedValue({ success: true } as any)
 
-		// Mock custom modes manager
-		mockCustomModesManager = {
-			updateCustomMode: vi.fn().mockResolvedValue(undefined),
-		}
-
-		// mockProvider must be initialized AFTER its dependencies
-		mockProvider = {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			upsertProviderProfile: vi.fn().mockResolvedValue({ success: true }),
-			postStateToWebview: vi.fn().mockResolvedValue({ success: true }),
-		}
-
-		// Reset fs mock
-		vi.mocked(fsPromises.readFile).mockReset()
-		vi.mocked(fileExistsAtPath).mockReset()
-		vi.mocked(vscode.workspace.getConfiguration).mockReset()
-		vi.mocked(vscode.window.showInformationMessage).mockReset()
-		vi.mocked(vscode.window.showWarningMessage).mockReset()
+		const mod = await import("../autoImportSettings")
+		autoImportSettings = mod.autoImportSettings
+		AUTO_IMPORT_COMPLETED_STATE_KEY = mod.AUTO_IMPORT_COMPLETED_STATE_KEY
 	})
 
 	afterEach(() => {
-		vi.restoreAllMocks()
+		fileExistsAtPathSpy?.mockRestore()
+		importSettingsFromPathSpy?.mockRestore()
 	})
 
 	it("should skip auto-import when no settings path is specified", async () => {
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(""),
-		} as any)
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("") })
 
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps())
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] No auto-import settings path specified, skipping auto-import",
 		)
-		expect(mockProviderSettingsManager.import).not.toHaveBeenCalled()
+		expect(importSettingsFromPathSpy).not.toHaveBeenCalled()
 	})
 
 	it("should skip auto-import when settings file does not exist", async () => {
-		const settingsPath = "~/Documents/roo-config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("~/Documents/roo-config.json") })
+		fileExistsAtPathSpy.mockResolvedValue(false)
 
-		// Mock fileExistsAtPath to return false
-		vi.mocked(fileExistsAtPath).mockResolvedValue(false)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps())
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Checking for settings file at: /home/user/Documents/roo-config.json",
@@ -175,84 +125,59 @@ describe("autoImportSettings", () => {
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Settings file not found at /home/user/Documents/roo-config.json, skipping auto-import",
 		)
-		expect(mockProviderSettingsManager.import).not.toHaveBeenCalled()
+		expect(importSettingsFromPathSpy).not.toHaveBeenCalled()
 	})
 
-	it("should successfully import settings when file exists and is valid", async () => {
-		const settingsPath = "/absolute/path/to/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
+	it("should successfully import settings once and record one-shot marker", async () => {
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("/absolute/path/to/config.json") })
+		fileExistsAtPathSpy.mockResolvedValue(true)
+		importSettingsFromPathSpy.mockResolvedValue({ success: true } as any)
 
-		// Mock fileExistsAtPath to return true
-		vi.mocked(fileExistsAtPath).mockResolvedValue(true)
+		await autoImportSettings(mockOutputChannel, deps(), mockExtensionContext)
 
-		// Mock fs.readFile to return valid config
-		const mockSettings = {
-			providerProfiles: {
-				currentApiConfigName: "test-config",
-				apiConfigs: {
-					"test-config": {
-						apiProvider: "anthropic",
-						anthropicApiKey: "test-key",
-					},
-				},
-			},
-			globalSettings: {
-				customInstructions: "Test instructions",
-			},
-		}
-
-		vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(mockSettings) as any)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
-
-		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
-			"[AutoImport] Checking for settings file at: /absolute/path/to/config.json",
-		)
+		expect(fileExistsAtPathSpy).toHaveBeenCalledWith("/absolute/path/to/config.json")
+		expect(importSettingsFromPathSpy).toHaveBeenCalledWith("/absolute/path/to/config.json", deps())
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Successfully imported settings from /absolute/path/to/config.json",
 		)
-		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("info.auto_import_success")
-		expect(mockProviderSettingsManager.import).toHaveBeenCalled()
-		expect(mockContextProxy.setValues).toHaveBeenCalled()
+		expect(mockShowInformationMessage).toHaveBeenCalledWith("info.auto_import_success")
+		expect(mockExtensionContext.globalState.update).toHaveBeenCalledWith(AUTO_IMPORT_COMPLETED_STATE_KEY, true)
 	})
 
-	it("should log import warnings while still succeeding", async () => {
-		const settingsPath = "/absolute/path/to/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
+	it("should skip re-import when one-shot marker is already set", async () => {
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("/absolute/path/to/config.json") })
+		mockExtensionContext.globalState.get.mockReturnValue(true)
+		fileExistsAtPathSpy.mockResolvedValue(true)
+
+		await autoImportSettings(mockOutputChannel, deps(), mockExtensionContext)
+
+		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
+			"[AutoImport] Auto-import already completed for this installation; skipping re-import so deleted provider profiles stay deleted",
+		)
+		expect(importSettingsFromPathSpy).not.toHaveBeenCalled()
+		expect(fileExistsAtPathSpy).not.toHaveBeenCalled()
+	})
+
+	it("should not set one-shot marker when import fails", async () => {
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("~/config.json") })
+		fileExistsAtPathSpy.mockResolvedValue(true)
+		importSettingsFromPathSpy.mockResolvedValue({ success: false, error: "bad json" } as any)
+
+		await autoImportSettings(mockOutputChannel, deps(), mockExtensionContext)
+
+		expect(mockExtensionContext.globalState.update).not.toHaveBeenCalled()
+		expect(mockShowWarningMessage).toHaveBeenCalledWith(expect.stringContaining("warnings.auto_import_failed"))
+	})
+
+	it("should log import warnings while still succeeding and set one-shot marker", async () => {
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("/absolute/path/to/config.json") })
+		fileExistsAtPathSpy.mockResolvedValue(true)
+		importSettingsFromPathSpy.mockResolvedValue({
+			success: true,
+			warnings: ['Setting "globalSettings.imageGenerationProvider" used unsupported value "roo"'],
 		} as any)
 
-		vi.mocked(fileExistsAtPath).mockResolvedValue(true)
-
-		const mockSettings = {
-			providerProfiles: {
-				currentApiConfigName: "test-config",
-				apiConfigs: {
-					"test-config": {
-						apiProvider: "anthropic",
-						anthropicApiKey: "test-key",
-					},
-				},
-			},
-			globalSettings: {
-				imageGenerationProvider: "roo",
-				customInstructions: "Test instructions",
-			},
-		}
-
-		vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(mockSettings) as any)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps(), mockExtensionContext)
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Successfully imported settings from /absolute/path/to/config.json",
@@ -263,54 +188,14 @@ describe("autoImportSettings", () => {
 				'[AutoImport] Warning: Setting "globalSettings.imageGenerationProvider" used unsupported value "roo"',
 			),
 		)
-		expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("info.auto_import_success")
-		expect(mockContextProxy.setValues).toHaveBeenCalledWith({
-			imageGenerationProvider: undefined,
-			customInstructions: "Test instructions",
-		})
-	})
-
-	it("should handle invalid JSON gracefully", async () => {
-		const settingsPath = "~/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
-
-		// Mock fileExistsAtPath to return true
-		vi.mocked(fileExistsAtPath).mockResolvedValue(true)
-
-		// Mock fs.readFile to return invalid JSON
-		vi.mocked(fsPromises.readFile).mockResolvedValue("invalid json" as any)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
-
-		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
-			expect.stringContaining("[AutoImport] Failed to import settings:"),
-		)
-		expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-			expect.stringContaining("warnings.auto_import_failed"),
-		)
-		expect(mockProviderSettingsManager.import).not.toHaveBeenCalled()
+		expect(mockShowInformationMessage).toHaveBeenCalledWith("info.auto_import_success")
+		expect(mockExtensionContext.globalState.update).toHaveBeenCalledWith(AUTO_IMPORT_COMPLETED_STATE_KEY, true)
 	})
 
 	it("should resolve home directory paths correctly", async () => {
-		const settingsPath = "~/Documents/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("~/Documents/config.json") })
 
-		// Mock fileExistsAtPath to return false (so we can check the resolved path)
-		vi.mocked(fileExistsAtPath).mockResolvedValue(false)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps())
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Checking for settings file at: /home/user/Documents/config.json",
@@ -318,19 +203,9 @@ describe("autoImportSettings", () => {
 	})
 
 	it("should handle relative paths by resolving them to home directory", async () => {
-		const settingsPath = "Documents/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("Documents/config.json") })
 
-		// Mock fileExistsAtPath to return false (so we can check the resolved path)
-		vi.mocked(fileExistsAtPath).mockResolvedValue(false)
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps())
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			"[AutoImport] Checking for settings file at: /home/user/Documents/config.json",
@@ -338,23 +213,14 @@ describe("autoImportSettings", () => {
 	})
 
 	it("should handle file system errors gracefully", async () => {
-		const settingsPath = "~/config.json"
-		vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-			get: vi.fn().mockReturnValue(settingsPath),
-		} as any)
+		mockGetConfiguration.mockReturnValue({ get: vi.fn().mockReturnValue("~/config.json") })
+		fileExistsAtPathSpy.mockRejectedValue(new Error("File system error"))
 
-		// Mock fileExistsAtPath to throw an error
-		vi.mocked(fileExistsAtPath).mockRejectedValue(new Error("File system error"))
-
-		await autoImportSettings(mockOutputChannel, {
-			providerSettingsManager: mockProviderSettingsManager,
-			contextProxy: mockContextProxy,
-			customModesManager: mockCustomModesManager,
-		})
+		await autoImportSettings(mockOutputChannel, deps())
 
 		expect(mockOutputChannel.appendLine).toHaveBeenCalledWith(
 			expect.stringContaining("[AutoImport] Unexpected error during auto-import:"),
 		)
-		expect(mockProviderSettingsManager.import).not.toHaveBeenCalled()
+		expect(importSettingsFromPathSpy).not.toHaveBeenCalled()
 	})
 })

@@ -285,11 +285,15 @@ export async function activate(context: vscode.ExtensionContext) {
 		outputChannel.appendLine(`[Worktree] Error: ${error}`)
 	})
 
-	void autoImportSettings(outputChannel, {
-		providerSettingsManager: provider.providerSettingsManager,
-		contextProxy: provider.contextProxy,
-		customModesManager: provider.customModesManager,
-	}).catch((error) => {
+	void autoImportSettings(
+		outputChannel,
+		{
+			providerSettingsManager: provider.providerSettingsManager,
+			contextProxy: provider.contextProxy,
+			customModesManager: provider.customModesManager,
+		},
+		context,
+	).catch((error) => {
 		outputChannel.appendLine(`[AutoImport] Error: ${error}`)
 	})
 

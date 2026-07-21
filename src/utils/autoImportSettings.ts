@@ -8,14 +8,24 @@ import { t } from "../i18n"
 
 import { importSettingsFromPath, ImportOptions } from "../core/config/importExport"
 
+/** Extension globalState key: auto-import is one-shot so deleted profiles stay deleted. */
+export const AUTO_IMPORT_COMPLETED_STATE_KEY = "zooCodeAutoImportCompleted"
+
 /**
- * Automatically imports RooCode settings from a specified path if it exists.
+ * Automatically imports ZooCode settings from a specified path if it exists.
  * This function is called during extension activation to allow users to pre-configure
  * their settings by placing a settings file at a predefined location.
+ *
+ * Auto-import is intentionally one-shot: after a successful import, it will not run
+ * again for this installation. Re-importing on every activation merged a seed file
+ * (e.g. demo free providers) back into provider storage, so deleted profiles reappeared
+ * after reload / reinstall of the extension while the VS Code user setting still pointed
+ * at the seed file.
  */
 export async function autoImportSettings(
 	outputChannel: vscode.OutputChannel,
 	{ providerSettingsManager, contextProxy, customModesManager }: ImportOptions,
+	extensionContext?: vscode.ExtensionContext,
 ): Promise<void> {
 	try {
 		// Get the auto-import settings path from VSCode settings
@@ -23,6 +33,13 @@ export async function autoImportSettings(
 
 		if (!settingsPath || settingsPath.trim() === "") {
 			outputChannel.appendLine("[AutoImport] No auto-import settings path specified, skipping auto-import")
+			return
+		}
+
+		if (extensionContext?.globalState.get<boolean>(AUTO_IMPORT_COMPLETED_STATE_KEY)) {
+			outputChannel.appendLine(
+				"[AutoImport] Auto-import already completed for this installation; skipping re-import so deleted provider profiles stay deleted",
+			)
 			return
 		}
 
@@ -44,6 +61,12 @@ export async function autoImportSettings(
 		})
 
 		if (result.success) {
+			// Persist one-shot marker before notifying so a later crash mid-notify
+			// does not re-import and resurrect deleted profiles.
+			if (extensionContext) {
+				await extensionContext.globalState.update(AUTO_IMPORT_COMPLETED_STATE_KEY, true)
+			}
+
 			outputChannel.appendLine(`[AutoImport] Successfully imported settings from ${resolvedPath}`)
 
 			if (result.warnings && result.warnings.length > 0) {
