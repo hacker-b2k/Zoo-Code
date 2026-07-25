@@ -3,6 +3,7 @@ import * as path from "path"
 import * as diff from "diff"
 import { RooIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/RooIgnoreController"
 import { RooProtectedController } from "../protect/RooProtectedController"
+import type { ActionIntent } from "./detectActionIntent"
 
 export const formatResponse = {
 	toolDenied: () =>
@@ -39,12 +40,47 @@ export const formatResponse = {
 			suggestion: "Try to continue without this file, or ask the user to update the .rooignore file",
 		}),
 
-	noToolsUsed: () => {
+	/**
+	 * Recovery prompt for a turn that produced text/reasoning but no tool call.
+	 *
+	 * When the user's request was classified as actionable, the retry names the
+	 * detected intent and the expected tool category. Re-sending an identical
+	 * context-free sentence to a model that has already misjudged the turn gives
+	 * it nothing new to act on, which is how a task stalls until the mistake
+	 * limit is reached.
+	 *
+	 * `intent` is undefined for questions and explanations, in which case the
+	 * original generic wording is used unchanged — a conversational turn must
+	 * not be pushed into calling a tool.
+	 */
+	noToolsUsed: (intent?: ActionIntent, attemptCount?: number) => {
 		const instructions = getToolInstructionsReminder()
 
-		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
+		const intentSection = intent
+			? `
 
+# Detected Intent
+
+The user's request requires you to ${intent.summary} (signal: "${intent.matchedVerb}").
+This is an action, not a question. An explanation alone does not satisfy it.
+
+Expected tool category: ${intent.category}
+Appropriate tools: ${intent.expectedTools.join(", ")}
+
+Call one of these tools now. If one of them is not the right fit, call a different tool that performs the action — but do not reply with prose describing what should be done instead of doing it.`
+			: ""
+
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `
+
+⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. You MUST invoke a tool in this response. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
+				: ""
+
+		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
+${intentSection}
 ${instructions}
+${escalation}
 
 # Next Steps
 
@@ -60,10 +96,15 @@ Otherwise, if you have not completed the task and do not need additional informa
 			feedback,
 		}),
 
-	missingToolParameterError: (paramName: string) => {
+	missingToolParameterError: (paramName: string, toolName?: string, attemptCount?: number) => {
 		const instructions = getToolInstructionsReminder()
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `\n\n⚠️ CRITICAL: This is attempt ${attemptCount}. You MUST provide ALL required parameters in this call. Do NOT call this tool again with missing values. Read the tool schema carefully.`
+				: ""
+		const toolRef = toolName ? ` for tool '${toolName}'` : ""
 
-		return `Missing value for required parameter '${paramName}'. Please retry with complete response.\n\n${instructions}`
+		return `Missing value for required parameter '${paramName}'${toolRef}. You must provide a non-empty string value for this parameter.${escalation}\n\n${instructions}`
 	},
 
 	invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
@@ -220,7 +261,12 @@ const toolUseInstructionsReminderNative = `# Reminder: Instructions for Tool Use
 
 Tools are invoked using the platform's native tool calling mechanism. Each tool requires specific parameters as defined in the tool descriptions. Refer to the tool definitions provided in your system instructions for the correct parameter structure and usage examples.
 
-Always ensure you provide all required parameters for the tool you wish to use.`
+Always ensure you provide all required parameters for the tool you wish to use.
+
+Acting outranks describing. When a tool can perform what the user asked for, call
+it instead of explaining how it would be done — a description of the change is
+not the change. Reserve prose-only replies for questions, explanations, and
+genuine ambiguity that ask_followup_question should resolve.`
 
 /**
  * Gets the tool use instructions reminder.

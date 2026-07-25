@@ -78,6 +78,17 @@ export async function getCacheDirectoryPath(globalStoragePath: string): Promise<
 }
 
 /**
+ * Gets the root directory for virtual Spec Workspace storage.
+ * Specs live under extension storage (or customStoragePath), never under the project tree.
+ */
+export async function getSpecsDirectoryPath(globalStoragePath: string): Promise<string> {
+	const basePath = await getStorageBasePath(globalStoragePath)
+	const specsDir = path.join(basePath, "specs")
+	await fs.mkdir(specsDir, { recursive: true })
+	return specsDir
+}
+
+/**
  * Prompts the user to set a custom storage path
  * Displays an input box allowing the user to enter a custom path
  */

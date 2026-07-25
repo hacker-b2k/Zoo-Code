@@ -89,6 +89,11 @@ export const toolNames = [
 	"toggle_mcp_server",
 	"delete_mcp_server",
 	"refresh_mcp_servers",
+	// Virtual Spec Workspace (F-004 / F-022) — globalStorage only, never project files
+	"list_specs",
+	"read_spec",
+	"write_spec",
+	"delete_spec",
 ] as const
 
 export const toolNamesSchema = z.enum(toolNames)

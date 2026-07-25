@@ -63,6 +63,7 @@ import { Mode, defaultModeSlug, getModeBySlug } from "../../shared/modes"
 import { experimentDefault } from "../../shared/experiments"
 import { formatLanguage } from "../../shared/language"
 import { WebviewMessage } from "../../shared/WebviewMessage"
+import { type SelectionContextAction } from "../specs/selection/SelectionContextStore"
 import { EMBEDDING_MODEL_PROFILES } from "../../shared/embeddingModels"
 import { ProfileValidator } from "../../shared/ProfileValidator"
 
@@ -812,6 +813,22 @@ export class ClineProvider
 		}
 
 		return false
+	}
+
+	/** Attaches a selection context as a removable pill — no text is inserted into the chat input. */
+	public async prepareSpecSelectionAction(
+		action: SelectionContextAction,
+		selectionContextToken: string,
+	): Promise<void> {
+		await this.postMessageToWebview({ type: "action", action: "chatButtonClicked" })
+		await this.postMessageToWebview({
+			type: "invoke",
+			invoke: "setChatBoxMessage",
+			text: "",
+			selectionContextToken,
+			selectionContextAction: action,
+		})
+		await this.postMessageToWebview({ type: "action", action: "focusInput" })
 	}
 
 	public static async handleCodeAction(

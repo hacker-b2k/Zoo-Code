@@ -12,8 +12,10 @@ import { toolGroups, deprecatedToolGroups } from "./tool.js"
 import { groupOptionsSchema, modeConfigSchema } from "./mode.js"
 
 // Build a ToolGroup enum that includes deprecated groups so existing configs
-// still validate.
-const allToolGroups = [...toolGroups, ...deprecatedToolGroups] as [string, ...string[]]
+// still validate. Deduplicated: a group may be listed as deprecated while still
+// being active (e.g. "browser"), and JSON Schema rejects an enum with duplicate
+// items, which would make the generated schema fail to compile.
+const allToolGroups = [...new Set<string>([...toolGroups, ...deprecatedToolGroups])] as [string, ...string[]]
 const allToolGroupsSchema = z.enum(allToolGroups)
 
 // Build a GroupEntry schema that uses the extended tool group list.

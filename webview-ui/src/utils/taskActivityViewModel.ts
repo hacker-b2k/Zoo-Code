@@ -8,13 +8,20 @@
  *
  * Flow:
  *   messages → classifyActivity() / summarizeActivity() → deriveTaskActivityViewModel()
- *     → { isActive, headerMode, currentStatus, summary, stepCount }
+ *     → { isActive, headerMode, currentStatus, statusLabel, summary, stepCount }
  *       → TaskActivityGroup renders
  */
 
 import type { ClineMessage } from "@roo-code/types"
+import { safeJsonParse } from "@roo/core"
 
-import { classifyActivity, summarizeActivity, type ActivityStatusKey, type ActivitySummary } from "./taskActivityStatus"
+import {
+	classifyActivity,
+	formatDeleteSpecProgress,
+	summarizeActivity,
+	type ActivityStatusKey,
+	type ActivitySummary,
+} from "./taskActivityStatus"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +34,8 @@ import { classifyActivity, summarizeActivity, type ActivityStatusKey, type Activ
  * - `currentStatus`: i18n translation key for the realtime activity label
  *   (e.g. "thinking", "reading", "editing"). Only meaningful when headerMode
  *   is "active", but always populated for consistency.
+ * - `statusLabel`: optional override label (e.g. "Deleting 2/20 specs") when
+ *   progress text is more specific than the i18n status key.
  * - `summary`: aggregated operation counts. Only meaningful when headerMode
  *   is "finished", but always populated for consistency.
  * - `stepCount`: total number of messages in the group.
@@ -35,6 +44,8 @@ export interface TaskActivityViewModel {
 	isActive: boolean
 	headerMode: "active" | "finished"
 	currentStatus: ActivityStatusKey
+	/** When set, badge shows this text instead of i18n status key. */
+	statusLabel?: string
 	summary: ActivitySummary
 	stepCount: number
 }
@@ -52,11 +63,32 @@ export interface TaskActivityViewModel {
  * classifyActivity or summarizeActivity directly.
  */
 export function deriveTaskActivityViewModel(messages: ClineMessage[], isActive: boolean): TaskActivityViewModel {
+	const currentStatus = classifyActivity(messages)
 	return {
 		isActive,
 		headerMode: isActive ? "active" : "finished",
-		currentStatus: classifyActivity(messages),
+		currentStatus,
+		statusLabel: extractStatusLabel(messages, currentStatus),
 		summary: summarizeActivity(messages),
 		stepCount: messages.length,
 	}
+}
+
+/** Latest delete_spec progress text when activity is deletingSpec. */
+function extractStatusLabel(messages: ClineMessage[], status: ActivityStatusKey): string | undefined {
+	if (status !== "deletingSpec") return undefined
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i]
+		if (msg.type !== "say" || msg.say !== "tool" || !msg.text) continue
+		const parsed = safeJsonParse<{
+			tool?: string
+			action?: string
+			index?: number
+			total?: number
+		}>(msg.text)
+		if (parsed?.tool !== "delete_spec") continue
+		const label = formatDeleteSpecProgress(parsed)
+		if (label) return label
+	}
+	return undefined
 }

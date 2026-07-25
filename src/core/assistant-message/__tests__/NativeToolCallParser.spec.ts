@@ -423,6 +423,106 @@ describe("NativeToolCallParser", () => {
 				const collectResult = NativeToolCallParser.finalizeStreamingToolCall(collectId) as any
 				expect(collectResult?.nativeArgs).toEqual({ unread_only: true })
 			})
+
+			it("should finalize write_spec / read_spec / list_specs with nativeArgs (F-004 regression)", () => {
+				const writeId = "toolu_write_spec"
+				NativeToolCallParser.startStreamingToolCall(writeId, "write_spec")
+				NativeToolCallParser.processStreamingChunk(
+					writeId,
+					JSON.stringify({
+						title: "Test Spec",
+						spec_id: null,
+						doc: "design",
+						content: "# Design\n\nHello\n",
+					}),
+				)
+				const writeResult = NativeToolCallParser.finalizeStreamingToolCall(writeId) as any
+				expect(writeResult?.type).toBe("tool_use")
+				expect(writeResult?.nativeArgs).toEqual({
+					title: "Test Spec",
+					spec_id: null,
+					doc: "design",
+					content: "# Design\n\nHello\n",
+				})
+
+				const readId = "toolu_read_spec"
+				NativeToolCallParser.startStreamingToolCall(readId, "read_spec")
+				NativeToolCallParser.processStreamingChunk(readId, JSON.stringify({ spec_id: null, doc: "design" }))
+				const readResult = NativeToolCallParser.finalizeStreamingToolCall(readId) as any
+				expect(readResult?.nativeArgs).toEqual({ spec_id: null, doc: "design" })
+
+				const listId = "toolu_list_specs"
+				NativeToolCallParser.startStreamingToolCall(listId, "list_specs")
+				NativeToolCallParser.processStreamingChunk(listId, JSON.stringify({}))
+				const listResult = NativeToolCallParser.finalizeStreamingToolCall(listId) as any
+				expect(listResult?.nativeArgs).toEqual({})
+			})
+		})
+	})
+
+	describe("parseToolCall F-004 specs", () => {
+		it("should parse write_spec create payload with nativeArgs", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_parse",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Test Spec",
+					spec_id: null,
+					doc: "design",
+					content: "# Design\n",
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs).toEqual({
+				title: "Test Spec",
+				spec_id: null,
+				doc: "design",
+				content: "# Design\n",
+			})
+		})
+
+		it('coerces string "null" spec_id to null for write_spec create (F-005e)', () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_string_null",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "New Pack",
+					spec_id: "null",
+					doc: "requirements",
+					content: "# Requirements\n",
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs).toEqual({
+				title: "New Pack",
+				spec_id: null,
+				doc: "requirements",
+				content: "# Requirements\n",
+			})
+		})
+
+		it("preserves real write_spec / read_spec spec_id strings", () => {
+			const write = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_real",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Existing",
+					spec_id: "abc-123-real",
+					doc: "design",
+					content: "# Design\n",
+				}),
+			}) as any
+			expect(write?.nativeArgs?.spec_id).toBe("abc-123-real")
+
+			const read = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_real",
+				name: "read_spec",
+				arguments: JSON.stringify({
+					spec_id: "abc-123-real",
+					doc: "design",
+				}),
+			}) as any
+			expect(read?.nativeArgs?.spec_id).toBe("abc-123-real")
 		})
 	})
 

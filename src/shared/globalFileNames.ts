@@ -6,4 +6,8 @@ export const GlobalFileNames = {
 	taskMetadata: "task_metadata.json",
 	historyItem: "history_item.json",
 	historyIndex: "_index.json",
+	/** Spec workspace metadata (F-001 Virtual Spec Documents) */
+	specMeta: "meta.json",
+	/** Per-workspace index of virtual specs */
+	specIndex: "index.json",
 }

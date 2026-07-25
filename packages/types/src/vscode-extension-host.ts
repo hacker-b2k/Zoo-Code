@@ -108,6 +108,10 @@ export interface ExtensionMessage {
 		| "fileContent"
 		| "rooHistoryImportProgress"
 	text?: string
+	/** Opaque, one-use context token associated with a visible chat prefill. */
+	selectionContextToken?: string
+	/** The AI selection action type (rewrite/improve/remove/custom) for pill rendering. */
+	selectionContextAction?: string
 	/** For fileContent: { path, content, error? } */
 	fileContent?: { path: string; content: string | null; error?: string }
 	payload?: any // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -668,6 +672,8 @@ export interface WebviewMessage {
 		| "renameTask"
 	text?: string
 	taskId?: string
+	/** Opaque, one-use context token associated with a visible chat prefill. */
+	selectionContextToken?: string
 	editedMessageContent?: string
 	tab?: "settings" | "history" | "mcp" | "modes" | "chat" | "marketplace" | "cloud"
 	disabled?: boolean
@@ -878,7 +884,25 @@ export interface ClineSayTool {
 		| "listMcpConfig"
 		| "getMcpServer"
 		| "refreshMcpServers"
+		// Virtual Spec Workspace tools (F-004 / F-019 / F-022 activity mapping)
+		| "list_specs"
+		| "read_spec"
+		| "write_spec"
+		| "delete_spec"
 	path?: string
+	/** write_spec / read_spec document kind */
+	doc?: string
+	/** write_spec: create|write; delete_spec: delete|delete_bulk|delete_progress */
+	action?: string
+	/** write_spec pack title (create) / delete_spec title */
+	title?: string
+	/** write_spec / delete_spec pack id */
+	specId?: string
+	/** F-022b bulk delete progress */
+	index?: number
+	total?: number
+	count?: number
+	explicitBulk?: boolean
 	// For readCommandOutput
 	readStart?: number
 	readEnd?: number

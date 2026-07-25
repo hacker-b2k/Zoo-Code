@@ -38,6 +38,10 @@ import edit_file from "./edit_file"
 import searchFiles from "./search_files"
 import switchMode from "./switch_mode"
 import updateTodoList from "./update_todo_list"
+import listSpecs from "./list_specs"
+import readSpec from "./read_spec"
+import writeSpec from "./write_spec"
+import deleteSpec from "./delete_spec"
 import writeToFile from "./write_to_file"
 import listProviderProfiles from "./list_provider_profiles"
 import getProviderProfile from "./get_provider_profile"
@@ -120,6 +124,10 @@ export function getNativeTools(options: NativeToolsOptions = {}): OpenAI.Chat.Ch
 		searchFiles,
 		switchMode,
 		updateTodoList,
+		listSpecs,
+		readSpec,
+		writeSpec,
+		deleteSpec,
 		writeToFile,
 		// Provider tools: manage first so models prioritize one-shot upsert over list/explore
 		manageProviderProfile,

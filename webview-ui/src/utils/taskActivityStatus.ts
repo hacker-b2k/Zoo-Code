@@ -41,6 +41,16 @@ export type ActivityStatusKey =
 	| "condensingContext"
 	| "retrying"
 	| "waiting"
+	// Virtual Spec Workspace (F-019 / F-022)
+	| "listingSpecs"
+	| "readingSpec"
+	| "creatingSpec"
+	| "updatingSpec"
+	| "deletingSpec"
+	| "updatingRequirements"
+	| "savingDesign"
+	| "updatingTasks"
+	| "managingSpecs"
 	| "activity"
 
 /**
@@ -151,7 +161,7 @@ function classifyAskMessage(msg: ClineMessage): ActivityStatusKey | null {
 			// Parse the tool name from the ask payload.
 			const parsed = safeJsonParse<ClineSayTool>(msg.text)
 			if (parsed?.tool) {
-				return classifyToolName(parsed.tool)
+				return classifyToolPayload(parsed)
 			}
 			return "usingTool"
 		}
@@ -170,9 +180,60 @@ function classifyAskMessage(msg: ClineMessage): ActivityStatusKey | null {
 function classifyToolSay(msg: ClineMessage): ActivityStatusKey {
 	const parsed = safeJsonParse<ClineSayTool>(msg.text)
 	if (parsed?.tool) {
-		return classifyToolName(parsed.tool)
+		return classifyToolPayload(parsed)
 	}
 	return "usingTool"
+}
+
+/**
+ * Map Spec Workspace tool payloads (F-019) and other tools to ActivityStatusKey.
+ * write_spec uses action/doc for finer labels when present.
+ */
+function classifyToolPayload(parsed: ClineSayTool): ActivityStatusKey {
+	const toolName = parsed.tool
+	if (toolName === "list_specs") {
+		return "listingSpecs"
+	}
+	if (toolName === "read_spec") {
+		return "readingSpec"
+	}
+	if (toolName === "write_spec") {
+		if (parsed.action === "create") {
+			return "creatingSpec"
+		}
+		const doc = typeof parsed.doc === "string" ? parsed.doc.trim().toLowerCase() : ""
+		if (doc === "requirements") {
+			return "updatingRequirements"
+		}
+		if (doc === "design") {
+			return "savingDesign"
+		}
+		if (doc === "tasks") {
+			return "updatingTasks"
+		}
+		// action=write without a known doc → generic update; bare payload → managing
+		if (parsed.action === "write") {
+			return "updatingSpec"
+		}
+		return "managingSpecs"
+	}
+	if (toolName === "delete_spec") {
+		// F-022b: progress payloads include index/total for "Deleting i/n"
+		return "deletingSpec"
+	}
+	return classifyToolName(toolName)
+}
+
+/**
+ * Build a progress suffix for delete_spec activity labels when index/total present.
+ * e.g. "Deleting 2/20 specs"
+ */
+export function formatDeleteSpecProgress(parsed: { index?: number; total?: number; action?: string }): string | null {
+	if (parsed.action !== "delete_progress") return null
+	const index = typeof parsed.index === "number" ? parsed.index : 0
+	const total = typeof parsed.total === "number" ? parsed.total : 0
+	if (index < 1 || total < 1) return null
+	return `Deleting ${index}/${total} specs`
 }
 
 /**
@@ -218,6 +279,18 @@ function classifyToolName(toolName: string): ActivityStatusKey {
 
 		case "updateTodoList":
 			return "updatingTodos"
+
+		case "list_specs":
+			return "listingSpecs"
+
+		case "read_spec":
+			return "readingSpec"
+
+		case "write_spec":
+			return "managingSpecs"
+
+		case "delete_spec":
+			return "deletingSpec"
 
 		case "switchMode":
 		case "readCommandOutput":

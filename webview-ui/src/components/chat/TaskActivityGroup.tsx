@@ -50,17 +50,16 @@ export interface TaskActivityGroupProps {
  * Renders the current activity label (e.g. "THINKING", "READING", "EDITING")
  * from the i18n status key provided by the view-model.
  */
-function ActiveStatusBadge({ statusKey }: { statusKey: string }) {
+function ActiveStatusBadge({ statusKey, label }: { statusKey: string; label?: string }) {
 	const { t } = useTranslation()
+	const text = label ?? t(`chat:taskActivity.status.${statusKey}`)
 	return (
 		<span className="ml-auto flex items-center gap-1.5 shrink-0">
 			<span className="relative flex h-2 w-2">
 				<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-vscode-textLink-foreground opacity-75" />
 				<span className="relative inline-flex rounded-full h-2 w-2 bg-vscode-textLink-foreground" />
 			</span>
-			<span className="text-xs font-medium text-vscode-textLink-foreground uppercase tracking-wider">
-				{t(`chat:taskActivity.status.${statusKey}`)}
-			</span>
+			<span className="text-xs font-medium text-vscode-textLink-foreground uppercase tracking-wider">{text}</span>
 		</span>
 	)
 }
@@ -173,7 +172,7 @@ const TaskActivityGroup = memo(
 						— {t("chat:taskActivity.stepCount", { count: viewModel.stepCount })}
 					</span>
 					{isCollapsed && viewModel.headerMode === "active" && (
-						<ActiveStatusBadge statusKey={viewModel.currentStatus} />
+						<ActiveStatusBadge statusKey={viewModel.currentStatus} label={viewModel.statusLabel} />
 					)}
 					{isCollapsed && viewModel.headerMode === "finished" && <SummaryStats summary={viewModel.summary} />}
 				</button>

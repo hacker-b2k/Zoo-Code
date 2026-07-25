@@ -90,6 +90,33 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * F-005e / ISSUES_REPORT: models pass string sentinels for nullable spec_id
+	 * ("null", "undefined", "None", "nil") instead of JSON null.
+	 * F-006b: truncated display ids (… / ...) are left as-is so tools can reject with a clear error.
+	 */
+	private static coerceOptionalSpecId(value: unknown): string | null {
+		if (value === undefined || value === null) {
+			return null
+		}
+		if (typeof value !== "string") {
+			return null
+		}
+		const trimmed = value.trim()
+		if (!trimmed) {
+			return null
+		}
+		// Keep truncated display ids so WriteSpec/ReadSpec can emit recovery guidance (F-006b)
+		if (trimmed.includes("…") || trimmed.includes("...")) {
+			return trimmed
+		}
+		const lower = trimmed.toLowerCase()
+		if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
+			return null
+		}
+		return trimmed
+	}
+
+	/**
 	 * Process a raw tool call chunk from the API stream.
 	 * Handles tracking, buffering, and emits start/delta/end events.
 	 *
@@ -643,6 +670,75 @@ export class NativeToolCallParser {
 				if (partialArgs.todos !== undefined) {
 					nativeArgs = {
 						todos: partialArgs.todos,
+					}
+				}
+				break
+
+			// Virtual Spec Workspace tools (F-004) — must map JSON args → nativeArgs
+			case "list_specs":
+				nativeArgs = {}
+				break
+
+			case "read_spec":
+				if (partialArgs.doc !== undefined || partialArgs.spec_id !== undefined) {
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						doc: partialArgs.doc,
+					}
+				}
+				break
+
+			case "write_spec":
+				if (
+					partialArgs.title !== undefined ||
+					partialArgs.spec_id !== undefined ||
+					partialArgs.doc !== undefined ||
+					partialArgs.content !== undefined ||
+					partialArgs.mode !== undefined ||
+					partialArgs.old_string !== undefined
+				) {
+					nativeArgs = {
+						title: partialArgs.title,
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						doc: partialArgs.doc,
+						content: partialArgs.content,
+						mode: partialArgs.mode,
+						section_heading: partialArgs.section_heading,
+						old_string: partialArgs.old_string,
+						new_string: partialArgs.new_string,
+						replace_all: partialArgs.replace_all,
+					}
+				}
+				break
+
+			case "delete_spec":
+				if (
+					partialArgs.spec_id !== undefined ||
+					partialArgs.spec_ids !== undefined ||
+					partialArgs.delete_all !== undefined ||
+					partialArgs.title_contains !== undefined
+				) {
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						spec_ids: Array.isArray(partialArgs.spec_ids)
+							? partialArgs.spec_ids.map((x: unknown) => String(x))
+							: partialArgs.spec_ids === null
+								? null
+								: undefined,
+						delete_all:
+							partialArgs.delete_all === true || partialArgs.delete_all === "true"
+								? true
+								: partialArgs.delete_all === false || partialArgs.delete_all === "false"
+									? false
+									: partialArgs.delete_all === null
+										? null
+										: undefined,
+						title_contains:
+							partialArgs.title_contains === undefined || partialArgs.title_contains === null
+								? partialArgs.title_contains === null
+									? null
+									: undefined
+								: String(partialArgs.title_contains),
 					}
 				}
 				break
@@ -1248,6 +1344,86 @@ export class NativeToolCallParser {
 							todos: args.todos,
 						} as NativeArgsFor<TName>
 					}
+					break
+
+				// Virtual Spec Workspace tools (F-004)
+				case "list_specs":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+
+				case "read_spec":
+					if (args.doc !== undefined) {
+						nativeArgs = {
+							spec_id: this.coerceOptionalSpecId(args.spec_id),
+							doc: args.doc,
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "write_spec":
+					// doc required; content required unless search_replace (old_string/new_string)
+					if (args.doc !== undefined) {
+						const modeRaw = args.mode === undefined || args.mode === null ? "replace" : String(args.mode)
+						const isSearch =
+							modeRaw.toLowerCase() === "search_replace" ||
+							modeRaw.toLowerCase() === "search-replace" ||
+							modeRaw.toLowerCase() === "patch"
+						if (args.content !== undefined || isSearch || args.old_string !== undefined) {
+							nativeArgs = {
+								title: args.title === undefined || args.title === null ? "" : String(args.title),
+								spec_id: this.coerceOptionalSpecId(args.spec_id),
+								doc: String(args.doc),
+								content:
+									args.content === undefined || args.content === null
+										? undefined
+										: String(args.content),
+								mode: modeRaw,
+								section_heading:
+									args.section_heading === undefined || args.section_heading === null
+										? undefined
+										: String(args.section_heading),
+								old_string:
+									args.old_string === undefined || args.old_string === null
+										? undefined
+										: String(args.old_string),
+								new_string:
+									args.new_string === undefined || args.new_string === null
+										? undefined
+										: String(args.new_string),
+								replace_all:
+									args.replace_all === true || args.replace_all === "true"
+										? true
+										: args.replace_all === false || args.replace_all === "false"
+											? false
+											: undefined,
+							} as NativeArgsFor<TName>
+						}
+					}
+					break
+
+				case "delete_spec":
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(args.spec_id),
+						spec_ids: Array.isArray(args.spec_ids)
+							? args.spec_ids.map((x: unknown) => String(x))
+							: args.spec_ids === null
+								? null
+								: undefined,
+						delete_all:
+							args.delete_all === true || args.delete_all === "true"
+								? true
+								: args.delete_all === false || args.delete_all === "false"
+									? false
+									: args.delete_all === null
+										? null
+										: undefined,
+						title_contains:
+							args.title_contains === undefined || args.title_contains === null
+								? args.title_contains === null
+									? null
+									: undefined
+								: String(args.title_contains),
+					} as NativeArgsFor<TName>
 					break
 
 				case "read_command_output":

@@ -52,6 +52,10 @@ import { collectResultsTool } from "../tools/CollectResultsTool"
 import { cancelWorkerTool } from "../tools/CancelWorkerTool"
 import { getWorkerStatusTool } from "../tools/GetWorkerStatusTool"
 import { updateTodoListTool } from "../tools/UpdateTodoListTool"
+import { listSpecsTool } from "../tools/ListSpecsTool"
+import { readSpecTool } from "../tools/ReadSpecTool"
+import { writeSpecTool } from "../tools/WriteSpecTool"
+import { deleteSpecTool } from "../tools/DeleteSpecTool"
 import { runSlashCommandTool } from "../tools/RunSlashCommandTool"
 import { skillTool } from "../tools/SkillTool"
 import { generateImageTool } from "../tools/GenerateImageTool"
@@ -472,6 +476,14 @@ export async function presentAssistantMessage(cline: Task) {
 					case "read_command_output":
 						return `[${block.name} for '${block.params.artifact_id}']`
 					case "update_todo_list":
+						return `[${block.name}]`
+					case "list_specs":
+						return `[${block.name}]`
+					case "read_spec":
+						return `[${block.name} for '${block.params.doc ?? ""}']`
+					case "write_spec":
+						return `[${block.name} for '${block.params.doc ?? ""}']`
+					case "delete_spec":
 						return `[${block.name}]`
 					case "new_task": {
 						const mode = block.params.mode ?? defaultModeSlug
@@ -1153,6 +1165,34 @@ export async function presentAssistantMessage(cline: Task) {
 					break
 				case "list_workers":
 					await listWorkersTool.handle(cline, block as ToolUse<"list_workers">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "list_specs":
+					await listSpecsTool.handle(cline, block as ToolUse<"list_specs">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "read_spec":
+					await readSpecTool.handle(cline, block as ToolUse<"read_spec">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "write_spec":
+					await writeSpecTool.handle(cline, block as ToolUse<"write_spec">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "delete_spec":
+					await deleteSpecTool.handle(cline, block as ToolUse<"delete_spec">, {
 						askApproval,
 						handleError,
 						pushToolResult,

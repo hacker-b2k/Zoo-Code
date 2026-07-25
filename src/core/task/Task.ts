@@ -93,6 +93,7 @@ import { getTaskDirectoryPath } from "../../utils/storage"
 
 // prompts
 import { formatResponse } from "../prompts/responses"
+import { detectActionIntent, type ActionIntent } from "../prompts/detectActionIntent"
 import { SYSTEM_PROMPT } from "../prompts/system"
 import { buildNativeToolsArrayWithRestrictions } from "./build-tools"
 
@@ -328,6 +329,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	// LLM Messages & Chat Messages
 	apiConversationHistory: ApiMessage[] = []
 	clineMessages: ClineMessage[] = []
+	/** Trusted, model-only context for the initial request. Never written to UI messages. */
+	private readonly initialHiddenContext?: string
+	/**
+	 * Trusted, model-only context queued for the *next* API request of an already
+	 * running task (F-024b). Used when a Spec Workspace selection is sent into an
+	 * ongoing conversation instead of a brand new task. Never written to UI messages,
+	 * and consumed exactly once so it cannot leak into later turns.
+	 */
+	private pendingHiddenContext?: string
 
 	// Ask
 	private askResponse?: ClineAskResponse
@@ -343,6 +353,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	consecutiveMistakeCountForEditFile: Map<string, number> = new Map()
 	consecutiveNoToolUseCount: number = 0
 	consecutiveNoAssistantMessagesCount: number = 0
+	/**
+	 * Intent detected from the most recent genuine user request, used to give a
+	 * no-tool-call retry concrete context (what was asked, which tool category
+	 * applies). Undefined when the request was a question or explanation, so
+	 * conversational turns are never pushed toward a tool call.
+	 */
+	lastActionIntent?: ActionIntent
 	toolUsage: ToolUsage = {}
 
 	// Checkpoints
@@ -469,6 +486,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		taskId,
 		task,
 		images,
+		initialHiddenContext,
 		historyItem,
 		experiments: experimentsConfig,
 		startTask = true,
@@ -517,6 +535,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			task: historyItem ? historyItem.task : task,
 			images: historyItem ? [] : images,
 		}
+		this.initialHiddenContext = historyItem ? undefined : initialHiddenContext
 
 		// Normal use-case is usually retry similar history task with new workspace.
 		this.workspacePath = parentTask
@@ -1532,6 +1551,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		return result
 	}
 
+	/**
+	 * Queue trusted, model-only context for the next API request (F-024b).
+	 *
+	 * This is the ongoing-task counterpart of `initialHiddenContext`. It never
+	 * appears in `clineMessages`, so the visible chat stays clean while the model
+	 * still receives the full Spec Workspace selection location data.
+	 */
+	public setPendingHiddenContext(hiddenContext: string | undefined): void {
+		this.pendingHiddenContext = hiddenContext
+	}
+
 	handleWebviewAskResponse(askResponse: ClineAskResponse, text?: string, images?: string[]) {
 		// Clear any pending auto-approval timeout when user responds
 		this.cancelAutoApprovalTimeout()
@@ -1968,13 +1998,16 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	}
 
 	async sayAndCreateMissingParamError(toolName: ToolName, paramName: string, relPath?: string) {
+		const attemptCount = this.consecutiveMistakeCount
+		const escalationNote =
+			attemptCount > 1 ? ` (attempt ${attemptCount + 1} — provide ALL required parameters this time)` : ""
 		await this.say(
 			"error",
 			`Roo tried to use ${toolName}${
 				relPath ? ` for '${relPath.toPosix()}'` : ""
-			} without value for required parameter '${paramName}'. Retrying...`,
+			} without value for required parameter '${paramName}'. Fixing...${escalationNote}`,
 		)
-		return formatResponse.toolError(formatResponse.missingToolParameterError(paramName))
+		return formatResponse.toolError(formatResponse.missingToolParameterError(paramName, toolName, attemptCount + 1))
 	}
 
 	// Lifecycle
@@ -2086,6 +2119,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					type: "text",
 					text: `<user_message>\n${task}\n</user_message>`,
 				},
+				...(this.initialHiddenContext ? [{ type: "text" as const, text: this.initialHiddenContext }] : []),
 				...imageBlocks,
 			]).catch((error) => {
 				// Swallow loop rejection when the task was intentionally abandoned/aborted
@@ -2592,6 +2626,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// arm needed.
 		void getCheckpointService(this)
 
+		// Classify the genuine user request once, before the loop starts
+		// replacing `nextUserContent` with retry prompts. If the model answers
+		// without calling a tool, this is what lets the retry state what was
+		// actually asked for instead of repeating a generic nudge.
+		this.lastActionIntent = detectActionIntent(userContent)
+
 		let nextUserContent = userContent
 		let includeFileDetails = true
 
@@ -2617,7 +2657,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// the user hits max requests and denies resetting the count.
 				break
 			} else {
-				nextUserContent = [{ type: "text", text: formatResponse.noToolsUsed() }]
+				nextUserContent = [
+					{
+						type: "text",
+						text: formatResponse.noToolsUsed(this.lastActionIntent, this.consecutiveNoToolUseCount),
+					},
+				]
 			}
 		}
 	}
@@ -2770,9 +2815,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				return true
 			})
 
-			// Add environment details as its own text block, separate from tool
-			// results.
-			const finalUserContent = [...contentWithoutEnvDetails, { type: "text" as const, text: environmentDetails }]
 			// Only add user message to conversation history if:
 			// 1. This is the first attempt (retryAttempt === 0), AND
 			// 2. The original userContent was not empty (empty signals delegation resume where
@@ -2782,6 +2824,24 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const isEmptyUserContent = currentUserContent.length === 0
 			const shouldAddUserMessage =
 				((currentItem.retryAttempt ?? 0) === 0 && !isEmptyUserContent) || currentItem.userMessageWasRemoved
+
+			// F-024b: attach any queued model-only context (e.g. a Spec Workspace
+			// selection sent into an already running task) to this request only.
+			// It is consumed exactly once and never written to `clineMessages`, so the
+			// visible chat stays clean while the model still gets full location data.
+			let hiddenContextBlocks: Anthropic.Messages.ContentBlockParam[] = []
+			if (shouldAddUserMessage && this.pendingHiddenContext) {
+				hiddenContextBlocks = [{ type: "text" as const, text: this.pendingHiddenContext }]
+				this.pendingHiddenContext = undefined
+			}
+
+			// Add environment details as its own text block, separate from tool
+			// results.
+			const finalUserContent = [
+				...contentWithoutEnvDetails,
+				...hiddenContextBlocks,
+				{ type: "text" as const, text: environmentDetails },
+			]
 			if (shouldAddUserMessage) {
 				await this.addToApiConversationHistory({ role: "user", content: finalUserContent })
 				TelemetryService.instance.captureConversationMessage(this.taskId, "user")
@@ -3824,10 +3884,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							this.consecutiveMistakeCount++
 						}
 
-						// Use the task's locked protocol for consistent behavior
+						// Use the task's locked protocol for consistent behavior.
+						// The detected intent turns a context-free nudge into an
+						// actionable one: what the user asked for, and which tools
+						// satisfy it. Undefined for conversational turns.
 						this.userMessageContent.push({
 							type: "text",
-							text: formatResponse.noToolsUsed(),
+							text: formatResponse.noToolsUsed(this.lastActionIntent, this.consecutiveNoToolUseCount),
 						})
 					} else {
 						// Reset counter when tools are used successfully
@@ -4609,6 +4672,23 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				this.currentRequestAbortController = undefined
 			}
 
+			// Classify the error for intelligent retry decisions
+			const { classifyApiError } = await import("../../api/providers/utils/error-handler")
+			const modelId = this.api?.getModel?.()?.id
+			// `providerName` is an optional, provider-specific annotation that is not
+			// part of the shared ModelInfo contract — read it defensively.
+			const modelInfo = this.api?.getModel?.()?.info as { providerName?: string } | undefined
+			const providerName = modelInfo?.providerName || this.apiConfiguration?.apiProvider || "unknown"
+			const classified = classifyApiError(error, providerName, modelId)
+
+			// Diagnostic logging for all API failures
+			console.warn(
+				`[Task#${this.taskId}] API error classified: ` +
+					`provider=${classified.provider} model=${classified.model} ` +
+					`status=${classified.status ?? "none"} category=${classified.category} ` +
+					`retry=${retryAttempt} maxRetries=${classified.maxRetries} retriable=${classified.isRetriable}`,
+			)
+
 			// If it's a context window error and we haven't exceeded max retries for this error type
 			if (isContextWindowExceededError && retryAttempt < MAX_CONTEXT_WINDOW_RETRIES) {
 				console.warn(
@@ -4620,6 +4700,23 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// Retry the request after handling the context window error
 				yield* this.attemptApiRequest(retryAttempt + 1)
 				return
+			}
+
+			// Enforce classified retry limits — stop retrying when the error category
+			// is not retriable or max retries for that category have been exceeded.
+			if (!classified.isRetriable) {
+				const { formatClassifiedError } = await import("../../api/providers/utils/error-handler")
+				const diagnosticMsg = formatClassifiedError(classified)
+				console.error(`[Task#${this.taskId}] Non-retriable error. Stopping.\n${diagnosticMsg}`)
+				throw error instanceof Error ? error : new Error(diagnosticMsg)
+			}
+			if (retryAttempt >= classified.maxRetries) {
+				const { formatClassifiedError } = await import("../../api/providers/utils/error-handler")
+				const diagnosticMsg = formatClassifiedError(classified)
+				console.error(
+					`[Task#${this.taskId}] Max retries (${classified.maxRetries}) exceeded for category '${classified.category}'. Stopping.\n${diagnosticMsg}`,
+				)
+				throw error instanceof Error ? error : new Error(diagnosticMsg)
 			}
 
 			// note that this api_req_failed ask is unique in that we only present this option if the api hasn't streamed any content yet (ie it fails on the first chunk due), as it would allow them to hit a retry button. However if the api failed mid-stream, it could be in any arbitrary state where some tools may have executed, so that error is handled differently and requires cancelling the task entirely.

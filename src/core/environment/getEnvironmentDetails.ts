@@ -19,6 +19,7 @@ import { getGitStatus } from "../../utils/git"
 
 import { Task } from "../task/Task"
 import { formatReminderSection } from "./reminder"
+import { getSpecContextSection } from "../specs/specContext"
 
 export async function getEnvironmentDetails(cline: Task, includeFileDetails: boolean = false) {
 	let details = ""
@@ -255,6 +256,12 @@ export async function getEnvironmentDetails(cline: Task, includeFileDetails: boo
 				details += result
 			}
 		}
+	}
+
+	// F-006: compact Spec Workspace index (agent memory — no full markdown bodies)
+	const specContext = await getSpecContextSection(cline)
+	if (specContext) {
+		details += `\n\n${specContext}`
 	}
 
 	const todoListEnabled =
