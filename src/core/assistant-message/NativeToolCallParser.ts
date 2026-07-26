@@ -117,6 +117,29 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * Optional string fields from models / XML recovery often use Python/JSON
+	 * sentinels ("None", "null", …). Treat those as absent (undefined), not as
+	 * the literal string "None".
+	 */
+	private static coerceOptionalStringField(value: unknown): string | undefined {
+		if (value === undefined || value === null) {
+			return undefined
+		}
+		if (typeof value !== "string") {
+			return String(value)
+		}
+		const trimmed = value.trim()
+		if (!trimmed) {
+			return undefined
+		}
+		const lower = trimmed.toLowerCase()
+		if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
+			return undefined
+		}
+		return value
+	}
+
+	/**
 	 * Process a raw tool call chunk from the API stream.
 	 * Handles tracking, buffering, and emits start/delta/end events.
 	 *
@@ -1363,40 +1386,62 @@ export class NativeToolCallParser {
 				case "write_spec":
 					// doc required; content required unless search_replace (old_string/new_string)
 					if (args.doc !== undefined) {
-						const modeRaw = args.mode === undefined || args.mode === null ? "replace" : String(args.mode)
+						const modeCoerced = this.coerceOptionalStringField(args.mode)
+						const modeRaw = modeCoerced ?? "replace"
 						const isSearch =
 							modeRaw.toLowerCase() === "search_replace" ||
 							modeRaw.toLowerCase() === "search-replace" ||
 							modeRaw.toLowerCase() === "patch"
-						if (args.content !== undefined || isSearch || args.old_string !== undefined) {
-							nativeArgs = {
+						const oldString = this.coerceOptionalStringField(args.old_string)
+						const newString = this.coerceOptionalStringField(args.new_string)
+						const sectionHeading = this.coerceOptionalStringField(args.section_heading)
+						const contentCoerced =
+							args.content === undefined || args.content === null
+								? undefined
+								: this.coerceOptionalStringField(args.content) !== undefined
+									? String(args.content)
+									: undefined
+						const replaceAll =
+							args.replace_all === true ||
+							args.replace_all === "true" ||
+							(typeof args.replace_all === "string" && args.replace_all.trim().toLowerCase() === "true")
+								? true
+								: args.replace_all === false ||
+									  args.replace_all === "false" ||
+									  (typeof args.replace_all === "string" &&
+											args.replace_all.trim().toLowerCase() === "false")
+									? false
+									: undefined
+
+						if (contentCoerced !== undefined || isSearch || oldString !== undefined) {
+							// Only include optional keys when set — keeps nativeArgs sparse
+							// (matches historical shape / F-004 tests) and avoids serializing
+							// "None" sentinels from XML recovery as real strings.
+							const writeArgs: Record<string, unknown> = {
 								title: args.title === undefined || args.title === null ? "" : String(args.title),
 								spec_id: this.coerceOptionalSpecId(args.spec_id),
 								doc: String(args.doc),
-								content:
-									args.content === undefined || args.content === null
-										? undefined
-										: String(args.content),
-								mode: modeRaw,
-								section_heading:
-									args.section_heading === undefined || args.section_heading === null
-										? undefined
-										: String(args.section_heading),
-								old_string:
-									args.old_string === undefined || args.old_string === null
-										? undefined
-										: String(args.old_string),
-								new_string:
-									args.new_string === undefined || args.new_string === null
-										? undefined
-										: String(args.new_string),
-								replace_all:
-									args.replace_all === true || args.replace_all === "true"
-										? true
-										: args.replace_all === false || args.replace_all === "false"
-											? false
-											: undefined,
-							} as NativeArgsFor<TName>
+							}
+							if (contentCoerced !== undefined) {
+								writeArgs.content = contentCoerced
+							}
+							// Always surface mode when non-default or when search/patch path
+							if (modeCoerced !== undefined || isSearch) {
+								writeArgs.mode = modeRaw
+							}
+							if (sectionHeading !== undefined) {
+								writeArgs.section_heading = sectionHeading
+							}
+							if (oldString !== undefined) {
+								writeArgs.old_string = oldString
+							}
+							if (newString !== undefined) {
+								writeArgs.new_string = newString
+							}
+							if (replaceAll !== undefined) {
+								writeArgs.replace_all = replaceAll
+							}
+							nativeArgs = writeArgs as NativeArgsFor<TName>
 						}
 					}
 					break

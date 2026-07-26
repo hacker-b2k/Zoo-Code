@@ -105,7 +105,8 @@ import { RooIgnoreController } from "../ignore/RooIgnoreController"
 import { RooProtectedController } from "../protect/RooProtectedController"
 import { type AssistantMessageContent, presentAssistantMessage } from "../assistant-message"
 import { NativeToolCallParser } from "../assistant-message/NativeToolCallParser"
-import { looksLikeTextToolCall, parseTextToolCalls } from "../assistant-message/TextToolCallParser"
+import { looksLikeTextToolCall } from "../assistant-message/TextToolCallParser"
+import { applyTextualToolCallRecovery, type RecoverableAssistantBlock } from "../assistant-message/textToolCallRecovery"
 import { RuntimeContextManager } from "../model-capabilities/RuntimeContextManager"
 import { ClineProvider } from "../webview/ClineProvider"
 import { MultiSearchReplaceDiffStrategy } from "../diff/strategies/multi-search-replace"
@@ -3232,8 +3233,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 									})
 									this.userMessageContentReady = false
 								}
-								/* v8 ignore next -- streaming presenter; .catch lives in presentAssistantMessageSafe (covered) */
-								this.presentAssistantMessageSafe()
+
+								// Defer UI presentation when the assistant is emitting
+								// textual tool markup (MiniMax/Hermes/JSON-in-tags). Presenting
+								// mid-stream shows raw <tool_call> XML and advances the
+								// presenter; post-stream recovery converts markup → tool_use.
+								if (!looksLikeTextToolCall(assistantMessage)) {
+									/* v8 ignore next -- streaming presenter; .catch lives in presentAssistantMessageSafe (covered) */
+									this.presentAssistantMessageSafe()
+								} else {
+									this.userMessageContentReady = false
+								}
 								break
 							}
 						}
@@ -3640,48 +3650,45 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					}
 				}
 
-				// Recover textual <tool_call> / <function_call> markup that some models
-				// (e.g. qwen via third-party OpenAI-compatible gateways) emit as plain
-				// assistant text instead of native stream tool_calls. Without this,
-				// didToolUse stays false and the UI shows "Model Response Incomplete".
-				const hasNativeToolUses = this.assistantMessageContent.some(
-					(block) => block.type === "tool_use" || block.type === "mcp_tool_use",
-				)
-				if (!hasNativeToolUses && assistantMessage && looksLikeTextToolCall(assistantMessage)) {
-					const recovered = parseTextToolCalls(assistantMessage)
-					if (recovered.recovered && recovered.toolUses.length > 0) {
+				// Recover textual tool markup that models emit as plain assistant text
+				// instead of native stream tool_calls (across providers/gateways):
+				// - JSON: <tool_call>{"name":…,"arguments":{…}}</tool_call>
+				// - MiniMax/Hermes: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
+				// Without this, didToolUse stays false → "Model Response Incomplete" /
+				// "Zoo is having trouble...".
+				//
+				// Native stream tool_calls remain the preferred path. Recovery runs only
+				// when no *executable* native/MCP tool exists (id-only shells without
+				// nativeArgs do not block). Logic lives in applyTextualToolCallRecovery
+				// so presenter-index / strip / partial=true are unit-testable.
+				//
+				// Recovered tools are partial=true → partialBlocks path presents them
+				// AFTER assistant history save (same ordering as finalizeRawChunks —
+				// critical for new_task).
+				let recoveredTextToolCount = 0
+				{
+					const recovery = applyTextualToolCallRecovery({
+						assistantMessage,
+						assistantMessageContent: this.assistantMessageContent as RecoverableAssistantBlock[],
+						currentStreamingContentIndex: this.currentStreamingContentIndex,
+					})
+					if (recovery.applied) {
+						recoveredTextToolCount = recovery.recoveredCount
 						console.warn(
-							`[Task#${this.taskId}] Recovered ${recovered.toolUses.length} textual tool call(s) from assistant text (native tool_calls missing)`,
+							`[Task#${this.taskId}] Recovered ${recovery.recoveredCount} textual tool call(s) from assistant text (native tool_calls missing)`,
 						)
-
-						// Strip markup from accumulated text + any partial text block.
-						assistantMessage = recovered.cleanedText
-						for (const block of this.assistantMessageContent) {
-							if (block.type === "text") {
-								block.content = recovered.cleanedText
-								block.partial = false
-							}
-						}
-
-						// If cleaned text is empty, drop empty text blocks so we don't
-						// persist useless text alongside tool_use in API history.
-						if (!recovered.cleanedText.trim()) {
-							this.assistantMessageContent = this.assistantMessageContent.filter(
-								(block) => block.type !== "text" || (block.content && block.content.trim()),
-							)
-						}
-
-						for (const toolUse of recovered.toolUses) {
-							this.assistantMessageContent.push(toolUse)
-						}
+						assistantMessage = recovery.assistantMessage
+						this.assistantMessageContent =
+							recovery.assistantMessageContent as typeof this.assistantMessageContent
+						this.currentStreamingContentIndex = recovery.currentStreamingContentIndex
 						this.userMessageContentReady = false
-						/* v8 ignore next -- streaming presenter; .catch lives in presentAssistantMessageSafe (covered) */
-						this.presentAssistantMessageSafe()
+						// Do NOT present here — wait for history save + partialBlocks present.
 					}
 				}
 
-				// IMPORTANT: Capture partialBlocks AFTER finalizeRawChunks() to avoid double-presentation.
-				// Tools finalized above are already presented, so we only want blocks still partial after finalization.
+				// IMPORTANT: Capture partialBlocks AFTER finalizeRawChunks() / text recovery
+				// to avoid double-presentation. Native tools finalized mid-stream are already
+				// presented (partial=false). Recovered text tools are partial=true until here.
 				const partialBlocks = this.assistantMessageContent.filter((block) => block.partial)
 				partialBlocks.forEach((block) => (block.partial = false))
 
@@ -3871,11 +3878,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 				// Present any partial blocks that were just completed.
 				// Tool calls are typically presented during streaming via tool_call_partial events,
-				// but we still present here if any partial blocks remain (e.g., malformed streams).
+				// but we still present here if any partial blocks remain (e.g., malformed streams)
+				// OR when tools were recovered from textual XML/JSON markup (never presented mid-stream).
 				// NOTE: This MUST happen AFTER saving the assistant message to API history.
 				// When new_task is in the batch, it triggers delegation which calls flushPendingToolResultsToHistory().
 				// If the assistant message isn't saved yet, tool_results would appear before tool_use blocks.
-				if (partialBlocks.length > 0) {
+				if (partialBlocks.length > 0 || recoveredTextToolCount > 0) {
 					// If there is content to update then it will complete and
 					// update `this.userMessageContentReady` to true, which we
 					// `pWaitFor` before making the next request.

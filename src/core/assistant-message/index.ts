@@ -6,3 +6,10 @@ export {
 	resetTextToolCallSeqForTests,
 	type TextToolCallParseResult,
 } from "./TextToolCallParser"
+export {
+	applyTextualToolCallRecovery,
+	hasExecutableNativeToolUse,
+	type TextualToolCallRecoveryState,
+	type TextualToolCallRecoveryResult,
+	type RecoverableAssistantBlock,
+} from "./textToolCallRecovery"
