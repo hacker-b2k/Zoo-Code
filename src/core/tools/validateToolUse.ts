@@ -5,19 +5,29 @@ import { customToolRegistry } from "@roo-code/core"
 import { type Mode, FileRestrictionError, getModeBySlug, getGroupName } from "../../shared/modes"
 import { EXPERIMENT_IDS } from "../../shared/experiments"
 import { TOOL_GROUPS, ALWAYS_AVAILABLE_TOOLS, TOOL_ALIASES } from "../../shared/tools"
+import { buildToolUnavailableError, resolveRequestedToolName } from "./toolRecovery"
 
 /**
  * Checks if a tool name is a valid, known tool.
  * Note: This does NOT check if the tool is allowed for a specific mode,
  * only that the tool actually exists.
+ *
+ * Aliases (e.g. write_file → write_to_file) are treated as valid so selection
+ * can resolve before mode checks; callers that execute tools should still
+ * resolve aliases via resolveToolAlias / TOOL_ALIASES.
  */
 export function isValidToolName(toolName: string, experiments?: Record<string, boolean>): toolName is ToolName {
-	// Check if it's a valid static tool
+	// Check if it's a valid static tool (canonical or alias)
 	if ((validToolNames as readonly string[]).includes(toolName)) {
 		return true
 	}
 
-	if (experiments?.customTools && customToolRegistry.has(toolName)) {
+	const resolved = resolveRequestedToolName(toolName)
+	if (resolved !== toolName && (validToolNames as readonly string[]).includes(resolved)) {
+		return true
+	}
+
+	if (experiments?.customTools && (customToolRegistry.has(toolName) || customToolRegistry.has(resolved))) {
 		return true
 	}
 
@@ -39,11 +49,9 @@ export function validateToolUse(
 	includedTools?: string[],
 ): void {
 	// First, check if the tool name is actually a valid/known tool
-	// This catches completely invalid tool names like "edit_file" that don't exist
+	// This catches completely invalid tool names that don't exist in the registry
 	if (!isValidToolName(toolName, experiments)) {
-		throw new Error(
-			`Unknown tool "${toolName}". This tool does not exist. Please use one of the available tools: ${validToolNames.join(", ")}.`,
-		)
+		throw new Error(buildToolUnavailableError(toolName, "unknown", mode, customModes))
 	}
 
 	// Then check if the tool is allowed for the current mode
@@ -58,7 +66,7 @@ export function validateToolUse(
 			includedTools,
 		)
 	) {
-		throw new Error(`Tool "${toolName}" is not allowed in ${mode} mode.`)
+		throw new Error(buildToolUnavailableError(toolName, "mode", mode, customModes))
 	}
 }
 

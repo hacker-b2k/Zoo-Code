@@ -105,6 +105,7 @@ import { RooIgnoreController } from "../ignore/RooIgnoreController"
 import { RooProtectedController } from "../protect/RooProtectedController"
 import { type AssistantMessageContent, presentAssistantMessage } from "../assistant-message"
 import { NativeToolCallParser } from "../assistant-message/NativeToolCallParser"
+import { looksLikeTextToolCall, parseTextToolCalls } from "../assistant-message/TextToolCallParser"
 import { RuntimeContextManager } from "../model-capabilities/RuntimeContextManager"
 import { ClineProvider } from "../webview/ClineProvider"
 import { MultiSearchReplaceDiffStrategy } from "../diff/strategies/multi-search-replace"
@@ -3636,6 +3637,46 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							/* v8 ignore next -- streaming presenter; .catch lives in presentAssistantMessageSafe (covered) */
 							this.presentAssistantMessageSafe()
 						}
+					}
+				}
+
+				// Recover textual <tool_call> / <function_call> markup that some models
+				// (e.g. qwen via third-party OpenAI-compatible gateways) emit as plain
+				// assistant text instead of native stream tool_calls. Without this,
+				// didToolUse stays false and the UI shows "Model Response Incomplete".
+				const hasNativeToolUses = this.assistantMessageContent.some(
+					(block) => block.type === "tool_use" || block.type === "mcp_tool_use",
+				)
+				if (!hasNativeToolUses && assistantMessage && looksLikeTextToolCall(assistantMessage)) {
+					const recovered = parseTextToolCalls(assistantMessage)
+					if (recovered.recovered && recovered.toolUses.length > 0) {
+						console.warn(
+							`[Task#${this.taskId}] Recovered ${recovered.toolUses.length} textual tool call(s) from assistant text (native tool_calls missing)`,
+						)
+
+						// Strip markup from accumulated text + any partial text block.
+						assistantMessage = recovered.cleanedText
+						for (const block of this.assistantMessageContent) {
+							if (block.type === "text") {
+								block.content = recovered.cleanedText
+								block.partial = false
+							}
+						}
+
+						// If cleaned text is empty, drop empty text blocks so we don't
+						// persist useless text alongside tool_use in API history.
+						if (!recovered.cleanedText.trim()) {
+							this.assistantMessageContent = this.assistantMessageContent.filter(
+								(block) => block.type !== "text" || (block.content && block.content.trim()),
+							)
+						}
+
+						for (const toolUse of recovered.toolUses) {
+							this.assistantMessageContent.push(toolUse)
+						}
+						this.userMessageContentReady = false
+						/* v8 ignore next -- streaming presenter; .catch lives in presentAssistantMessageSafe (covered) */
+						this.presentAssistantMessageSafe()
 					}
 				}
 

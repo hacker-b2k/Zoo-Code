@@ -22,14 +22,24 @@ class TestProvider extends BaseProvider {
 		}
 	}
 
-	// Expose protected method for testing
+	// Expose protected method for testing (schema rewrite used when enableStrict: true)
 	public testConvertToolSchemaForOpenAI(schema: any): any {
-		return this.convertToolsForOpenAI(schema)
+		return this.convertToolSchemaForOpenAI(schema)
 	}
 
 	// Expose protected method for testing
-	public testConvertToolsForOpenAI(tools: any[] | undefined): any[] | undefined {
-		return this.convertToolsForOpenAI(tools)
+	public testConvertToolsForOpenAI(
+		tools: any[] | undefined,
+		options?: { enableStrict?: boolean },
+	): any[] | undefined {
+		return this.convertToolsForOpenAI(tools, options)
+	}
+
+	public convertToolsForOpenAIPublic(
+		tools: any[] | undefined,
+		options?: { enableStrict?: boolean },
+	): any[] | undefined {
+		return this.convertToolsForOpenAI(tools, options)
 	}
 
 	// Expose private method for testing via any cast (private methods cannot be overridden)
@@ -166,21 +176,56 @@ describe("BaseProvider", () => {
 			expect(result).toBeUndefined()
 		})
 
-		it("should set strict: true for non-MCP tools", () => {
+		it("defaults to strict: false for non-MCP tools (third-party gateway safe)", () => {
 			const tools = [
 				{
 					type: "function",
 					function: {
 						name: "read_file",
 						description: "Read a file",
-						parameters: { type: "object", properties: {} },
+						parameters: {
+							type: "object",
+							properties: {
+								path: { type: "string" },
+								limit: { type: "number" },
+							},
+							required: ["path"],
+						},
 					},
 				},
 			]
 
 			const result = provider.testConvertToolsForOpenAI(tools)
 
+			expect(result?.[0].function.strict).toBe(false)
+			// Optional params must stay optional (not rewritten to required: all keys)
+			expect(result?.[0].function.parameters.required).toEqual(["path"])
+		})
+
+		it("should set strict: true when enableStrict is true", () => {
+			const tools = [
+				{
+					type: "function",
+					function: {
+						name: "read_file",
+						description: "Read a file",
+						parameters: {
+							type: "object",
+							properties: {
+								path: { type: "string" },
+								limit: { type: "number" },
+							},
+							required: ["path"],
+						},
+					},
+				},
+			]
+
+			const result = provider.convertToolsForOpenAIPublic(tools, { enableStrict: true })
+
 			expect(result?.[0].function.strict).toBe(true)
+			expect(result?.[0].function.parameters.required).toEqual(["path", "limit"])
+			expect(result?.[0].function.parameters.additionalProperties).toBe(false)
 		})
 
 		it("should set strict: false for MCP tools (mcp-- prefix)", () => {

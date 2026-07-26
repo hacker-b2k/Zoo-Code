@@ -61,6 +61,13 @@ import { skillTool } from "../tools/SkillTool"
 import { generateImageTool } from "../tools/GenerateImageTool"
 import { applyDiffTool as applyDiffToolClass } from "../tools/ApplyDiffTool"
 import { isValidToolName, validateToolUse } from "../tools/validateToolUse"
+import {
+	buildToolUnavailableError,
+	formatUnavailableToolRecovery,
+	getModeAvailableTools,
+	shouldDiscourageShellFallback,
+	suggestToolAlternatives,
+} from "../tools/toolRecovery"
 import { codebaseSearchTool } from "../tools/CodebaseSearchTool"
 import { listProviderProfilesTool } from "../tools/ListProviderProfilesTool"
 import { getProviderProfileTool } from "../tools/GetProviderProfileTool"
@@ -725,7 +732,22 @@ export async function presentAssistantMessage(cline: Task) {
 					// 2. NOT set didAlreadyUseTool = true (the tool was never executed, just failed validation)
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"
 					// which would cause the extension to appear to hang
-					const errorContent = formatResponse.toolError(error.message)
+					const recoveryMessage =
+						error instanceof Error
+							? error.message
+							: buildToolUnavailableError(String(block.name), "unknown", effectiveMode, customModes)
+					const availableTools = getModeAvailableTools(effectiveMode, customModes)
+					const alternatives = suggestToolAlternatives(String(block.name), availableTools)
+					const reason: "unknown" | "mode" = /not allowed/i.test(recoveryMessage) ? "mode" : "unknown"
+					cline.recordToolError(block.name as ToolName, recoveryMessage)
+					// Surface the same user-visible error as the default unknown-tool branch
+					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
+					const errorContent = formatResponse.unknownToolError(String(block.name), alternatives, {
+						reason,
+						mode: effectiveMode,
+						discourageShellFallback: shouldDiscourageShellFallback(String(block.name), availableTools),
+						recoveryMessage,
+					})
 					// Push tool_result directly without setting didAlreadyUseTool
 					cline.pushToolResultToUserContent({
 						type: "tool_result",
@@ -1308,18 +1330,32 @@ export async function presentAssistantMessage(cline: Task) {
 						break
 					}
 
-					// Not a custom tool - handle as unknown tool error
-					const errorMessage = `Unknown tool "${block.name}". This tool does not exist. Please use one of the available tools.`
+					// Not a custom tool - handle as unknown tool error with ranked alternatives
+					const availableTools = getModeAvailableTools(effectiveMode, customModes)
+					const alternatives = suggestToolAlternatives(String(block.name), availableTools)
+					const errorMessage = formatUnavailableToolRecovery({
+						toolName: String(block.name),
+						reason: "unknown",
+						mode: effectiveMode,
+						availableTools,
+						alternatives,
+					})
 					cline.consecutiveMistakeCount++
 					cline.recordToolError(block.name as ToolName, errorMessage)
 					workerToolFailed = true
 					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
 					// Push tool_result directly WITHOUT setting didAlreadyUseTool
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"
+					const structured = formatResponse.unknownToolError(String(block.name), alternatives, {
+						reason: "unknown",
+						mode: effectiveMode,
+						discourageShellFallback: shouldDiscourageShellFallback(String(block.name), availableTools),
+						recoveryMessage: errorMessage,
+					})
 					cline.pushToolResultToUserContent({
 						type: "tool_result",
 						tool_use_id: sanitizeToolUseId(toolCallId),
-						content: formatResponse.toolError(errorMessage),
+						content: structured,
 						is_error: true,
 					})
 					break

@@ -6,7 +6,9 @@ describe("getToolUseGuidelinesSection", () => {
 
 		expect(guidelines).toContain("1. Assess what information")
 		expect(guidelines).toContain("2. Choose the most appropriate tool")
-		expect(guidelines).toContain("3. If multiple actions are needed")
+		expect(guidelines).toContain("3. **Only call tools that exist")
+		expect(guidelines).toContain("4. **Prefer extension tools over shell.")
+		expect(guidelines).toContain("5. If multiple actions are needed")
 	})
 
 	it("should include multiple-tools-per-message guidance", () => {
@@ -33,6 +35,14 @@ describe("getToolUseGuidelinesSection", () => {
 		expect(guidelines).toContain("Assess what information you already have")
 		expect(guidelines).toContain("Choose the most appropriate tool")
 		expect(guidelines).not.toContain("<actual_tool_name>")
+	})
+
+	it("should discourage shell fallback when extension file tools exist", () => {
+		const guidelines = getToolUseGuidelinesSection()
+		expect(guidelines).toContain("Prefer extension tools over shell")
+		expect(guidelines).toContain("read_file")
+		expect(guidelines).toContain("list_files")
+		expect(guidelines).toContain("Only call tools that exist in the current available-tools list")
 	})
 
 	it("should not include per-tool confirmation guidelines", () => {

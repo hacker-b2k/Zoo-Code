@@ -128,6 +128,40 @@ Otherwise, if you have not completed the task and do not need additional informa
 			suggestion: "Please use one of the available tools or check if the server is properly configured",
 		}),
 
+	/**
+	 * Recovery payload for a built-in (non-MCP) tool that is unknown or not
+	 * allowed for the current mode. Lists ranked alternatives and discourages
+	 * shell fallback when file tools exist.
+	 */
+	unknownToolError: (
+		toolName: string,
+		availableAlternatives: string[],
+		options?: {
+			reason?: "unknown" | "mode"
+			mode?: string
+			discourageShellFallback?: boolean
+			recoveryMessage?: string
+		},
+	) => {
+		const discourageShell = options?.discourageShellFallback !== false
+		return JSON.stringify({
+			status: "error",
+			type: "unknown_tool",
+			message:
+				options?.recoveryMessage ??
+				`This tool is unavailable. Available alternatives are: ${
+					availableAlternatives.length > 0 ? availableAlternatives.join(", ") : "(none)"
+				}.`,
+			tool: toolName,
+			reason: options?.reason ?? "unknown",
+			mode: options?.mode,
+			available_tools: availableAlternatives.length > 0 ? availableAlternatives : [],
+			suggestion: discourageShell
+				? "Retry with one of the available tools using native tool calling. Do not use execute_command (shell) for file read/list/search when read_file, list_files, or search_files are available."
+				: "Retry with one of the available tools using native tool calling.",
+		})
+	},
+
 	unknownMcpServerError: (serverName: string, availableServers: string[]) =>
 		JSON.stringify({
 			status: "error",

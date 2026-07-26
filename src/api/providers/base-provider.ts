@@ -71,18 +71,31 @@ export abstract class BaseProvider implements ApiHandler {
 	}
 
 	/**
-	 * Converts an array of tools to be compatible with OpenAI's strict mode.
-	 * Filters for function tools, applies schema conversion to their parameters,
-	 * and ensures all tools have consistent strict: true values.
+	 * Converts an array of tools for OpenAI-compatible chat completions.
 	 *
-	 * Tools with free-form objects (objects without `properties`) get strict: false
-	 * because strict mode requires `additionalProperties: false` + explicit `properties`
-	 * on every object, which is incompatible with schemas that accept arbitrary keys.
+	 * Default: `enableStrict: false` (gateway-safe). Official OpenAI / Azure OpenAI
+	 * handlers pass `{ enableStrict: true }` explicitly.
+	 *
+	 * When `enableStrict` is true:
+	 * - Sets `strict: true` and rewrites schemas so every property is required
+	 *   and `additionalProperties: false` (OpenAI strict-mode requirements).
+	 *
+	 * When `enableStrict` is false (third-party gateways: LiteLLM, vLLM, Logfare,
+	 * OpenRouter-compatible, Qwen-compatible, etc.):
+	 * - Leaves original optional parameters intact and sets `strict: false`.
+	 *   Many non-OpenAI backends reject or mishandle OpenAI-only strict schemas,
+	 *   which can cause empty streams or failed tool calling (e.g. Qwen via gateways).
+	 *
+	 * MCP tools and free-form object schemas always use strict: false.
 	 */
-	protected convertToolsForOpenAI(tools: any[] | undefined): any[] | undefined {
+	protected convertToolsForOpenAI(tools: any[] | undefined, options?: { enableStrict?: boolean }): any[] | undefined {
 		if (!tools) {
 			return undefined
 		}
+
+		// Default off: OpenAI strict schemas break many third-party gateways.
+		// Callers targeting official OpenAI / Azure OpenAI must pass enableStrict: true.
+		const enableStrict = options?.enableStrict ?? false
 
 		return tools.map((tool) => {
 			if (tool.type !== "function") {
@@ -97,15 +110,16 @@ export abstract class BaseProvider implements ApiHandler {
 			// because strict requires additionalProperties: false + explicit properties on every object
 			const hasFreeForm = !isMcp && this.hasFreeFormObjects(tool.function.parameters)
 
+			const useStrict = enableStrict && !isMcp && !hasFreeForm
+
 			return {
 				...tool,
 				function: {
 					...tool.function,
-					strict: !isMcp && !hasFreeForm,
-					parameters:
-						isMcp || hasFreeForm
-							? tool.function.parameters
-							: this.convertToolSchemaForOpenAI(tool.function.parameters),
+					strict: useStrict,
+					parameters: useStrict
+						? this.convertToolSchemaForOpenAI(tool.function.parameters)
+						: tool.function.parameters,
 				},
 			}
 		})

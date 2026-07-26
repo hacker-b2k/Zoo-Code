@@ -6,6 +6,8 @@ import { presentAssistantMessage } from "../presentAssistantMessage"
 // Mock dependencies
 vi.mock("../../task/Task")
 vi.mock("../../tools/validateToolUse", () => ({
+	// No-op by default so unknown names fall through to the default switch branch.
+	// Individual tests may override to simulate validation failures.
 	validateToolUse: vi.fn(),
 	isValidToolName: vi.fn(() => false),
 }))
@@ -93,10 +95,11 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 
 		expect(toolResult).toBeDefined()
 		expect(toolResult.tool_use_id).toBe(toolCallId)
-		// The error is wrapped in JSON by formatResponse.toolError
+		// Structured recovery from formatResponse.unknownToolError
 		expect(toolResult.content).toContain("nonexistent_tool")
-		expect(toolResult.content).toContain("does not exist")
 		expect(toolResult.content).toContain("error")
+		expect(toolResult.content).toMatch(/Available alternatives are:|available_tools/)
+		expect(toolResult.is_error).toBe(true)
 
 		// Verify consecutiveMistakeCount was incremented
 		expect(mockTask.consecutiveMistakeCount).toBe(1)
@@ -109,6 +112,31 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 
 		// Verify error message was shown to user (uses i18n key)
 		expect(mockTask.say).toHaveBeenCalledWith("error", "unknownToolError")
+	})
+
+	it("should recover a read-like unknown tool with file-tool alternatives and no shell encouragement", async () => {
+		const toolCallId = "tool_call_read_like"
+		mockTask.assistantMessageContent = [
+			{
+				type: "tool_use",
+				id: toolCallId,
+				name: "read_file_content",
+				params: { path: "foo.ts" },
+				partial: false,
+			},
+		]
+
+		await presentAssistantMessage(mockTask)
+
+		const toolResult = mockTask.userMessageContent.find(
+			(item: any) => item.type === "tool_result" && item.tool_use_id === toolCallId,
+		)
+		expect(toolResult).toBeDefined()
+		expect(toolResult.content).toContain("read_file")
+		expect(toolResult.content).toMatch(/Available alternatives are:|available_tools/)
+		expect(toolResult.content).toMatch(/Do not fall back to execute_command|Do not use execute_command/)
+		// Must not tell the model to use PowerShell/cat as the primary recovery
+		expect(toolResult.content).not.toMatch(/use PowerShell|Get-Content|use cat /i)
 	})
 
 	it("should fail fast when tool_use is missing id (legacy/XML-style tool call)", async () => {

@@ -96,7 +96,11 @@ describe("mapCustomEndpointOptionsToOpenAi", () => {
 		expect(mapped.openAiBaseUrl).toBe("https://example.com/v1")
 		expect(mapped.openAiApiKey).toBe("sk-test")
 		expect(mapped.openAiModelId).toBe("gpt-test")
-		expect(mapped.openAiCustomModelInfo).toEqual({ contextWindow: 128000, reasoningEffort: "high" })
+		expect(mapped.openAiCustomModelInfo).toEqual({
+			contextWindow: 128000,
+			reasoningEffort: "high",
+			supportsPromptCache: false,
+		})
 		expect(mapped.openAiStreamingEnabled).toBe(true)
 	})
 
@@ -222,5 +226,90 @@ describe("CustomEndpointHandler", () => {
 			chunks.push(chunk)
 		}
 		expect(chunks.some((c) => c.type === "text" && c.text === "Test response")).toBe(true)
+	})
+
+	it("sends tools with strict:false for third-party gateways (e.g. logfare)", async () => {
+		handler = new CustomEndpointHandler({
+			customEndpointBaseUrl: "https://logfare.ai/v1",
+			customEndpointApiKey: "sk-logfare",
+			customEndpointModelId: "qwen-3.8-max",
+			customEndpointFormat: "openai",
+			customEndpointModelInfo: {
+				contextWindow: 128000,
+				supportsImages: false,
+				supportsPromptCache: false,
+			},
+		})
+
+		const tools = [
+			{
+				type: "function" as const,
+				function: {
+					name: "read_file",
+					description: "Read a file",
+					parameters: {
+						type: "object",
+						properties: {
+							path: { type: "string" },
+							limit: { type: "number" },
+						},
+						required: ["path"],
+					},
+				},
+			},
+		]
+
+		const stream = handler.createMessage(
+			"sys",
+			[{ role: "user", content: [{ type: "text" as const, text: "hi" }] }] as Anthropic.Messages.MessageParam[],
+			{ tools, tool_choice: "auto", parallelToolCalls: true } as any,
+		)
+		for await (const _ of stream) {
+			// drain
+		}
+
+		expect(mockCreate).toHaveBeenCalled()
+		const body = mockCreate.mock.calls[0][0]
+		expect(body.tools).toBeDefined()
+		expect(body.tools[0].function.strict).toBe(false)
+		// Optional params must not be forced into required (OpenAI strict rewrite)
+		expect(body.tools[0].function.parameters.required).toEqual(["path"])
+		expect(body.tool_choice).toBe("auto")
+	})
+
+	it("still sends tools when auth is a custom header (not free-endpoint)", async () => {
+		handler = new CustomEndpointHandler({
+			customEndpointBaseUrl: "https://gateway.example/v1",
+			customEndpointApiKey: "secret",
+			customEndpointApiKeyHeader: "X-Api-Key",
+			customEndpointApiKeyPrefix: "Key ",
+			customEndpointModelId: "qwen-3.8-max",
+			customEndpointFormat: "custom",
+		})
+
+		const tools = [
+			{
+				type: "function" as const,
+				function: {
+					name: "list_files",
+					description: "List files",
+					parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+				},
+			},
+		]
+
+		const stream = handler.createMessage(
+			"sys",
+			[{ role: "user", content: [{ type: "text" as const, text: "hi" }] }] as Anthropic.Messages.MessageParam[],
+			{ tools, tool_choice: "auto" } as any,
+		)
+		for await (const _ of stream) {
+			// drain
+		}
+
+		const body = mockCreate.mock.calls[0][0]
+		expect(body.tools).toBeDefined()
+		expect(body.tools[0].function.name).toBe("list_files")
+		expect(body.tools[0].function.strict).toBe(false)
 	})
 })

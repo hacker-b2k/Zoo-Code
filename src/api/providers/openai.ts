@@ -108,7 +108,10 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		const enabledR1Format = this.options.openAiR1FormatEnabled ?? false
 		const isAzureAiInference = this._isAzureAiInference(modelUrl)
 		const deepseekReasoner = modelId.includes("deepseek-reasoner") || enabledR1Format
-		const isFreeEndpoint = !this.options.openAiApiKey
+		// Free/no-auth only when there is neither a Bearer key nor custom credential headers.
+		// Custom endpoints that auth via X-Api-Key (etc.) must still receive tools.
+		const isFreeEndpoint = this._isFreeEndpoint()
+		const enableStrictTools = this._shouldUseOpenAiStrictTools()
 
 		if (modelId.includes("o1") || modelId.includes("o3") || modelId.includes("o4")) {
 			yield* this.handleO3FamilyMessage(modelId, systemPrompt, messages, metadata)
@@ -194,8 +197,11 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				...(isGrokXAI ? {} : { stream_options: { include_usage: true } }),
 				...(reasoning && reasoning),
 				// Free endpoints (e.g., g4f.space) may not support tool calls — only include
-				// tools when a real API key is configured.
-				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
+				// tools when authenticated (Bearer key or custom credential headers).
+				// Third-party gateways must not get OpenAI-only strict tool schemas.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
 				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
 				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
 			}
@@ -349,8 +355,10 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
 				model: modelId,
 				messages: nonStreamingMessages,
-				// Free endpoints may not support tool calls — only include when a real API key is configured.
-				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
+				// Free endpoints may not support tool calls — only include when authenticated.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
 				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
 				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
 			}
@@ -489,7 +497,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
 				temperature: undefined,
 				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
-				tools: this.convertToolsForOpenAI(metadata?.tools),
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
 				tool_choice: metadata?.tool_choice,
 				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
 			}
@@ -523,7 +533,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
 				temperature: undefined,
 				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
-				tools: this.convertToolsForOpenAI(metadata?.tools),
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
 				tool_choice: metadata?.tool_choice,
 				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
 			}
@@ -666,6 +678,49 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 	protected _isAzureAiInference(baseUrl?: string): boolean {
 		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isAzureAiInference
+	}
+
+	/**
+	 * Free/no-auth endpoints (e.g. g4f.space) have neither a Bearer API key nor
+	 * custom credential headers. Custom endpoints that authenticate via X-Api-Key
+	 * (or similar) omit openAiApiKey so Authorization is not sent, but they are
+	 * still authenticated and must receive tools.
+	 */
+	private _isFreeEndpoint(): boolean {
+		if (this.options.openAiApiKey) {
+			return false
+		}
+
+		const headers = this.options.openAiHeaders || {}
+		const hasCredentialHeader = Object.keys(headers).some((name) => {
+			const lower = name.toLowerCase()
+			// Ignore non-auth metadata headers that may be present on openAiHeaders.
+			if (lower === "user-agent" || lower === "x-title" || lower === "http-referer" || lower === "referer") {
+				return false
+			}
+			const value = headers[name]
+			return typeof value === "string" ? value.length > 0 : value != null
+		})
+
+		return !hasCredentialHeader
+	}
+
+	/**
+	 * OpenAI strict tool schemas (`strict: true` + all properties required) are
+	 * only reliable on official OpenAI / Azure OpenAI. Third-party gateways
+	 * (Logfare, LiteLLM, vLLM, OpenRouter-compatible, Qwen-compatible, etc.)
+	 * often mishandle them, producing empty streams or broken tool calling.
+	 */
+	private _shouldUseOpenAiStrictTools(): boolean {
+		const analyzed = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
+		if (analyzed.isAzureAiInference) {
+			return false
+		}
+		if (analyzed.isAzureOpenAi || this.options.openAiUseAzure) {
+			return true
+		}
+		const host = analyzed.host.toLowerCase()
+		return host === "api.openai.com"
 	}
 
 	/**

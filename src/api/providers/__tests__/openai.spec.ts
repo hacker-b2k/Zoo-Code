@@ -992,20 +992,22 @@ describe("OpenAiHandler", () => {
 	})
 
 	describe("Azure AI Inference Service", () => {
-		const azureOptions = {
-			...mockOptions,
+		const getAzureOptions = () => ({
+			openAiApiKey: "test-api-key",
 			openAiBaseUrl: "https://test.services.ai.azure.com",
 			openAiModelId: "deepseek-v3",
 			azureApiVersion: "2024-05-01-preview",
-		}
+		})
 
 		it("should initialize with Azure AI Inference Service configuration", () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			expect(azureHandler).toBeInstanceOf(OpenAiHandler)
 			expect(azureHandler.getModel().id).toBe(azureOptions.openAiModelId)
 		})
 
 		it("should handle streaming responses with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			const systemPrompt = "You are a helpful assistant."
 			const messages: Anthropic.Messages.MessageParam[] = [
@@ -1050,6 +1052,7 @@ describe("OpenAiHandler", () => {
 		})
 
 		it("should handle non-streaming responses with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler({
 				...azureOptions,
 				openAiStreamingEnabled: false,
@@ -1099,6 +1102,7 @@ describe("OpenAiHandler", () => {
 		})
 
 		it("should handle completePrompt with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			const result = await azureHandler.completePrompt("Test prompt")
 			expect(result).toBe("Test response")
