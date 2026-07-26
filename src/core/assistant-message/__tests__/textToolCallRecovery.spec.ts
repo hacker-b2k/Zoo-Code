@@ -1,4 +1,4 @@
-// npx vitest run src/core/assistant-message/__tests__/textToolCallRecovery.spec.ts
+﻿// npx vitest run src/core/assistant-message/__tests__/textToolCallRecovery.spec.ts
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { applyTextualToolCallRecovery, hasExecutableNativeToolUse } from "../textToolCallRecovery"
@@ -78,7 +78,7 @@ describe("textToolCallRecovery", () => {
 		})
 	})
 
-	describe("applyTextualToolCallRecovery — MiniMax write_spec E2E state", () => {
+	describe("applyTextualToolCallRecovery â€” MiniMax write_spec E2E state", () => {
 		it("recovers production write_spec XML, sets partial=true, id+nativeArgs, clamps OOB index", () => {
 			// Simulates: pure-markup stream deferred present (index may still be 0),
 			// OR mid-stream text already advanced index past end after empty strip.
@@ -103,8 +103,8 @@ describe("textToolCallRecovery", () => {
 
 			const tool = result.assistantMessageContent[0]
 			expect(tool.type).toBe("tool_use")
-			expect(tool.name).toBe("write_spec")
-			expect(tool.partial).toBe(true) // must join partialBlocks → present after history
+			expect((tool as ToolUse).name).toBe("write_spec")
+			expect(tool.partial).toBe(true) // must join partialBlocks â†’ present after history
 			expect((tool as ToolUse).id?.startsWith("text_call_")).toBe(true)
 			expect((tool as ToolUse).nativeArgs).toMatchObject({
 				title: "Gaming Website - Steam Clone",
@@ -140,8 +140,8 @@ describe("textToolCallRecovery", () => {
 			expect((result.assistantMessageContent[0] as { content: string }).content).toContain(
 				"I'll create the spec now",
 			)
-			expect(result.assistantMessageContent[1].name).toBe("write_spec")
-			// Must present text first, then tool — do not jump to firstRecoveredIndex.
+			expect((result.assistantMessageContent[1] as ToolUse).name).toBe("write_spec")
+			// Must present text first, then tool â€” do not jump to firstRecoveredIndex.
 			expect(result.currentStreamingContentIndex).toBe(0)
 		})
 
@@ -157,7 +157,7 @@ describe("textToolCallRecovery", () => {
 		})
 	})
 
-	describe("applyTextualToolCallRecovery — JSON tool_call still works", () => {
+	describe("applyTextualToolCallRecovery â€” JSON tool_call still works", () => {
 		it("recovers JSON-in-tags list_files", () => {
 			const result = applyTextualToolCallRecovery({
 				assistantMessage: JSON_LIST_FILES,
@@ -166,7 +166,7 @@ describe("textToolCallRecovery", () => {
 			})
 			expect(result.applied).toBe(true)
 			expect(result.recoveredCount).toBe(1)
-			expect(result.assistantMessageContent[0].name).toBe("list_files")
+			expect((result.assistantMessageContent[0] as ToolUse).name).toBe("list_files")
 			expect((result.assistantMessageContent[0] as ToolUse).nativeArgs).toMatchObject({
 				path: ".",
 				recursive: false,
@@ -175,7 +175,7 @@ describe("textToolCallRecovery", () => {
 		})
 	})
 
-	describe("applyTextualToolCallRecovery — native path remains primary", () => {
+	describe("applyTextualToolCallRecovery â€” native path remains primary", () => {
 		it("does not recover when executable native tool already present", () => {
 			const native: ToolUse = {
 				type: "tool_use",
@@ -222,7 +222,7 @@ describe("textToolCallRecovery", () => {
 		})
 	})
 
-	describe("applyTextualToolCallRecovery — streaming / incomplete / unknown", () => {
+	describe("applyTextualToolCallRecovery â€” streaming / incomplete / unknown", () => {
 		it("recovers unclosed MiniMax function (stream truncation)", () => {
 			const truncated = `<tool_call>
 <function=list_files>
@@ -234,7 +234,11 @@ describe("textToolCallRecovery", () => {
 				currentStreamingContentIndex: 0,
 			})
 			expect(result.applied).toBe(true)
-			expect(result.assistantMessageContent.some((b) => b.name === "list_files")).toBe(true)
+			expect(
+				result.assistantMessageContent.some(
+					(b) => b.type === "tool_use" && (b as ToolUse).name === "list_files",
+				),
+			).toBe(true)
 		})
 
 		it("does not apply for plain prose (no false recovery)", () => {
@@ -264,7 +268,7 @@ describe("textToolCallRecovery", () => {
 	})
 })
 
-describe("textToolCallRecovery → presentAssistantMessage write_spec path", () => {
+describe("textToolCallRecovery â†’ presentAssistantMessage write_spec path", () => {
 	it("recovered write_spec has id + nativeArgs required by BaseTool / presentAssistantMessage", () => {
 		const result = applyTextualToolCallRecovery({
 			assistantMessage: PRODUCTION_WRITE_SPEC_XML,
