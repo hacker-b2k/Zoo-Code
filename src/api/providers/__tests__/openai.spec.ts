@@ -527,6 +527,406 @@ describe("OpenAiHandler", () => {
 			})
 		})
 
+		describe("capability-aware reasoning preservation (preserveReasoning)", () => {
+			const reasoningMessages: Anthropic.Messages.MessageParam[] = [
+				{
+					role: "user",
+					content: [{ type: "text" as const, text: "What's the weather?" }],
+				},
+				{
+					role: "assistant",
+					content: [
+						{ type: "text" as const, text: "Let me check." },
+						{
+							type: "tool_use" as const,
+							id: "callu_1",
+							name: "get_weather",
+							input: { city: "Karachi" },
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result" as const,
+							tool_use_id: "callu_1",
+							content: "sunny, 32C",
+						},
+						{ type: "text" as const, text: "(tool result received)" },
+					],
+				},
+			]
+
+			const streamWithToolCall = async (options: any) => {
+				mockCreate.mockImplementation(async () => ({
+					[Symbol.asyncIterator]: async function* () {
+						yield {
+							choices: [
+								{
+									delta: {
+										tool_calls: [
+											{
+												index: 0,
+												id: "call_1",
+												function: { name: "test_tool", arguments: "{}" },
+											},
+										],
+									},
+									finish_reason: "tool_calls",
+								},
+							],
+						}
+					},
+				}))
+				const stream = options.handler.createMessage(systemPrompt, reasoningMessages, {
+					tools: [
+						{
+							type: "function",
+							function: { name: "get_weather", description: "Get weather", parameters: {} },
+						},
+					],
+				} as any)
+				for await (const _chunk of stream) {
+					// drain
+				}
+				return mockCreate.mock.calls[0][0] as any
+			}
+
+			it("uses convertToOpenAiMessages (no reasoning_content) when preserveReasoning is absent", async () => {
+				// Default mockOptions has no openAiCustomModelInfo → preserveReasoning undefined.
+				const requestOptions = await streamWithToolCall({ handler })
+				const assistant = requestOptions.messages.find((m: any) => m.role === "assistant")
+				expect(assistant).toBeDefined()
+				expect(assistant.reasoning_content).toBeUndefined()
+				// convertToOpenAiMessages keeps text and tool results as separate messages,
+				// so the trailing user text stays a user message.
+				const roles = requestOptions.messages.map((m: any) => m.role)
+				expect(roles).toContain("user")
+				expect(roles).toContain("tool")
+			})
+
+			it("preserves reasoning_content and merges tool-result text when preserveReasoning is true", async () => {
+				const preserveHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "mimo-v2.5-pro",
+					openAiCustomModelInfo: {
+						contextWindow: 262144,
+						supportsPromptCache: false,
+						preserveReasoning: true,
+					},
+				})
+				const requestOptions = await streamWithToolCall({ handler: preserveHandler })
+				const assistant = requestOptions.messages.find((m: any) => m.role === "assistant")
+				expect(assistant).toBeDefined()
+				// reasoning_content may be absent when the model produced none, but the
+				// converter must attach reasoning_content when present. Here the assistant
+				// message had no reasoning block, so reasoning_content should be absent,
+				// yet the tool-result text must have been merged into the tool message
+				// instead of a new user message (mergeToolResultText behavior).
+				const toolMessage = requestOptions.messages.find((m: any) => m.role === "tool")
+				expect(toolMessage).toBeDefined()
+				expect(toolMessage.content).toContain("sunny, 32C")
+				expect(toolMessage.content).toContain("(tool result received)")
+				const userMessages = requestOptions.messages.filter((m: any) => m.role === "user")
+				// Only the original user turn remains a user message.
+				expect(userMessages).toHaveLength(1)
+			})
+
+			it("carries assistant reasoning_content across tool-call continuations when preserveReasoning is true", async () => {
+				const messagesWithReasoning: Anthropic.Messages.MessageParam[] = [
+					{
+						role: "user",
+						content: [{ type: "text" as const, text: "Think, then act." }],
+					},
+					{
+						role: "assistant",
+						content: [
+							{ type: "reasoning" as any, text: "I should call the tool." } as any,
+							{
+								type: "tool_use" as const,
+								id: "callu_2",
+								name: "do_thing",
+								input: {},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result" as const,
+								tool_use_id: "callu_2",
+								content: "done",
+							},
+						],
+					},
+				]
+				const preserveHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "mimo-v2.5-pro",
+					openAiCustomModelInfo: {
+						contextWindow: 262144,
+						supportsPromptCache: false,
+						preserveReasoning: true,
+					},
+				})
+				mockCreate.mockImplementation(async () => ({
+					[Symbol.asyncIterator]: async function* () {
+						yield { choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }
+					},
+				}))
+				for await (const _chunk of preserveHandler.createMessage(systemPrompt, messagesWithReasoning)) {
+					// drain
+				}
+				const requestOptions = mockCreate.mock.calls[0][0] as any
+				const assistant = requestOptions.messages.find((m: any) => m.role === "assistant")
+				expect(assistant.reasoning_content).toBe("I should call the tool.")
+			})
+
+			it("still uses convertToR1Format without mergeToolResultText for legacy deepseek-reasoner path", async () => {
+				const legacyHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "deepseek-reasoner",
+				})
+				mockCreate.mockImplementation(async () => ({
+					[Symbol.asyncIterator]: async function* () {
+						yield { choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }
+					},
+				}))
+				const legacyReasoningMessages: Anthropic.Messages.MessageParam[] = [
+					{ role: "user", content: [{ type: "text" as const, text: "hi" }] },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use" as const,
+								id: "callu_3",
+								name: "t",
+								input: {},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{ type: "tool_result" as const, tool_use_id: "callu_3", content: "r" },
+							{ type: "text" as const, text: "extra user text" },
+						],
+					},
+				]
+				for await (const _chunk of legacyHandler.createMessage(systemPrompt, legacyReasoningMessages)) {
+					// drain
+				}
+				const requestOptions = mockCreate.mock.calls[0][0] as any
+				// Legacy path must NOT merge tool-result text into the tool message —
+				// a separate user message should still be created.
+				const userMessages = requestOptions.messages.filter((m: any) => m.role === "user")
+				expect(userMessages.length).toBeGreaterThanOrEqual(2)
+			})
+
+			it("does not alter tool_choice / parallel_tool_calls behavior for preserveReasoning models", async () => {
+				const preserveHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "mimo-v2.5-pro",
+					openAiCustomModelInfo: {
+						contextWindow: 262144,
+						supportsPromptCache: false,
+						preserveReasoning: true,
+					},
+				})
+				const requestOptions = await streamWithToolCall({ handler: preserveHandler })
+				expect(requestOptions.parallel_tool_calls).toBe(true)
+				// tool_choice is passed through from metadata (undefined here).
+				expect(requestOptions.tool_choice).toBeUndefined()
+				expect(Array.isArray(requestOptions.tools)).toBe(true)
+			})
+
+			it("unknown custom providers without preserveReasoning keep existing conversion (no regression)", async () => {
+				const unknownHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiBaseUrl: "https://unknown-gateway.example.com/v1",
+					openAiModelId: "some-custom-model",
+					openAiCustomModelInfo: { contextWindow: 64000, supportsPromptCache: false },
+				})
+				const requestOptions = await streamWithToolCall({ handler: unknownHandler })
+				const assistant = requestOptions.messages.find((m: any) => m.role === "assistant")
+				expect(assistant.reasoning_content).toBeUndefined()
+				const toolMessage = requestOptions.messages.find((m: any) => m.role === "tool")
+				expect(toolMessage.content).toBe("sunny, 32C")
+				// text after tool result remains a separate user message (no merge).
+				const userMessages = requestOptions.messages.filter((m: any) => m.role === "user")
+				expect(userMessages.length).toBeGreaterThanOrEqual(2)
+			})
+		})
+
+		describe("capability-driven request shape (thinking / tool_choice / parallel_tool_calls / id sanitize)", () => {
+			const toolMeta = {
+				tools: [
+					{
+						type: "function",
+						function: { name: "get_weather", description: "Get weather", parameters: {} },
+					},
+				],
+			} as any
+
+			const drain = async (handler: OpenAiHandler, toolId = "call_1") => {
+				mockCreate.mockImplementation(async () => ({
+					[Symbol.asyncIterator]: async function* () {
+						yield {
+							choices: [
+								{
+									delta: {
+										tool_calls: [
+											{
+												index: 0,
+												id: toolId,
+												function: { name: "get_weather", arguments: "{}" },
+											},
+										],
+									},
+									finish_reason: "tool_calls",
+								},
+							],
+						}
+					},
+				}))
+				const stream = handler.createMessage(
+					"You are helpful.",
+					[{ role: "user", content: [{ type: "text" as const, text: "hi" }] }],
+					toolMeta,
+				)
+				const chunks: any[] = []
+				for await (const c of stream) chunks.push(c)
+				return { requestOptions: mockCreate.mock.calls[0][0] as any, chunks }
+			}
+
+			it("omits tool_choice and parallel_tool_calls and sends thinking for a MiMo-class reasoning model", async () => {
+				// Xiaomi MiMo via OpenAI Compatible: model info carrying the generic reasoning
+				// capabilities (as persisted by applyBestProviderDefaults inference).
+				const h = new OpenAiHandler({
+					...mockOptions,
+					openAiBaseUrl: "https://api.xiaomimimo.com/v1",
+					openAiModelId: "mimo-v2.5-pro",
+					openAiCustomModelInfo: {
+						contextWindow: 1_048_576,
+						supportsPromptCache: false,
+						preserveReasoning: true,
+						supportsReasoningBinary: true,
+						supportedParameters: ["max_tokens", "temperature", "tools"],
+					},
+				})
+				const { requestOptions } = await drain(h)
+				expect(requestOptions.extra_body).toEqual({ thinking: { type: "enabled" } })
+				expect(requestOptions.tool_choice).toBeUndefined()
+				expect(requestOptions.parallel_tool_calls).toBeUndefined()
+				expect(Array.isArray(requestOptions.tools)).toBe(true)
+			})
+
+			it("does not send thinking when reasoning effort is explicitly disabled", async () => {
+				const h = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "mimo-v2.5-pro",
+					enableReasoningEffort: false,
+					openAiCustomModelInfo: {
+						contextWindow: 1_048_576,
+						supportsPromptCache: false,
+						supportsReasoningBinary: true,
+					},
+				})
+				const { requestOptions } = await drain(h)
+				expect(requestOptions.extra_body).toBeUndefined()
+			})
+
+			it("unknown provider without capabilities keeps tool_choice + parallel_tool_calls + no thinking", async () => {
+				const h = new OpenAiHandler({
+					...mockOptions,
+					openAiBaseUrl: "https://unknown-gateway.example.com/v1",
+					openAiModelId: "some-model",
+					openAiCustomModelInfo: { contextWindow: 64000, supportsPromptCache: false },
+				})
+				const { requestOptions } = await drain(h)
+				expect(requestOptions.extra_body).toBeUndefined()
+				expect(requestOptions.parallel_tool_calls).toBe(true)
+				// tool_choice passed through from metadata (undefined here)
+				expect(requestOptions.tool_choice).toBeUndefined()
+			})
+
+			it("sanitizes tool-call ids for preserveReasoning providers but not for generic ones", async () => {
+				const reasoningHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "mimo-v2.5-pro",
+					openAiCustomModelInfo: { contextWindow: 1000, supportsPromptCache: false, preserveReasoning: true },
+				})
+				const { chunks } = await drain(reasoningHandler, "call:abc/def")
+				const partial = chunks.find((c) => c.type === "tool_call_partial")
+				expect(partial.id).toBe("call_abc_def")
+
+				const genericHandler = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "plain-model",
+					openAiCustomModelInfo: { contextWindow: 1000, supportsPromptCache: false },
+				})
+				const { chunks: gchunks } = await drain(genericHandler, "call:abc/def")
+				const gpartial = gchunks.find((c) => c.type === "tool_call_partial")
+				expect(gpartial.id).toBe("call:abc/def")
+			})
+
+			it("request-time inference adds additive preserveReasoning for a saved profile with NO reasoning flags", async () => {
+				// Reproduces the real-world `xiaomi` profile whose openAiCustomModelInfo was saved
+				// before capability persistence existed — only sane defaults, no reasoning flags.
+				// Request-time inference must add preserveReasoning (fixing the reasoning_content
+				// drop) WITHOUT re-shaping the request (no supportedParameters / thinking forced
+				// retroactively — those belong to an explicit re-save).
+				const savedProfileHandler = new OpenAiHandler({
+					openAiApiKey: "test-key",
+					openAiBaseUrl: "https://api.xiaomimimo.com/v1",
+					openAiModelId: "mimo-v2.5",
+					enableReasoningEffort: true,
+					openAiCustomModelInfo: {
+						maxTokens: -1,
+						contextWindow: 1_000_000,
+						supportsImages: false,
+						supportsPromptCache: false,
+						inputPrice: 0,
+						outputPrice: 0,
+					},
+				})
+
+				const model = savedProfileHandler.getModel()
+				// Additive capability is inferred at request time.
+				expect(model.info.preserveReasoning).toBe(true)
+				// Request-shape-changing capabilities are NOT forced at request time.
+				expect(model.info.supportsReasoningBinary).toBeUndefined()
+				expect(model.info.supportedParameters).toBeUndefined()
+			})
+
+			it("request-time inference does NOT re-shape the legacy deepseek-reasoner path", async () => {
+				const legacy = new OpenAiHandler({
+					...mockOptions,
+					openAiModelId: "deepseek-reasoner",
+				})
+				const model = legacy.getModel()
+				// Legacy deepseek-reasoner must keep its dedicated R1-without-merge behaviour:
+				// no inferred preserveReasoning (which would enable mergeToolResultText).
+				expect(model.info.preserveReasoning).toBeUndefined()
+				expect(model.info.supportedParameters).toBeUndefined()
+			})
+
+			it("does NOT inject reasoning flags for a plain non-reasoning model (no false positives)", async () => {
+				const plain = new OpenAiHandler({
+					openAiApiKey: "k",
+					openAiBaseUrl: "https://api.example.com/v1",
+					openAiModelId: "gpt-4o",
+					openAiCustomModelInfo: { contextWindow: 128000, supportsPromptCache: false },
+				})
+				const model = plain.getModel()
+				expect(model.info.preserveReasoning).toBeUndefined()
+				expect(model.info.supportsReasoningBinary).toBeUndefined()
+				expect(model.info.supportedParameters).toBeUndefined()
+			})
+		})
+
 		it("should include reasoning_effort when reasoning effort is enabled", async () => {
 			const reasoningOptions: ApiHandlerOptions = {
 				...mockOptions,
@@ -992,20 +1392,22 @@ describe("OpenAiHandler", () => {
 	})
 
 	describe("Azure AI Inference Service", () => {
-		const azureOptions = {
-			...mockOptions,
+		const getAzureOptions = () => ({
+			openAiApiKey: "test-api-key",
 			openAiBaseUrl: "https://test.services.ai.azure.com",
 			openAiModelId: "deepseek-v3",
 			azureApiVersion: "2024-05-01-preview",
-		}
+		})
 
 		it("should initialize with Azure AI Inference Service configuration", () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			expect(azureHandler).toBeInstanceOf(OpenAiHandler)
 			expect(azureHandler.getModel().id).toBe(azureOptions.openAiModelId)
 		})
 
 		it("should handle streaming responses with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			const systemPrompt = "You are a helpful assistant."
 			const messages: Anthropic.Messages.MessageParam[] = [
@@ -1050,6 +1452,7 @@ describe("OpenAiHandler", () => {
 		})
 
 		it("should handle non-streaming responses with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler({
 				...azureOptions,
 				openAiStreamingEnabled: false,
@@ -1099,6 +1502,7 @@ describe("OpenAiHandler", () => {
 		})
 
 		it("should handle completePrompt with Azure AI Inference Service", async () => {
+			const azureOptions = getAzureOptions()
 			const azureHandler = new OpenAiHandler(azureOptions)
 			const result = await azureHandler.completePrompt("Test prompt")
 			expect(result).toBe("Test response")

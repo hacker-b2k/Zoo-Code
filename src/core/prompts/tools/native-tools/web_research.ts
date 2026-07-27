@@ -46,7 +46,7 @@ export default {
 						"Maximum number of search results to return (default: 8, only used with search action)",
 				},
 			},
-			required: ["action", "query", "url", "max_results"],
+			required: ["action"],
 			additionalProperties: false,
 		},
 	},

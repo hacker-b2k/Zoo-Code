@@ -158,6 +158,24 @@ export async function checkAutoApproval({
 			return { decision: "approve" }
 		}
 
+		// Virtual Spec Workspace (F-005d): write_spec only mutates extension globalStorage,
+		// never the project git tree. When master auto-approval is on, approve without
+		// requiring alwaysAllowWrite (repo write toggle is a different risk domain).
+		if (tool.tool === "write_spec") {
+			return { decision: "approve" }
+		}
+
+		// F-022b: explicit bulk delete_spec may auto-approve when master AA is on.
+		// Single/accidental deletes (action delete, or missing explicitBulk) always ask.
+		if (tool.tool === "delete_spec") {
+			const action = typeof tool.action === "string" ? tool.action : ""
+			const explicitBulk = (tool as { explicitBulk?: boolean }).explicitBulk === true
+			if (action === "delete_bulk" && explicitBulk) {
+				return { decision: "approve" }
+			}
+			return { decision: "ask" }
+		}
+
 		// The skill tool only loads pre-defined instructions from global or project skills.
 		// It does not read arbitrary files - skills must be explicitly installed/defined by the user.
 		// Auto-approval is intentional to provide a seamless experience when loading task instructions.

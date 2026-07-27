@@ -48,12 +48,22 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 		return specialResult
 	}
 
-	// Get ripgrep path
-	const rgPath = await getRipgrepPath()
+	// Get ripgrep path — degrade gracefully to a Node.js filesystem walk when
+	// the ripgrep binary bundled with VS Code cannot be located (certain forks /
+	// staged-install layouts). Previously this threw "Could not find ripgrep
+	// binary", surfacing as an unhandled rejection and a dead list_files tool.
+	let rgPath: string | undefined
+	try {
+		rgPath = await getRipgrepPath()
+	} catch {
+		rgPath = undefined
+	}
 
 	if (!recursive) {
 		// For non-recursive, use the existing approach
-		const files = await listFilesWithRipgrep(rgPath, dirPath, false, limit)
+		const files = rgPath
+			? await listFilesWithRipgrep(rgPath, dirPath, false, limit)
+			: await listFilesWithNodeFs(dirPath, false, limit)
 		const ignoreInstance = await createIgnoreInstance(dirPath)
 		// Calculate remaining limit for directories
 		const remainingLimit = Math.max(0, limit - files.length)
@@ -62,7 +72,9 @@ export async function listFiles(dirPath: string, recursive: boolean, limit: numb
 	}
 
 	// For recursive mode, use the original approach but ensure first-level directories are included
-	const files = await listFilesWithRipgrep(rgPath, dirPath, true, limit)
+	const files = rgPath
+		? await listFilesWithRipgrep(rgPath, dirPath, true, limit)
+		: await listFilesWithNodeFs(dirPath, true, limit)
 	const ignoreInstance = await createIgnoreInstance(dirPath)
 	// Calculate remaining limit for directories
 	const remainingLimit = Math.max(0, limit - files.length)
@@ -183,6 +195,54 @@ async function handleSpecialDirectories(dirPath: string): Promise<[string[], boo
 	}
 
 	return null
+}
+
+/**
+ * Node.js fallback file listing used when the ripgrep binary bundled with
+ * VS Code cannot be located. Mirrors listFilesWithRipgrep's contract
+ * (absolute file paths, capped at limit). Directory exclusions use the same
+ * DIRS_TO_IGNORE list as the directory scanner; .git is always skipped.
+ */
+async function listFilesWithNodeFs(dirPath: string, recursive: boolean, limit: number): Promise<string[]> {
+	const absolutePath = path.resolve(dirPath)
+	const results: string[] = []
+
+	const walk = async (current: string): Promise<void> => {
+		if (results.length >= limit) {
+			return
+		}
+
+		let entries: fs.Dirent[]
+		try {
+			entries = await fs.promises.readdir(current, { withFileTypes: true })
+		} catch (err) {
+			console.warn(`Could not read directory ${current}: ${err}`)
+			return
+		}
+
+		for (const entry of entries) {
+			if (results.length >= limit) {
+				return
+			}
+
+			const fullPath = path.join(current, entry.name)
+
+			if (entry.isDirectory()) {
+				if (!recursive || entry.isSymbolicLink()) {
+					continue
+				}
+				if (entry.name === ".git" || DIRS_TO_IGNORE.includes(entry.name)) {
+					continue
+				}
+				await walk(fullPath)
+			} else if (entry.isFile()) {
+				results.push(fullPath)
+			}
+		}
+	}
+
+	await walk(absolutePath)
+	return results
 }
 
 /**

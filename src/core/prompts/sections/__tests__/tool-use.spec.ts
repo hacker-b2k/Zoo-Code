@@ -4,8 +4,17 @@ describe("getSharedToolUseSection", () => {
 	it("should include native tool-calling instructions", () => {
 		const section = getSharedToolUseSection()
 
-		expect(section).toContain("provider-native tool-calling mechanism")
+		expect(section).toContain("provider-native structured tool-calling mechanism")
 		expect(section).toContain("Do not include XML markup or examples")
+	})
+
+	it("should explicitly prohibit textual/XML/JSON tool-call markup", () => {
+		const section = getSharedToolUseSection()
+
+		expect(section).toContain("NEVER write a tool call as plain text, XML markup, or a JSON block")
+		expect(section).toContain("<tool_call>")
+		expect(section).toContain("<function=name>")
+		expect(section).toContain("NOT valid calls")
 	})
 
 	it("should include multiple tools per message guidance", () => {

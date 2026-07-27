@@ -521,6 +521,15 @@
 			"condensingContext": "CONDENSING CONTEXT",
 			"retrying": "RETRYING",
 			"waiting": "WAITING",
+			"listingSpecs": "LISTING SPECS",
+			"readingSpec": "READING SPEC",
+			"creatingSpec": "CREATING SPEC",
+			"updatingSpec": "UPDATING SPEC",
+			"deletingSpec": "DELETING SPEC",
+			"updatingRequirements": "UPDATING REQUIREMENTS",
+			"savingDesign": "SAVING DESIGN",
+			"updatingTasks": "UPDATING TASKS",
+			"managingSpecs": "MANAGING SPECS",
 			"activity": "ACTIVE"
 		},
 		"summary": {

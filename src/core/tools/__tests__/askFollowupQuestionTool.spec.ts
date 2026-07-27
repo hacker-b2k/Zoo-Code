@@ -568,4 +568,51 @@ describe("AskFollowupQuestionTool", () => {
 			}
 		})
 	})
+
+	describe("suggestion normalization (React #31 prevention)", () => {
+		it("normalizes plain-string suggestion items to { answer: string }", async () => {
+			const params = {
+				question: "Proceed?",
+				// Models (and XML text recovery) may emit bare strings instead of objects.
+				follow_up: ["Yes", "No"] as any,
+			}
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			const askPayload = JSON.parse(vi.mocked(mockTask.ask).mock.calls[0][1] as string)
+			expect(askPayload.suggest).toHaveLength(2)
+			for (const suggestion of askPayload.suggest) {
+				expect(typeof suggestion.answer).toBe("string")
+			}
+			expect(askPayload.suggest[0].answer).toBe("Yes")
+			expect(askPayload.suggest[1].answer).toBe("No")
+		})
+
+		it("serializes non-string text values instead of forwarding objects to the webview", async () => {
+			const params = {
+				question: "Proceed?",
+				follow_up: [{ text: { nested: "object" } }, { text: 42 }] as any,
+			}
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			const askPayload = JSON.parse(vi.mocked(mockTask.ask).mock.calls[0][1] as string)
+			expect(typeof askPayload.suggest[0].answer).toBe("string")
+			expect(askPayload.suggest[0].answer).toBe('{"nested":"object"}')
+			expect(typeof askPayload.suggest[1].answer).toBe("string")
+			expect(askPayload.suggest[1].answer).toBe("42")
+		})
+
+		it("keeps normal object suggestions intact", async () => {
+			const params = {
+				question: "Proceed?",
+				follow_up: [{ text: "Keep going", mode: "code" }],
+			}
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			const askPayload = JSON.parse(vi.mocked(mockTask.ask).mock.calls[0][1] as string)
+			expect(askPayload.suggest[0].answer).toBe("Keep going")
+		})
+	})
 })

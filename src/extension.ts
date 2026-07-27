@@ -32,6 +32,8 @@ import { formatLanguage } from "./shared/language"
 import { ContextProxy } from "./core/config/ContextProxy"
 import { ClineProvider } from "./core/webview/ClineProvider"
 import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
+import { SpecDocumentContentProvider } from "./core/specs/virtualDocs/SpecDocumentContentProvider"
+import { SPEC_DOCUMENT_SCHEME } from "./core/specs/virtualDocs/specUri"
 import { Terminal } from "./integrations/terminal/Terminal"
 import { TerminalRegistry } from "./integrations/terminal/TerminalRegistry"
 import { openAiCodexOAuthManager } from "./integrations/openai-codex/oauth"
@@ -298,6 +300,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	})
 
 	registerCommands({ context, outputChannel, provider })
+
+	const specDocumentProvider = new SpecDocumentContentProvider(context.globalStorageUri.fsPath)
+	context.subscriptions.push(
+		specDocumentProvider,
+		vscode.workspace.registerTextDocumentContentProvider(SPEC_DOCUMENT_SCHEME, specDocumentProvider),
+	)
 
 	/**
 	 * We use the text document content provider API to show the left side for diff

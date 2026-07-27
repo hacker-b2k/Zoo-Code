@@ -14,6 +14,7 @@ import type { ApiHandlerOptions } from "../../shared/api"
 import { Package } from "../../shared/package"
 
 import { TagMatcher } from "../../utils/tag-matcher"
+import { sanitizeOpenAiCallId } from "../../utils/tool-id"
 
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { convertToR1Format } from "../transform/r1-format"
@@ -26,6 +27,7 @@ import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from ".
 import { handleOpenAIError } from "./utils/openai-error-handler"
 import { extractReasoningFromDelta } from "./utils/extract-reasoning"
 import { analyzeOpenAiCompatibleBaseUrl, getOpenAiCompatibleModelsUrl } from "./utils/openai-base-url"
+import { withInferredReasoningCapabilities } from "./utils/reasoning-capabilities"
 
 // TODO: Rename this to OpenAICompatibleHandler. Also, I think the
 // `OpenAINativeHandler` can subclass from this, since it's obviously
@@ -34,6 +36,12 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 	protected options: ApiHandlerOptions
 	protected client: OpenAI
 	private readonly providerName = "OpenAI"
+	/**
+	 * Optional per-request tool-call id normalizer. Set to sanitizeOpenAiCallId for
+	 * reasoning-capable (preserveReasoning) providers that enforce strict id format;
+	 * undefined (no-op) for all other OpenAI-compatible providers.
+	 */
+	protected _toolCallIdNormalizer: ((id: string) => string) | undefined
 
 	constructor(options: ApiHandlerOptions) {
 		super()
@@ -108,7 +116,48 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		const enabledR1Format = this.options.openAiR1FormatEnabled ?? false
 		const isAzureAiInference = this._isAzureAiInference(modelUrl)
 		const deepseekReasoner = modelId.includes("deepseek-reasoner") || enabledR1Format
-		const isFreeEndpoint = !this.options.openAiApiKey
+		// Capability-aware reasoning preservation: any OpenAI-compatible model whose
+		// ModelInfo explicitly opts into `preserveReasoning` needs reasoning_content
+		// carried across multi-turn tool-call continuations. Route those through the
+		// R1 converter with mergeToolResultText so interleaved thinking survives
+		// tool results. When the capability is unknown/absent, behaviour is unchanged.
+		const preserveReasoning = modelInfo.preserveReasoning === true
+		const useR1Format = deepseekReasoner || preserveReasoning
+		// mergeToolResultText is required for interleaved-thinking models (the
+		// preserveReasoning path) but is left off for the legacy deepseek-reasoner /
+		// openAiR1FormatEnabled path to avoid changing long-standing behaviour.
+		const r1FormatOptions = preserveReasoning ? { mergeToolResultText: true } : undefined
+		// Reasoning-capable (preserveReasoning) providers require valid tool-call ids on
+		// both the outgoing tool_calls and the tool result references. Normalize them so
+		// multi-turn continuations don't get rejected. Other providers keep raw ids.
+		this._toolCallIdNormalizer = preserveReasoning ? sanitizeOpenAiCallId : undefined
+		// Free/no-auth only when there is neither a Bearer key nor custom credential headers.
+		// Custom endpoints that auth via X-Api-Key (etc.) must still receive tools.
+		const isFreeEndpoint = this._isFreeEndpoint()
+		const enableStrictTools = this._shouldUseOpenAiStrictTools()
+
+		// --- Generic capability gates (no provider/model hardcoding) -----------------
+		// These read generic ModelInfo flags. When the flags are absent (unknown or
+		// partially-specified providers), every request field below falls back to the
+		// exact pre-existing behaviour, so generic OpenAI-compatible providers and
+		// custom endpoints are byte-for-byte unaffected.
+		//
+		// 1. Binary reasoning/thinking: models that expose an on/off thinking mode
+		//    (supportsReasoningBinary === true) get `extra_body.thinking = {type:"enabled"}`
+		//    when reasoning is not explicitly disabled. Mirrors base-openai-compatible-provider.
+		const supportsReasoningBinary = modelInfo.supportsReasoningBinary === true
+		const reasoningNotDisabled = this.options.enableReasoningEffort !== false
+		const enableBinaryThinking = supportsReasoningBinary && reasoningNotDisabled
+		//
+		// 2. tool_choice / parallel_tool_calls are NOT universally supported. Many
+		//    OpenAI-compatible reasoning endpoints reject or mishandle them (and emit
+		//    tool calls as text markup instead of native tool_calls). Only send them
+		//    when the model's supportedParameters allow-list explicitly includes them;
+		//    when supportedParameters is undefined we keep the historical defaults.
+		const supportedParameters = modelInfo.supportedParameters
+		const supportsToolChoiceParam = supportedParameters === undefined || supportedParameters.includes("tool_choice")
+		const supportsParallelToolCallsParam =
+			supportedParameters === undefined || supportedParameters.includes("parallel_tool_calls")
 
 		if (modelId.includes("o1") || modelId.includes("o3") || modelId.includes("o4")) {
 			yield* this.handleO3FamilyMessage(modelId, systemPrompt, messages, metadata)
@@ -123,8 +172,11 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		if (this.options.openAiStreamingEnabled ?? true) {
 			let convertedMessages
 
-			if (deepseekReasoner) {
-				convertedMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
+			if (useR1Format) {
+				convertedMessages = convertToR1Format(
+					[{ role: "user", content: systemPrompt }, ...messages],
+					r1FormatOptions,
+				)
 			} else {
 				if (modelInfo.supportsPromptCache) {
 					systemMessage = {
@@ -194,10 +246,16 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				...(isGrokXAI ? {} : { stream_options: { include_usage: true } }),
 				...(reasoning && reasoning),
 				// Free endpoints (e.g., g4f.space) may not support tool calls — only include
-				// tools when a real API key is configured.
-				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
-				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
-				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				// tools when authenticated (Bearer key or custom credential headers).
+				// Third-party gateways must not get OpenAI-only strict tool schemas.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
+				...(!isFreeEndpoint && supportsToolChoiceParam && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint &&
+					supportsParallelToolCallsParam && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				// Binary thinking mode for reasoning-capable OpenAI-compatible models.
+				...(enableBinaryThinking && { extra_body: { thinking: { type: "enabled" } } }),
 			}
 
 			// Add max_tokens if needed
@@ -338,8 +396,8 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				yield this.processUsageMetrics(lastUsage, modelInfo)
 			}
 		} else {
-			const nonStreamingMessages = deepseekReasoner
-				? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
+			const nonStreamingMessages = useR1Format
+				? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages], r1FormatOptions)
 				: [systemMessage, ...convertToOpenAiMessages(messages)]
 
 			if (isFreeEndpoint) {
@@ -349,10 +407,14 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
 				model: modelId,
 				messages: nonStreamingMessages,
-				// Free endpoints may not support tool calls — only include when a real API key is configured.
-				...(!isFreeEndpoint && { tools: this.convertToolsForOpenAI(metadata?.tools) }),
-				...(!isFreeEndpoint && { tool_choice: metadata?.tool_choice }),
-				...(!isFreeEndpoint && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				// Free endpoints may not support tool calls — only include when authenticated.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
+				...(!isFreeEndpoint && supportsToolChoiceParam && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint &&
+					supportsParallelToolCallsParam && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				...(enableBinaryThinking && { extra_body: { thinking: { type: "enabled" } } }),
 			}
 
 			// Add max_tokens if needed
@@ -417,8 +479,16 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 	override getModel() {
 		const id = this.options.openAiModelId ?? ""
-		// Merge so partial openAiCustomModelInfo does not drop supportsImages / defaults
-		const info: ModelInfo = mergeOpenAiCompatibleModelInfo(this.options.openAiCustomModelInfo)
+		// Merge so partial openAiCustomModelInfo does not drop supportsImages / defaults,
+		// then enrich with reasoning capabilities inferred from the model id at REQUEST
+		// TIME. This matters for profiles saved before capability persistence existed (or
+		// written by hand) whose openAiCustomModelInfo carries no reasoning flags — the
+		// save-time defaults never run for them, so without request-time enrichment every
+		// capability gate stays off. Explicit saved values always win over inference.
+		const info: ModelInfo = withInferredReasoningCapabilities(
+			id,
+			mergeOpenAiCompatibleModelInfo(this.options.openAiCustomModelInfo),
+		)
 		const params = getModelParams({
 			format: "openai",
 			modelId: id,
@@ -489,7 +559,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
 				temperature: undefined,
 				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
-				tools: this.convertToolsForOpenAI(metadata?.tools),
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
 				tool_choice: metadata?.tool_choice,
 				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
 			}
@@ -523,7 +595,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
 				temperature: undefined,
 				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
-				tools: this.convertToolsForOpenAI(metadata?.tools),
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
 				tool_choice: metadata?.tool_choice,
 				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
 			}
@@ -610,13 +684,18 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 	> {
 		if (delta?.tool_calls) {
 			for (const toolCall of delta.tool_calls) {
-				if (toolCall.id) {
-					activeToolCallIds.add(toolCall.id)
+				// Interleaved-thinking / reasoning providers (preserveReasoning) are strict
+				// about tool-call id format (^[a-zA-Z0-9_-]+$); sanitize so multi-turn
+				// continuations don't 400. No-op for other providers (id already valid).
+				const id =
+					toolCall.id && this._toolCallIdNormalizer ? this._toolCallIdNormalizer(toolCall.id) : toolCall.id
+				if (id) {
+					activeToolCallIds.add(id)
 				}
 				yield {
 					type: "tool_call_partial",
 					index: toolCall.index,
-					id: toolCall.id,
+					id,
 					name: toolCall.function?.name,
 					arguments: toolCall.function?.arguments,
 				}
@@ -666,6 +745,49 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 	protected _isAzureAiInference(baseUrl?: string): boolean {
 		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isAzureAiInference
+	}
+
+	/**
+	 * Free/no-auth endpoints (e.g. g4f.space) have neither a Bearer API key nor
+	 * custom credential headers. Custom endpoints that authenticate via X-Api-Key
+	 * (or similar) omit openAiApiKey so Authorization is not sent, but they are
+	 * still authenticated and must receive tools.
+	 */
+	private _isFreeEndpoint(): boolean {
+		if (this.options.openAiApiKey) {
+			return false
+		}
+
+		const headers = this.options.openAiHeaders || {}
+		const hasCredentialHeader = Object.keys(headers).some((name) => {
+			const lower = name.toLowerCase()
+			// Ignore non-auth metadata headers that may be present on openAiHeaders.
+			if (lower === "user-agent" || lower === "x-title" || lower === "http-referer" || lower === "referer") {
+				return false
+			}
+			const value = headers[name]
+			return typeof value === "string" ? value.length > 0 : value != null
+		})
+
+		return !hasCredentialHeader
+	}
+
+	/**
+	 * OpenAI strict tool schemas (`strict: true` + all properties required) are
+	 * only reliable on official OpenAI / Azure OpenAI. Third-party gateways
+	 * (Logfare, LiteLLM, vLLM, OpenRouter-compatible, Qwen-compatible, etc.)
+	 * often mishandle them, producing empty streams or broken tool calling.
+	 */
+	private _shouldUseOpenAiStrictTools(): boolean {
+		const analyzed = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
+		if (analyzed.isAzureAiInference) {
+			return false
+		}
+		if (analyzed.isAzureOpenAi || this.options.openAiUseAzure) {
+			return true
+		}
+		const host = analyzed.host.toLowerCase()
+		return host === "api.openai.com"
 	}
 
 	/**

@@ -157,6 +157,16 @@ const getCommandsMap = ({
 		const { promptForCustomStoragePath } = await import("../utils/storage")
 		await promptForCustomStoragePath()
 	},
+	openSpecWorkspace: async () => {
+		const { SpecWorkspacePanel } = await import("../core/specs/ui/SpecWorkspacePanel")
+		const globalStoragePath = provider.contextProxy.globalStorageUri.fsPath
+		SpecWorkspacePanel.createOrShow({
+			context,
+			globalStoragePath,
+			getWorkspaceRoot: () => provider.cwd,
+			outputChannel,
+		})
+	},
 	importSettings: async (filePath?: string) => {
 		const visibleProvider = getVisibleProviderOrLog(outputChannel)
 		if (!visibleProvider) {

@@ -85,6 +85,8 @@ export type TaskProviderEvents = {
 
 export interface CreateTaskOptions {
 	taskId?: string
+	/** Internal context sent to the model for the initial request only; never rendered in chat. */
+	initialHiddenContext?: string
 	enableCheckpoints?: boolean
 	consecutiveMistakeLimit?: number
 	experiments?: Record<string, boolean>

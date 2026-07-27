@@ -105,6 +105,197 @@ export function handleProviderError(
 	return wrapped
 }
 
+/** Error category for classification of API failures. */
+export type ApiErrorCategory =
+	| "upstream_failure" // Upstream server returned an error (400, 502, 503, 504)
+	| "rate_limit" // Rate limited (429)
+	| "auth_failure" // Authentication/authorization (401, 403)
+	| "context_overflow" // Context window exceeded
+	| "timeout" // Request timed out
+	| "network" // Network/connectivity error
+	| "unknown" // Unclassified
+
+export interface ClassifiedApiError {
+	category: ApiErrorCategory
+	status?: number
+	message: string
+	provider: string
+	model?: string
+	isRetriable: boolean
+	maxRetries: number
+}
+
+/**
+ * Classify an API error into a category with retry semantics.
+ *
+ * This helps the retry logic make intelligent decisions:
+ * - upstream_failure (400/502/503/504): max 1 retry, often model incompatibility
+ * - rate_limit (429): retriable with backoff
+ * - auth_failure (401/403): NOT retriable
+ * - context_overflow: retriable with truncation
+ * - timeout: retriable once
+ * - network: retriable with backoff
+ */
+export function classifyApiError(error: unknown, providerName: string, modelId?: string): ClassifiedApiError {
+	const anyErr = error as any
+	const status = typeof anyErr?.status === "number" ? anyErr.status : undefined
+	const message = anyErr?.message || String(error)
+	const model = modelId || "unknown"
+
+	// Detect upstream errors from proxy messages
+	const isUpstreamError =
+		message.includes("Upstream error") ||
+		message.includes("upstream") ||
+		message.includes("Bad Gateway") ||
+		message.includes("Service Unavailable") ||
+		message.includes("Gateway Timeout")
+
+	// Rate limit
+	if (status === 429) {
+		return {
+			category: "rate_limit",
+			status,
+			message,
+			provider: providerName,
+			model,
+			isRetriable: true,
+			maxRetries: 3,
+		}
+	}
+
+	// Auth failure — never retry
+	if (status === 401 || status === 403) {
+		return {
+			category: "auth_failure",
+			status,
+			message,
+			provider: providerName,
+			model,
+			isRetriable: false,
+			maxRetries: 0,
+		}
+	}
+
+	// Context window overflow — retriable with truncation
+	if (
+		anyErr?.code === "context_length_exceeded" ||
+		message.includes("context_length_exceeded") ||
+		message.includes("context window")
+	) {
+		return {
+			category: "context_overflow",
+			status,
+			message,
+			provider: providerName,
+			model,
+			isRetriable: true,
+			maxRetries: 3,
+		}
+	}
+
+	// Upstream failure (400 with upstream message, 502, 503, 504)
+	if (isUpstreamError || status === 502 || status === 503 || status === 504) {
+		return {
+			category: "upstream_failure",
+			status,
+			message,
+			provider: providerName,
+			model,
+			isRetriable: true,
+			maxRetries: 1,
+		}
+	}
+
+	// 400 from upstream model (e.g., "400 Upstream error while contacting the model")
+	if (status === 400 && isUpstreamError) {
+		return {
+			category: "upstream_failure",
+			status,
+			message,
+			provider: providerName,
+			model,
+			isRetriable: true,
+			maxRetries: 1,
+		}
+	}
+
+	// Timeout
+	if (
+		anyErr?.code === "ETIMEDOUT" ||
+		anyErr?.code === "ECONNABORTED" ||
+		message.includes("timeout") ||
+		message.includes("ETIMEDOUT")
+	) {
+		return { category: "timeout", status, message, provider: providerName, model, isRetriable: true, maxRetries: 1 }
+	}
+
+	// Network errors
+	if (
+		anyErr?.code === "ECONNREFUSED" ||
+		anyErr?.code === "ECONNRESET" ||
+		anyErr?.code === "ENOTFOUND" ||
+		message.includes("ECONNREFUSED") ||
+		message.includes("Connection refused")
+	) {
+		return { category: "network", status, message, provider: providerName, model, isRetriable: true, maxRetries: 2 }
+	}
+
+	// Default: unknown — limit retries to be safe
+	return { category: "unknown", status, message, provider: providerName, model, isRetriable: true, maxRetries: 1 }
+}
+
+/**
+ * Format a classified error into a user-friendly diagnostic message.
+ */
+export function formatClassifiedError(classified: ClassifiedApiError): string {
+	const parts: string[] = []
+
+	parts.push(`Model request failed`)
+	parts.push(``)
+	parts.push(`Provider: ${classified.provider}`)
+	parts.push(`Model: ${classified.model}`)
+
+	if (classified.status) {
+		parts.push(`Status: ${classified.status}`)
+	}
+
+	parts.push(`Category: ${classified.category}`)
+
+	switch (classified.category) {
+		case "upstream_failure":
+			parts.push(``)
+			parts.push(`The upstream model provider returned an error. This is usually a temporary`)
+			parts.push(`availability or compatibility issue with the specific model.`)
+			parts.push(``)
+			parts.push(`Suggested actions:`)
+			parts.push(`1. Retry once — the issue may be temporary`)
+			parts.push(`2. Switch to a different model if the problem persists`)
+			parts.push(`3. Check the model provider's status page`)
+			break
+		case "rate_limit":
+			parts.push(``)
+			parts.push(`Rate limited by the provider. Will retry automatically with backoff.`)
+			break
+		case "auth_failure":
+			parts.push(``)
+			parts.push(`Authentication failed. Check your API key configuration.`)
+			break
+		case "timeout":
+			parts.push(``)
+			parts.push(`The request timed out. This may be due to high server load.`)
+			break
+		case "network":
+			parts.push(``)
+			parts.push(`Network connectivity issue. Check your internet connection.`)
+			break
+		default:
+			parts.push(``)
+			parts.push(`An unexpected error occurred. Will retry once.`)
+	}
+
+	return parts.join("\n")
+}
+
 /**
  * Specialized handler for OpenAI-compatible providers
  * Re-exports with OpenAI-specific defaults for backward compatibility

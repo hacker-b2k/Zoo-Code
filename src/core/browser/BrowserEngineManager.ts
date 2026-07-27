@@ -164,6 +164,12 @@ export class BrowserEngineManager {
 	 * Get page text content — main-content extraction (#20/#24).
 	 * Tries <article>/<main> first, falls back to full page text.
 	 * Strips nav/footer/sidebar/header for compact output.
+	 *
+	 * Handles "Execution context was destroyed" from page.evaluate(): when
+	 * called immediately after a click-triggered navigation, the new page's
+	 * execution context may still be initializing. Retries up to 3 times
+	 * with a short delay — the page object itself is still valid (Playwright
+	 * pages survive navigation), only the JS context needs re-creation.
 	 */
 	async getSummary(taskId: string, pageId: string): Promise<string> {
 		const page = this.getPage(taskId, pageId)
@@ -171,7 +177,7 @@ export class BrowserEngineManager {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		const text = await page.evaluate(() => {
+		const extractText = () => {
 			// Try <article> or <main> first (most semantic, Issue #24)
 			const article = document.querySelector("article")
 			const main = document.querySelector("main")
@@ -185,9 +191,31 @@ export class BrowserEngineManager {
 			)
 			Array.from(removeEls).forEach((el) => el.remove())
 			return clone.innerText || ""
-		})
+		}
 
-		return text.trim().slice(0, 15000) || "(empty page)"
+		let lastError: unknown
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				const text = await page.evaluate(extractText)
+				return (typeof text === "string" ? text : "").trim().slice(0, 15000) || "(empty page)"
+			} catch (error: unknown) {
+				lastError = error
+				const msg = error instanceof Error ? error.message : String(error)
+				if (msg.includes("Execution context was destroyed") || msg.includes("context was destroyed")) {
+					// Page is still navigating / context re-initializing. Wait
+					// briefly and retry — the page object is still valid.
+					if (attempt < 2) {
+						await new Promise((r) => setTimeout(r, 350))
+						await page.waitForLoadState("domcontentloaded").catch(() => {})
+						continue
+					}
+				}
+				throw error
+			}
+		}
+
+		// All retries exhausted — re-throw the last error
+		throw lastError
 	}
 
 	/**
@@ -494,6 +522,12 @@ export class BrowserEngineManager {
 	/**
 	 * Click an element by visible text (#10).
 	 * Finds the first element matching the text and clicks it.
+	 *
+	 * Handles the "Execution context was destroyed" case: when a click triggers
+	 * navigation, Playwright's evaluate() promise may reject with
+	 * "Execution context was destroyed, most likely because of a navigation"
+	 * even though the click DID succeed. We treat this as a successful click
+	 * and wait for the new page to load instead of surfacing a false error.
 	 */
 	async clickElementByText(
 		taskId: string,
@@ -505,30 +539,46 @@ export class BrowserEngineManager {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		// Try multiple strategies to find the element
-		const clicked = await page.evaluate((t: string) => {
-			// Strategy 1: exact text match on links and buttons
-			const elements = Array.from(document.querySelectorAll("a, button, [role='button'], [onclick]"))
-			for (const el of elements) {
-				if ((el.textContent || "").trim() === t) {
-					;(el as HTMLElement).click()
-					return true
+		// Try multiple strategies to find the element. If the click triggers
+		// navigation, the evaluate() promise rejects with "context destroyed" —
+		// this is expected, not an error. We catch it and treat as success.
+		let clicked = false
+		try {
+			clicked = await page.evaluate((t: string) => {
+				// Strategy 1: exact text match on links and buttons
+				const elements = Array.from(document.querySelectorAll("a, button, [role='button'], [onclick]"))
+				for (const el of elements) {
+					if ((el.textContent || "").trim() === t) {
+						;(el as HTMLElement).click()
+						return true
+					}
 				}
-			}
-			// Strategy 2: partial text match
-			for (const el of elements) {
-				if ((el.textContent || "").trim().includes(t)) {
-					;(el as HTMLElement).click()
-					return true
+				// Strategy 2: partial text match
+				for (const el of elements) {
+					if ((el.textContent || "").trim().includes(t)) {
+						;(el as HTMLElement).click()
+						return true
+					}
 				}
+				return false
+			}, text)
+		} catch (error: unknown) {
+			const msg = error instanceof Error ? error.message : String(error)
+			if (msg.includes("Execution context was destroyed") || msg.includes("context was destroyed")) {
+				// Click succeeded but navigation destroyed the context before
+				// evaluate() could return. Treat as successful click.
+				clicked = true
+			} else {
+				throw error
 			}
-			return false
-		}, text)
+		}
 
 		if (!clicked) {
 			throw new Error(`No element found with text: "${text}"`)
 		}
 
+		// Wait for navigation to settle. If no navigation occurred, this resolves
+		// immediately. If navigation is in progress, wait for it.
 		await page.waitForLoadState("domcontentloaded").catch(() => {})
 		const summary = await this.getSummary(taskId, pageId)
 		return { success: true, summary }

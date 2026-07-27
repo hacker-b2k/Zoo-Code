@@ -39,8 +39,20 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 		try {
 			this.isHot = true
 
+			// Problem C: prefer PowerShell over cmd.exe on Windows. execa's
+			// default shell is cmd.exe (ComSpec) on Windows; without an explicit
+			// override, agent-emitted PowerShell cmdlets like `Remove-Item`
+			// fail with "'<cmdlet>' is not recognized".
+			// ExecaTerminalProcess is always a fallback (shell integration not
+			// available), so always prefer PowerShell on Windows unless the user
+			// explicitly configured a different shell via execaShellPath.
+			const configuredShellPath = BaseTerminal.getExecaShellPath()
+			const resolvedShellPath =
+				configuredShellPath ||
+				(process.platform === "win32" ? BaseTerminal.resolveDefaultWindowsShellPath() : undefined)
+
 			this.subprocess = execa({
-				shell: BaseTerminal.getExecaShellPath() || true,
+				shell: resolvedShellPath || true,
 				cwd: this.terminal.getCurrentWorkingDirectory(),
 				all: true,
 				// Ignore stdin to ensure non-interactive mode and prevent hanging

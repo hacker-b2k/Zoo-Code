@@ -16,11 +16,20 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 	readonly name = "web_research" as const
 
 	async execute(params: WebResearchParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
-		const { action, query, url, max_results } = params
+		const { action, max_results } = params
 		const { askApproval, handleError, pushToolResult } = callbacks
 
+		// Problem A defensive guards: query/url must be real strings. Without
+		// this, an object-valued `query={}` from a strict-mode-confused gateway
+		// would silently pass `!query` (objects are truthy) and the tool would
+		// search the literal string "[object Object]" — silent wrong output,
+		// which is worse than failing loudly. Reject non-string values cleanly
+		// so the actionable missing-param error surfaces.
+		const query = typeof params.query === "string" ? params.query : null
+		const url = typeof params.url === "string" ? params.url : null
+
 		try {
-			if (!action) {
+			if (!action || typeof action !== "string") {
 				task.consecutiveMistakeCount++
 				task.recordToolError("web_research")
 				task.didToolFailInCurrentTurn = true
@@ -98,10 +107,17 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 
 	override async handlePartial(task: Task, block: ToolUse<"web_research">): Promise<void> {
 		const action = block.params.action
-		if (!action) return
+		if (!action || typeof action !== "string") return
 
-		const label =
-			action === "search" ? `Searching: ${block.params.query ?? "..."}` : `Reading: ${block.params.url ?? "..."}`
+		// Problem A: tolerate non-string query/url on partials (objects from
+		// broken gateways) — render a placeholder instead of "[object Object]".
+		const queryOrUrl =
+			typeof block.params.query === "string"
+				? block.params.query
+				: typeof block.params.url === "string"
+					? block.params.url
+					: "..."
+		const label = action === "search" ? `Searching: ${queryOrUrl}` : `Reading: ${queryOrUrl}`
 
 		const partialPayload = {
 			tool: "openTabs" as any,

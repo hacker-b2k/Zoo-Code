@@ -3,6 +3,7 @@ import * as path from "path"
 import * as diff from "diff"
 import { RooIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/RooIgnoreController"
 import { RooProtectedController } from "../protect/RooProtectedController"
+import type { ActionIntent } from "./detectActionIntent"
 
 export const formatResponse = {
 	toolDenied: () =>
@@ -39,12 +40,47 @@ export const formatResponse = {
 			suggestion: "Try to continue without this file, or ask the user to update the .rooignore file",
 		}),
 
-	noToolsUsed: () => {
+	/**
+	 * Recovery prompt for a turn that produced text/reasoning but no tool call.
+	 *
+	 * When the user's request was classified as actionable, the retry names the
+	 * detected intent and the expected tool category. Re-sending an identical
+	 * context-free sentence to a model that has already misjudged the turn gives
+	 * it nothing new to act on, which is how a task stalls until the mistake
+	 * limit is reached.
+	 *
+	 * `intent` is undefined for questions and explanations, in which case the
+	 * original generic wording is used unchanged — a conversational turn must
+	 * not be pushed into calling a tool.
+	 */
+	noToolsUsed: (intent?: ActionIntent, attemptCount?: number) => {
 		const instructions = getToolInstructionsReminder()
 
-		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
+		const intentSection = intent
+			? `
 
+# Detected Intent
+
+The user's request requires you to ${intent.summary} (signal: "${intent.matchedVerb}").
+This is an action, not a question. An explanation alone does not satisfy it.
+
+Expected tool category: ${intent.category}
+Appropriate tools: ${intent.expectedTools.join(", ")}
+
+Call one of these tools now. If one of them is not the right fit, call a different tool that performs the action — but do not reply with prose describing what should be done instead of doing it.`
+			: ""
+
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `
+
+⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. You MUST invoke a tool in this response. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
+				: ""
+
+		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
+${intentSection}
 ${instructions}
+${escalation}
 
 # Next Steps
 
@@ -60,10 +96,15 @@ Otherwise, if you have not completed the task and do not need additional informa
 			feedback,
 		}),
 
-	missingToolParameterError: (paramName: string) => {
+	missingToolParameterError: (paramName: string, toolName?: string, attemptCount?: number) => {
 		const instructions = getToolInstructionsReminder()
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `\n\n⚠️ CRITICAL: This is attempt ${attemptCount}. You MUST provide ALL required parameters in this call. Do NOT call this tool again with missing values. Read the tool schema carefully.`
+				: ""
+		const toolRef = toolName ? ` for tool '${toolName}'` : ""
 
-		return `Missing value for required parameter '${paramName}'. Please retry with complete response.\n\n${instructions}`
+		return `Missing value for required parameter '${paramName}'${toolRef}. You must provide a non-empty string value for this parameter.${escalation}\n\n${instructions}`
 	},
 
 	invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
@@ -86,6 +127,40 @@ Otherwise, if you have not completed the task and do not need additional informa
 			available_tools: availableTools.length > 0 ? availableTools : [],
 			suggestion: "Please use one of the available tools or check if the server is properly configured",
 		}),
+
+	/**
+	 * Recovery payload for a built-in (non-MCP) tool that is unknown or not
+	 * allowed for the current mode. Lists ranked alternatives and discourages
+	 * shell fallback when file tools exist.
+	 */
+	unknownToolError: (
+		toolName: string,
+		availableAlternatives: string[],
+		options?: {
+			reason?: "unknown" | "mode"
+			mode?: string
+			discourageShellFallback?: boolean
+			recoveryMessage?: string
+		},
+	) => {
+		const discourageShell = options?.discourageShellFallback !== false
+		return JSON.stringify({
+			status: "error",
+			type: "unknown_tool",
+			message:
+				options?.recoveryMessage ??
+				`This tool is unavailable. Available alternatives are: ${
+					availableAlternatives.length > 0 ? availableAlternatives.join(", ") : "(none)"
+				}.`,
+			tool: toolName,
+			reason: options?.reason ?? "unknown",
+			mode: options?.mode,
+			available_tools: availableAlternatives.length > 0 ? availableAlternatives : [],
+			suggestion: discourageShell
+				? "Retry with one of the available tools using native tool calling. Do not use execute_command (shell) for file read/list/search when read_file, list_files, or search_files are available."
+				: "Retry with one of the available tools using native tool calling.",
+		})
+	},
 
 	unknownMcpServerError: (serverName: string, availableServers: string[]) =>
 		JSON.stringify({
@@ -218,9 +293,16 @@ const formatImagesIntoBlocks = (images?: string[]): Anthropic.ImageBlockParam[] 
 
 const toolUseInstructionsReminderNative = `# Reminder: Instructions for Tool Use
 
-Tools are invoked using the platform's native tool calling mechanism. Each tool requires specific parameters as defined in the tool descriptions. Refer to the tool definitions provided in your system instructions for the correct parameter structure and usage examples.
+Tools are invoked using the platform's native structured tool calling mechanism (the tool_calls / function-calling API). Each tool requires specific parameters as defined in the tool schemas provided via the API tools parameter.
 
-Always ensure you provide all required parameters for the tool you wish to use.`
+If you wrote a tool call as text, XML markup, or a JSON block inside your message content (e.g. <tool_call>...</tool_call>, <function=name>, <parameter=key>, <invoke name="...">, or a \`\`\`json block), that was invalid — it was not executed as a tool call. Re-issue the same call now as a structured tool_calls entry.
+
+Always ensure you provide all required parameters for the tool you wish to use.
+
+Acting outranks describing. When a tool can perform what the user asked for, call
+it instead of explaining how it would be done — a description of the change is
+not the change. Reserve prose-only replies for questions, explanations, and
+genuine ambiguity that ask_followup_question should resolve.`
 
 /**
  * Gets the tool use instructions reminder.

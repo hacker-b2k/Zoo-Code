@@ -44,7 +44,16 @@
 							"anyOf": [
 								{
 									"type": "string",
-									"enum": ["read", "edit", "command", "mcp", "modes", "browser"]
+									"enum": [
+										"read",
+										"edit",
+										"command",
+										"mcp",
+										"modes",
+										"browser",
+										"provider_manage",
+										"mcp_manage"
+									]
 								},
 								{
 									"type": "array",
@@ -53,7 +62,16 @@
 									"items": [
 										{
 											"type": "string",
-											"enum": ["read", "edit", "command", "mcp", "modes", "browser"]
+											"enum": [
+												"read",
+												"edit",
+												"command",
+												"mcp",
+												"modes",
+												"browser",
+												"provider_manage",
+												"mcp_manage"
+											]
 										},
 										{
 											"type": "object",

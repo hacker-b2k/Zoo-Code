@@ -71,6 +71,15 @@ interface FileResult {
 export class ReadFileTool extends BaseTool<"read_file"> {
 	readonly name = "read_file" as const
 
+	/**
+	 * The legacy batch format uses a `files` array rather than a `path` string,
+	 * so the static registry spec does not apply. Legacy calls keep their own
+	 * per-entry validation inside executeLegacy().
+	 */
+	protected override shouldRunGuard(params: ReadFileToolParams): boolean {
+		return !isLegacyReadFileParams(params)
+	}
+
 	async execute(params: ReadFileToolParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
 		// Dispatch to legacy or new execution path based on format
 		if (isLegacyReadFileParams(params)) {

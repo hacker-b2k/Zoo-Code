@@ -124,6 +124,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	}, [providerName])
 
 	const messagesRef = useRef(messages)
+	const pendingSelectionContextTokenRef = useRef<string | undefined>()
+	const [selectionAttachment, setSelectionAttachment] = useState<{ action: string } | undefined>()
 
 	useEffect(() => {
 		messagesRef.current = messages
@@ -636,6 +638,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	}, [])
 
 	const handleChatReset = useCallback(() => {
+		pendingSelectionContextTokenRef.current = undefined
+		setSelectionAttachment(undefined)
 		// Clear any pending auto-approval timeout
 		if (autoApproveTimeoutRef.current) {
 			clearTimeout(autoApproveTimeoutRef.current)
@@ -700,8 +704,14 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 				// Mark that user has responded - this prevents any pending auto-approvals.
 				userRespondedRef.current = true
 
+				// F-024b: a pending Spec Workspace selection must travel with the message on
+				// every send path — not only when starting a brand new task. Dropping it on
+				// follow-up messages is what made the agent answer "context not found".
+				const selectionContextToken = pendingSelectionContextTokenRef.current
+				pendingSelectionContextTokenRef.current = undefined
+
 				if (messagesRef.current.length === 0) {
-					vscode.postMessage({ type: "newTask", text, images })
+					vscode.postMessage({ type: "newTask", text, images, selectionContextToken })
 				} else if (clineAskRef.current) {
 					if (clineAskRef.current === "followup") {
 						markFollowUpAsAnswered()
@@ -724,13 +734,20 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 								askResponse: "messageResponse",
 								text,
 								images,
+								selectionContextToken,
 							})
 							break
 						// There is no other case that a textfield should be enabled.
 					}
 				} else {
 					// This is a new message in an ongoing task.
-					vscode.postMessage({ type: "askResponse", askResponse: "messageResponse", text, images })
+					vscode.postMessage({
+						type: "askResponse",
+						askResponse: "messageResponse",
+						text,
+						images,
+						selectionContextToken,
+					})
 				}
 
 				handleChatReset()
@@ -747,15 +764,31 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	)
 
 	const handleSetChatBoxMessage = useCallback(
-		(text: string, images: string[]) => {
-			// Avoid nested template literals by breaking down the logic
-			let newValue = text
+		(text: string, images: string[], selectionContextToken?: string, selectionContextAction?: string) => {
+			pendingSelectionContextTokenRef.current = selectionContextToken
 
-			if (inputValue !== "") {
-				newValue = inputValue + " " + text
+			if (selectionContextToken && selectionContextAction) {
+				// Attachment mode: show pill + optional tiny suggested instruction
+				setSelectionAttachment({ action: selectionContextAction })
+				const suggestions: Record<string, string> = {
+					rewrite: "Rewrite this",
+					improve: "Improve this",
+					remove: "Remove this",
+				}
+				const suggestion = suggestions[selectionContextAction]
+				if (suggestion) {
+					setInputValue(suggestion)
+				}
+				// "custom" — leave input empty so user can type freely
+			} else {
+				// Original behavior for non-selection setChatBoxMessage
+				let newValue = text
+				if (inputValue !== "") {
+					newValue = inputValue + " " + text
+				}
+				setInputValue(newValue)
 			}
 
-			setInputValue(newValue)
 			setSelectedImages([...selectedImages, ...images])
 		},
 		[inputValue, selectedImages],
@@ -961,7 +994,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							handleSendMessage(message.text ?? "", message.images ?? [])
 							break
 						case "setChatBoxMessage":
-							handleSetChatBoxMessage(message.text ?? "", message.images ?? [])
+							handleSetChatBoxMessage(
+								message.text ?? "",
+								message.images ?? [],
+								message.selectionContextToken,
+								message.selectionContextAction,
+							)
 							break
 						case "primaryButtonClick":
 							handlePrimaryButtonClick(message.text ?? "", message.images ?? [])
@@ -2092,10 +2130,41 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 					/>
 				</div>
 			)}
+			{selectionAttachment && (
+				<div className="flex items-center gap-1 px-[15px] py-1">
+					<span
+						className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+						style={{
+							background: "var(--vscode-badge-background)",
+							color: "var(--vscode-badge-foreground)",
+						}}>
+						📝 Spec Selection
+						<button
+							onClick={() => {
+								setSelectionAttachment(undefined)
+								pendingSelectionContextTokenRef.current = undefined
+							}}
+							className="ml-1 opacity-70 hover:opacity-100"
+							style={{
+								background: "none",
+								border: "none",
+								color: "inherit",
+								cursor: "pointer",
+								padding: 0,
+								lineHeight: 1,
+							}}
+							aria-label="Remove selection attachment">
+							×
+						</button>
+					</span>
+				</div>
+			)}
 			<ChatTextArea
 				ref={textAreaRef}
 				inputValue={inputValue}
-				setInputValue={setInputValue}
+				setInputValue={(value) => {
+					setInputValue(value)
+				}}
 				sendingDisabled={sendingDisabled || isProfileDisabled}
 				selectApiConfigDisabled={sendingDisabled && clineAsk !== "api_req_failed"}
 				placeholderText={placeholderText}

@@ -173,17 +173,19 @@ describe("mode-validator", () => {
 
 	describe("validateToolUse", () => {
 		it("throws error for unknown/invalid tools", () => {
-			// Unknown tools should throw with a specific "Unknown tool" error
+			// Unknown tools should throw with a specific "Unknown tool" error plus ranked alternatives
 			expect(() => validateToolUse("unknown_tool" as any, "architect", [])).toThrow(
-				'Unknown tool "unknown_tool". This tool does not exist.',
+				/Unknown tool "unknown_tool"\. This tool does not exist/,
 			)
+			expect(() => validateToolUse("unknown_tool" as any, "architect", [])).toThrow(/Available alternatives are:/)
 		})
 
 		it("throws error for disallowed tools in architect mode", () => {
 			// execute_command is a valid tool but not allowed in architect mode
 			expect(() => validateToolUse("execute_command", "architect", [])).toThrow(
-				'Tool "execute_command" is not allowed in architect mode.',
+				/Tool "execute_command" is not allowed in architect mode/,
 			)
+			expect(() => validateToolUse("execute_command", "architect", [])).toThrow(/Available alternatives are:/)
 		})
 
 		it("blocks mode-disallowed tools even if a provider declared them", () => {

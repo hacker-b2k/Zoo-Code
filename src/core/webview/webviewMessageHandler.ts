@@ -650,11 +650,19 @@ export const webviewMessageHandler = async (
 			// task. This essentially creates a fresh slate for the new task.
 			try {
 				const resolved = await resolveIncomingImages({ text: message.text, images: message.images })
+				const { selectionContextStore, formatHiddenSelectionContext } =
+					await import("../specs/selection/SelectionContextStore")
+				const selectionContext = selectionContextStore.consume(message.selectionContextToken)
 				await provider.createTask(
 					resolved.text,
 					resolved.images,
 					undefined,
-					{ taskId: message.taskId },
+					{
+						taskId: message.taskId,
+						...(selectionContext
+							? { initialHiddenContext: formatHiddenSelectionContext(selectionContext) }
+							: {}),
+					},
 					message.taskConfiguration,
 				)
 				// Task created successfully - notify the UI to reset
@@ -675,9 +683,22 @@ export const webviewMessageHandler = async (
 		case "askResponse":
 			{
 				const resolved = await resolveIncomingImages({ text: message.text, images: message.images })
-				provider
-					.getCurrentTask()
-					?.handleWebviewAskResponse(message.askResponse!, resolved.text, resolved.images)
+				const currentTask = provider.getCurrentTask()
+
+				// F-024b: a Spec Workspace selection can also be sent into an already
+				// running task. Consume the one-use token here too, otherwise the
+				// location context is silently dropped and the model answers
+				// "context not found".
+				if (currentTask && message.selectionContextToken) {
+					const { selectionContextStore, formatHiddenSelectionContext } =
+						await import("../specs/selection/SelectionContextStore")
+					const selectionContext = selectionContextStore.consume(message.selectionContextToken)
+					if (selectionContext) {
+						currentTask.setPendingHiddenContext(formatHiddenSelectionContext(selectionContext))
+					}
+				}
+
+				currentTask?.handleWebviewAskResponse(message.askResponse!, resolved.text, resolved.images)
 			}
 			break
 

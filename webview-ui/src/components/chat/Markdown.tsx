@@ -12,7 +12,14 @@ export const Markdown = memo(({ markdown, partial }: { markdown?: string; partia
 	// Shorter feedback duration for copy button flash.
 	const { copyWithFeedback } = useCopyToClipboard(200)
 
-	if (!markdown || markdown.length === 0) {
+	// Contract hardening: this component is the chokepoint for all assistant
+	// text rendering. A non-string value (e.g. an object that slipped past the
+	// extension host) would be rendered as a React child and crash the webview
+	// with React error #31. Coerce defensively at this single point.
+	const safeMarkdown =
+		typeof markdown === "string" ? markdown : markdown === undefined || markdown === null ? "" : String(markdown)
+
+	if (!safeMarkdown || safeMarkdown.length === 0) {
 		return null
 	}
 
@@ -22,9 +29,9 @@ export const Markdown = memo(({ markdown, partial }: { markdown?: string; partia
 			onMouseLeave={() => setIsHovering(false)}
 			style={{ position: "relative" }}>
 			<div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
-				<MarkdownBlock markdown={markdown} />
+				<MarkdownBlock markdown={safeMarkdown} />
 			</div>
-			{markdown && !partial && isHovering && (
+			{safeMarkdown && !partial && isHovering && (
 				<div
 					style={{
 						position: "absolute",
@@ -46,7 +53,7 @@ export const Markdown = memo(({ markdown, partial }: { markdown?: string; partia
 								transition: "background 0.2s ease-in-out",
 							}}
 							onClick={async () => {
-								const success = await copyWithFeedback(markdown)
+								const success = await copyWithFeedback(safeMarkdown)
 								if (success) {
 									const button = document.activeElement as HTMLElement
 									if (button) {

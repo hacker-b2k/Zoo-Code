@@ -63,10 +63,29 @@ export class AskFollowupQuestionTool extends BaseTool<"ask_followup_question"> {
 				return
 			}
 
-			// Transform follow_up suggestions to the format expected by task.ask
+			// Transform follow_up suggestions to the format expected by task.ask.
+			// Normalize defensively: models (and XML/text recovery) may deliver items
+			// as plain strings ("Yes") or with non-string text values. The webview
+			// renders `answer` directly as a React child — an object here crashes the
+			// webview with React error #31.
 			const follow_up_json = {
 				question,
-				suggest: follow_up.map((s) => ({ answer: s.text, mode: getSuggestionMode(s.mode) })),
+				suggest: (follow_up as Array<Suggestion | string>).map((s) => {
+					const rawAnswer: unknown = typeof s === "string" ? s : ((s as Suggestion | undefined)?.text ?? s)
+					const answer =
+						typeof rawAnswer === "string"
+							? rawAnswer
+							: rawAnswer === undefined || rawAnswer === null
+								? ""
+								: (() => {
+										try {
+											return JSON.stringify(rawAnswer)
+										} catch {
+											return String(rawAnswer)
+										}
+									})()
+					return { answer, mode: getSuggestionMode(typeof s === "object" && s !== null ? s.mode : undefined) }
+				}),
 			}
 
 			task.consecutiveMistakeCount = 0

@@ -90,20 +90,147 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * Problem A shared validation: coerce an optional string parameter.
+	 *
+	 * MiMo (and other OpenAI-compatible gateways) that receive strict-mode
+	 * schemas with `["string","null"]` unions sometimes emit literal objects
+	 * (`{}`, `{"key":"val"}`) or arrays for what should be plain string
+	 * parameters. Without a shared coercion layer every tool either crashes
+	 * (`params.doc?.trim()` → "Object has no method trim"), silently builds a
+	 * broken string (`String({})` → "[object Object]"), or proceeds with
+	 * corrupted data (`web_research` searching "[object Object]").
+	 *
+	 * Policy:
+	 *   - Real string passes through (sentinels "null"/"None"/"undefined"/"nil"
+	 *     map to undefined so the tool's missing-param branch fires cleanly).
+	 *   - number / boolean → `String(value)` (model may send 42 for a numeric
+	 *     string field — preserve intent rather than discard).
+	 *   - object / array / null / undefined → `undefined` so each tool's own
+	 *     existing "required param missing" error path fires with an actionable
+	 *     message, and "[object Object]" never leaks into storage or searches.
+	 */
+	private static coerceOptionalStringParam(value: unknown): string | undefined {
+		if (value === undefined || value === null) {
+			return undefined
+		}
+		if (typeof value === "string") {
+			const trimmed = value.trim()
+			if (!trimmed) {
+				return undefined
+			}
+			const lower = trimmed.toLowerCase()
+			if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
+				return undefined
+			}
+			return value
+		}
+		if (typeof value === "number" || typeof value === "boolean") {
+			return String(value)
+		}
+		// Object / array received where a string is expected — drop it.
+		return undefined
+	}
+
+	/**
+	 * Variant of coerceOptionalStringParam for nullable string fields where
+	 * JSON `null` is a first-class sentinel (e.g. `query`/`url` in web_research,
+	 * `spec_id` create-new signal, `image` in generate_image). Preserves JSON
+	 * `null` as-is; sentinel strings ("None"/"null"/"undefined"/"nil") also map
+	 * to `null` so the tool receives a consistent nullable signal instead of
+	 * `undefined` (which some tools treat differently from JSON null).
+	 * Everything else follows the same coercion rules as coerceOptionalStringParam.
+	 */
+	private static coerceNullableStringParam(value: unknown): string | null | undefined {
+		if (value === null) {
+			return null
+		}
+		if (typeof value === "string") {
+			const trimmed = value.trim().toLowerCase()
+			if (trimmed === "null" || trimmed === "undefined" || trimmed === "none" || trimmed === "nil") {
+				return null
+			}
+		}
+		return this.coerceOptionalStringParam(value)
+	}
+
+	/**
+	 * F-005e / ISSUES_REPORT: models pass string sentinels for nullable spec_id
+	 * ("null", "undefined", "None", "nil") instead of JSON null.
+	 * F-006b: truncated display ids (… / ...) are left as-is so tools can reject with a clear error.
+	 */
+	private static coerceOptionalSpecId(value: unknown): string | null {
+		if (value === undefined || value === null) {
+			return null
+		}
+		if (typeof value !== "string") {
+			return null
+		}
+		const trimmed = value.trim()
+		if (!trimmed) {
+			return null
+		}
+		// Keep truncated display ids so WriteSpec/ReadSpec can emit recovery guidance (F-006b)
+		if (trimmed.includes("…") || trimmed.includes("...")) {
+			return trimmed
+		}
+		const lower = trimmed.toLowerCase()
+		if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
+			return null
+		}
+		return trimmed
+	}
+
+	/**
+	 * Optional string fields from models / XML recovery often use Python/JSON
+	 * sentinels ("None", "null", …). Treat those as absent (undefined), not as
+	 * the literal string "None".
+	 */
+	private static coerceOptionalStringField(value: unknown): string | undefined {
+		if (value === undefined || value === null) {
+			return undefined
+		}
+		if (typeof value !== "string") {
+			return String(value)
+		}
+		const trimmed = value.trim()
+		if (!trimmed) {
+			return undefined
+		}
+		const lower = trimmed.toLowerCase()
+		if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
+			return undefined
+		}
+		return value
+	}
+
+	/**
 	 * Process a raw tool call chunk from the API stream.
 	 * Handles tracking, buffering, and emits start/delta/end events.
 	 *
 	 * This is the entry point for providers that emit tool_call_partial chunks.
 	 * Returns an array of events to be processed by the consumer.
+	 *
+	 * `arguments` is typed as `unknown` defensively: some non-conformant
+	 * OpenAI-compatible gateways deliver `function.arguments` already parsed
+	 * (object) instead of as a JSON string. Those are normalized to a string
+	 * here so downstream accumulation never produces "[object Object]".
 	 */
 	public static processRawChunk(chunk: {
 		index: number
 		id?: string
 		name?: string
-		arguments?: string
+		arguments?: unknown
 	}): ToolCallStreamEvent[] {
 		const events: ToolCallStreamEvent[] = []
-		const { index, id, name, arguments: args } = chunk
+		const { index, id, name } = chunk
+		// Normalize arguments: strings pass through unchanged; objects are
+		// re-serialized; anything else (null/undefined) stays undefined.
+		const args =
+			typeof chunk.arguments === "string"
+				? chunk.arguments
+				: chunk.arguments !== undefined && chunk.arguments !== null
+					? JSON.stringify(chunk.arguments)
+					: undefined
 
 		let tracked = this.rawChunkTracker.get(index)
 
@@ -478,9 +605,9 @@ export class NativeToolCallParser {
 			case "web_research":
 				if (partialArgs.action !== undefined) {
 					nativeArgs = {
-						action: partialArgs.action,
-						query: partialArgs.query,
-						url: partialArgs.url,
+						action: this.coerceOptionalStringParam(partialArgs.action),
+						query: this.coerceNullableStringParam(partialArgs.query),
+						url: this.coerceNullableStringParam(partialArgs.url),
 						max_results: partialArgs.max_results != null ? Number(partialArgs.max_results) : null,
 					}
 				}
@@ -586,8 +713,8 @@ export class NativeToolCallParser {
 			case "codebase_search":
 				if (partialArgs.query !== undefined) {
 					nativeArgs = {
-						query: partialArgs.query,
-						path: partialArgs.path,
+						query: this.coerceOptionalStringParam(partialArgs.query),
+						path: this.coerceOptionalStringParam(partialArgs.path),
 					}
 				}
 				break
@@ -595,9 +722,9 @@ export class NativeToolCallParser {
 			case "generate_image":
 				if (partialArgs.prompt !== undefined || partialArgs.path !== undefined) {
 					nativeArgs = {
-						prompt: partialArgs.prompt,
-						path: partialArgs.path,
-						image: partialArgs.image,
+						prompt: this.coerceOptionalStringParam(partialArgs.prompt),
+						path: this.coerceOptionalStringParam(partialArgs.path),
+						image: this.coerceNullableStringParam(partialArgs.image),
 					}
 				}
 				break
@@ -623,9 +750,9 @@ export class NativeToolCallParser {
 			case "search_files":
 				if (partialArgs.path !== undefined || partialArgs.regex !== undefined) {
 					nativeArgs = {
-						path: partialArgs.path,
-						regex: partialArgs.regex,
-						file_pattern: partialArgs.file_pattern,
+						path: this.coerceOptionalStringParam(partialArgs.path),
+						regex: this.coerceOptionalStringParam(partialArgs.regex),
+						file_pattern: this.coerceOptionalStringParam(partialArgs.file_pattern),
 					}
 				}
 				break
@@ -643,6 +770,75 @@ export class NativeToolCallParser {
 				if (partialArgs.todos !== undefined) {
 					nativeArgs = {
 						todos: partialArgs.todos,
+					}
+				}
+				break
+
+			// Virtual Spec Workspace tools (F-004) — must map JSON args → nativeArgs
+			case "list_specs":
+				nativeArgs = {}
+				break
+
+			case "read_spec":
+				if (partialArgs.doc !== undefined || partialArgs.spec_id !== undefined) {
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						doc: this.coerceOptionalStringParam(partialArgs.doc),
+					}
+				}
+				break
+
+			case "write_spec":
+				if (
+					partialArgs.title !== undefined ||
+					partialArgs.spec_id !== undefined ||
+					partialArgs.doc !== undefined ||
+					partialArgs.content !== undefined ||
+					partialArgs.mode !== undefined ||
+					partialArgs.old_string !== undefined
+				) {
+					nativeArgs = {
+						title: partialArgs.title,
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						doc: partialArgs.doc,
+						content: partialArgs.content,
+						mode: partialArgs.mode,
+						section_heading: partialArgs.section_heading,
+						old_string: partialArgs.old_string,
+						new_string: partialArgs.new_string,
+						replace_all: partialArgs.replace_all,
+					}
+				}
+				break
+
+			case "delete_spec":
+				if (
+					partialArgs.spec_id !== undefined ||
+					partialArgs.spec_ids !== undefined ||
+					partialArgs.delete_all !== undefined ||
+					partialArgs.title_contains !== undefined
+				) {
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
+						spec_ids: Array.isArray(partialArgs.spec_ids)
+							? partialArgs.spec_ids.map((x: unknown) => String(x))
+							: partialArgs.spec_ids === null
+								? null
+								: undefined,
+						delete_all:
+							partialArgs.delete_all === true || partialArgs.delete_all === "true"
+								? true
+								: partialArgs.delete_all === false || partialArgs.delete_all === "false"
+									? false
+									: partialArgs.delete_all === null
+										? null
+										: undefined,
+						title_contains:
+							partialArgs.title_contains === undefined || partialArgs.title_contains === null
+								? partialArgs.title_contains === null
+									? null
+									: undefined
+								: String(partialArgs.title_contains),
 					}
 				}
 				break
@@ -829,8 +1025,11 @@ export class NativeToolCallParser {
 
 			case "list_mcp_config":
 				nativeArgs = {
-					scope:
-						partialArgs.scope === null || partialArgs.scope === undefined ? undefined : partialArgs.scope,
+					scope: this.coerceOptionalStringParam(partialArgs.scope) as
+						| "project"
+						| "global"
+						| "all"
+						| undefined,
 				}
 				break
 
@@ -924,6 +1123,92 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * Parse a tool-call arguments payload into a plain object, tolerating the
+	 * non-standard shapes real models/gateways produce:
+	 *
+	 * 1. Standard JSON string (the only shape the OpenAI spec allows) — parsed
+	 *    strictly, exactly as before. This path is never altered.
+	 * 2. Already-parsed object (broken OpenAI-compatible gateways that deliver
+	 *    `function.arguments` as an object instead of a string).
+	 * 3. Double-encoded JSON (a JSON string whose value is itself the JSON
+	 *    arguments string — seen from models that over-escape).
+	 * 4. Truncated / malformed JSON (stream cut at max_tokens mid-arguments,
+	 *    trailing garbage, missing closing braces). Salvaged with a partial
+	 *    JSON parser that extracts every complete value from the valid prefix,
+	 *    so a long `spawn_worker` message that got cut mid-string still yields
+	 *    usable typed arguments instead of a "missing nativeArgs" failure.
+	 *
+	 * Salvage only ever runs when strict parsing fails — it is strictly
+	 * additive and cannot change behavior for well-formed payloads.
+	 *
+	 * @throws Error when no usable object can be extracted at all.
+	 */
+	private static parseArgumentsPayload(raw: unknown): Record<string, any> {
+		// Shape 2: gateway delivered an already-parsed object.
+		if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+			return raw as Record<string, any>
+		}
+
+		if (raw === undefined || raw === null) {
+			return {}
+		}
+
+		let text = typeof raw === "string" ? raw.trim() : String(raw).trim()
+		if (!text) {
+			return {}
+		}
+
+		// Strip markdown code fences some models wrap around the payload
+		// (```json ... ``` / ``` ... ```).
+		const fenceMatch = text.match(/^```(?:json|JSON)?\s*\r?\n([\s\S]*?)\r?\n?```\s*$/)
+		if (fenceMatch) {
+			text = fenceMatch[1].trim()
+		}
+
+		// Shape 1 (+3): strict parse with double-decode for over-escaped payloads.
+		try {
+			let parsed: unknown = JSON.parse(text)
+			// Double-encoded: a JSON string containing the real JSON object.
+			for (let depth = 0; depth < 3 && typeof parsed === "string"; depth++) {
+				const inner = parsed.trim()
+				if (!inner.startsWith("{") && !inner.startsWith("[")) {
+					break
+				}
+				parsed = JSON.parse(inner)
+			}
+			if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+				return parsed as Record<string, any>
+			}
+			// Valid JSON but not an object (array/primitive) — nothing usable for
+			// named parameters; fall through to salvage before giving up.
+		} catch {
+			// Strict parse failed — try salvage below.
+		}
+
+		// Shape 4: salvage the valid prefix of truncated/malformed JSON.
+		// partial-json extracts every complete value (including a trailing
+		// in-progress string) from the well-formed prefix of the payload.
+		try {
+			const salvaged: unknown = parseJSON(text)
+			if (
+				salvaged !== null &&
+				typeof salvaged === "object" &&
+				!Array.isArray(salvaged) &&
+				Object.keys(salvaged as Record<string, unknown>).length > 0
+			) {
+				console.warn(
+					`[NativeToolCallParser] Salvaged truncated/malformed tool-call arguments via partial JSON parse`,
+				)
+				return salvaged as Record<string, any>
+			}
+		} catch {
+			// Salvage failed too — fall through to the hard error.
+		}
+
+		throw new Error(`Unable to parse tool call arguments as JSON`)
+	}
+
+	/**
 	 * Convert a native tool call chunk to a ToolUse object.
 	 *
 	 * @param toolCall - The native tool call from the API stream
@@ -932,7 +1217,7 @@ export class NativeToolCallParser {
 	public static parseToolCall<TName extends ToolName>(toolCall: {
 		id: string
 		name: TName
-		arguments: string
+		arguments: unknown
 	}): ToolUse<TName> | McpToolUse | null {
 		// Check if this is a dynamic MCP tool (mcp--serverName--toolName)
 		// Also handle models that output underscores instead of hyphens (mcp__serverName__toolName)
@@ -958,8 +1243,9 @@ export class NativeToolCallParser {
 		}
 
 		try {
-			// Parse the arguments JSON string
-			const args = toolCall.arguments === "" ? {} : JSON.parse(toolCall.arguments)
+			// Parse the arguments payload (tolerates objects, double-encoding,
+			// fences, and truncated JSON — see parseArgumentsPayload).
+			const args = this.parseArgumentsPayload(toolCall.arguments)
 
 			// Build stringified params for display/logging.
 			// Tool execution MUST use nativeArgs (typed) and does not support legacy fallbacks.
@@ -1066,11 +1352,18 @@ export class NativeToolCallParser {
 					break
 
 				case "web_research":
+					// Problem A: action/query/url must be real strings. Models that
+					// receive strict-mode schemas with ["string","null"] unions
+					// sometimes emit `{}` for plain string params; without this
+					// validation, `query: {}` would silently pass `!query` checks
+					// and `searchWeb({}, …)` would search the literal string
+					// "[object Object]" — silent wrong-but-plausible results, which
+					// is worse than failing.
 					if (args.action) {
 						nativeArgs = {
-							action: args.action,
-							query: args.query ?? null,
-							url: args.url ?? null,
+							action: this.coerceOptionalStringParam(args.action),
+							query: this.coerceNullableStringParam(args.query),
+							url: this.coerceNullableStringParam(args.url),
 							max_results: args.max_results != null ? Number(args.max_results) : null,
 						} as NativeArgsFor<TName>
 					}
@@ -1187,10 +1480,12 @@ export class NativeToolCallParser {
 					break
 
 				case "codebase_search":
+					// Problem A: query must be a real string (object → undefined →
+					// tool's missing-param error, not silent garbage search).
 					if (args.query !== undefined) {
 						nativeArgs = {
-							query: args.query,
-							path: args.path,
+							query: this.coerceOptionalStringParam(args.query),
+							path: this.coerceOptionalStringParam(args.path),
 						} as NativeArgsFor<TName>
 					}
 					break
@@ -1198,9 +1493,9 @@ export class NativeToolCallParser {
 				case "generate_image":
 					if (args.prompt !== undefined && args.path !== undefined) {
 						nativeArgs = {
-							prompt: args.prompt,
-							path: args.path,
-							image: args.image,
+							prompt: this.coerceOptionalStringParam(args.prompt),
+							path: this.coerceOptionalStringParam(args.path),
+							image: this.coerceNullableStringParam(args.image),
 						} as NativeArgsFor<TName>
 					}
 					break
@@ -1224,11 +1519,15 @@ export class NativeToolCallParser {
 					break
 
 				case "search_files":
+					// Problem A: path/regex/file_pattern must be real strings; object
+					// values from broken gateways become undefined so the tool can
+					// surface its proper missing-parameter error, never silently
+					// pass "[object Object]" to the file searcher.
 					if (args.path !== undefined && args.regex !== undefined) {
 						nativeArgs = {
-							path: args.path,
-							regex: args.regex,
-							file_pattern: args.file_pattern,
+							path: this.coerceOptionalStringParam(args.path),
+							regex: this.coerceOptionalStringParam(args.regex),
+							file_pattern: this.coerceOptionalStringParam(args.file_pattern),
 						} as NativeArgsFor<TName>
 					}
 					break
@@ -1248,6 +1547,141 @@ export class NativeToolCallParser {
 							todos: args.todos,
 						} as NativeArgsFor<TName>
 					}
+					break
+
+				// Virtual Spec Workspace tools (F-004)
+				case "list_specs":
+					nativeArgs = {} as NativeArgsFor<TName>
+					break
+
+				case "read_spec":
+					// Problem A: doc must be a real string; objects/arrays from
+					// strict-mode-confused gateways (e.g. MiMo) fall through to the
+					// tool's "doc is required" path via undefined, rather than
+					// crashing on `params.doc?.trim()` later.
+					if (args.doc !== undefined) {
+						nativeArgs = {
+							spec_id: this.coerceOptionalSpecId(args.spec_id),
+							doc: this.coerceOptionalStringParam(args.doc),
+						} as NativeArgsFor<TName>
+					}
+					break
+
+				case "write_spec":
+					// Always produce nativeArgs when doc key is present so create/import-from-markdown
+					// never falls through to presentAssistantMessage "missing nativeArgs" →
+					// consecutiveMistakeLimit → generic "Zoo is having trouble…".
+					// Problem A: validate doc through coerceOptionalStringParam so objects
+					// from strict-mode-confused gateways (MiMo, etc.) become undefined and
+					// surface as WriteSpecTool's actionable "doc is required" error — never
+					// silently persist "[object Object]" into Spec Workspace storage.
+					// NOTE: we produce nativeArgs (with doc=undefined) even when doc is an
+					// object so the presentAssistantMessage "missing nativeArgs" gate does
+					// NOT fire — WriteSpecTool itself then emits the clear validation error.
+					// Validation of content/old_string lives in WriteSpecTool (real tool_error).
+					if (args.doc !== undefined) {
+						const docCoerced = this.coerceOptionalStringParam(args.doc)
+						const modeCoerced = this.coerceOptionalStringField(args.mode)
+						const modeRaw = modeCoerced ?? "replace"
+						const isSearch =
+							modeRaw.toLowerCase() === "search_replace" ||
+							modeRaw.toLowerCase() === "search-replace" ||
+							modeRaw.toLowerCase() === "patch"
+						const oldString = this.coerceOptionalStringField(args.old_string)
+						const newString = this.coerceOptionalStringField(args.new_string)
+						const sectionHeading = this.coerceOptionalStringField(args.section_heading)
+						// Problem A: title must be a real string when provided — reject
+						// malformed object/array shapes so they don't materialize as
+						// "[object Object]" in pack metadata.
+						const titleCoerced = this.coerceOptionalStringParam(args.title)
+						// Preserve empty string content (valid replace body); only omit when
+						// truly absent/null/sentinel so WriteSpecTool can report a clear error.
+						let contentCoerced: string | undefined
+						if (args.content === undefined || args.content === null) {
+							contentCoerced = undefined
+						} else if (typeof args.content === "string") {
+							const trimmed = args.content.trim()
+							const lower = trimmed.toLowerCase()
+							if (
+								trimmed &&
+								(lower === "null" || lower === "undefined" || lower === "none" || lower === "nil")
+							) {
+								contentCoerced = undefined
+							} else {
+								// Keep empty string and all other string bodies (including whitespace-only)
+								contentCoerced = args.content
+							}
+						} else {
+							// Non-string content (object/array/number) dropped to undefined —
+							// WriteSpecTool will emit "content is required for mode ...".
+							contentCoerced = undefined
+						}
+						const replaceAll =
+							args.replace_all === true ||
+							args.replace_all === "true" ||
+							(typeof args.replace_all === "string" && args.replace_all.trim().toLowerCase() === "true")
+								? true
+								: args.replace_all === false ||
+									  args.replace_all === "false" ||
+									  (typeof args.replace_all === "string" &&
+											args.replace_all.trim().toLowerCase() === "false")
+									? false
+									: undefined
+
+						// Only include optional keys when set — keeps nativeArgs sparse
+						// (matches historical shape / F-004 tests) and avoids serializing
+						// "None" sentinels from XML recovery as real strings.
+						const writeArgs: Record<string, unknown> = {
+							title: titleCoerced ?? "",
+							spec_id: this.coerceOptionalSpecId(args.spec_id),
+							doc: docCoerced,
+						}
+						if (contentCoerced !== undefined) {
+							writeArgs.content = contentCoerced
+						}
+						// Always surface mode when non-default or when search/patch path
+						if (modeCoerced !== undefined || isSearch) {
+							writeArgs.mode = modeRaw
+						}
+						if (sectionHeading !== undefined) {
+							writeArgs.section_heading = sectionHeading
+						}
+						if (oldString !== undefined) {
+							writeArgs.old_string = oldString
+						}
+						if (newString !== undefined) {
+							writeArgs.new_string = newString
+						}
+						if (replaceAll !== undefined) {
+							writeArgs.replace_all = replaceAll
+						}
+						nativeArgs = writeArgs as NativeArgsFor<TName>
+					}
+					break
+
+				case "delete_spec":
+					nativeArgs = {
+						spec_id: this.coerceOptionalSpecId(args.spec_id),
+						spec_ids: Array.isArray(args.spec_ids)
+							? args.spec_ids.map((x: unknown) => String(x))
+							: args.spec_ids === null
+								? null
+								: undefined,
+						delete_all:
+							args.delete_all === true || args.delete_all === "true"
+								? true
+								: args.delete_all === false || args.delete_all === "false"
+									? false
+									: args.delete_all === null
+										? null
+										: undefined,
+						title_contains:
+							args.title_contains === undefined || args.title_contains === null
+								? args.title_contains === null
+									? null
+									: undefined
+								: String(args.title_contains),
+					} as NativeArgsFor<TName>
 					break
 
 				case "read_command_output":
@@ -1447,11 +1881,12 @@ export class NativeToolCallParser {
 					break
 
 				case "list_mcp_config":
+					// Problem A: scope must be a real string; objects/arrays from
+					// strict-mode-confused gateways become undefined so the tool's
+					// "Invalid scope" branch fires with a clear message, NEVER a
+					// "[object Object]" leak into user-visible tool errors.
 					nativeArgs = {
-						scope:
-							args.scope === null || args.scope === undefined
-								? undefined
-								: (args.scope as "project" | "global" | "all"),
+						scope: this.coerceOptionalStringParam(args.scope) as "project" | "global" | "all" | undefined,
 					} as NativeArgsFor<TName>
 					break
 
@@ -1525,6 +1960,13 @@ export class NativeToolCallParser {
 			// Native-only: core tools must always have typed nativeArgs.
 			// If we couldn't construct it, the model produced an invalid tool call payload.
 			if (!nativeArgs && !customToolRegistry.has(resolvedName)) {
+				const hint =
+					resolvedName === "write_spec"
+						? ` write_spec requires non-empty doc; CREATE/import: title + spec_id null + content + mode replace.`
+						: ""
+				console.error(
+					`[NativeToolCallParser] missing nativeArgs for '${resolvedName}'.${hint} Received keys: ${Object.keys(args as object).join(",")}`,
+				)
 				throw new Error(
 					`[NativeToolCallParser] Invalid arguments for tool '${resolvedName}'. ` +
 						`Native tool calls require a valid JSON payload matching the tool schema. ` +
@@ -1566,10 +2008,10 @@ export class NativeToolCallParser {
 	 * These are generated dynamically by getMcpServerTools() and are returned
 	 * as McpToolUse objects that preserve the original tool name.
 	 */
-	public static parseDynamicMcpTool(toolCall: { id: string; name: string; arguments: string }): McpToolUse | null {
+	public static parseDynamicMcpTool(toolCall: { id: string; name: string; arguments: unknown }): McpToolUse | null {
 		try {
 			// Parse the arguments - these are the actual tool arguments passed directly
-			const args = JSON.parse(toolCall.arguments || "{}")
+			const args = this.parseArgumentsPayload(toolCall.arguments)
 
 			// Normalize the tool name to handle models that output underscores instead of hyphens
 			// e.g., mcp__serverName__toolName -> mcp--serverName--toolName

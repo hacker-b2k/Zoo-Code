@@ -95,7 +95,20 @@ export class MimoHandler extends OpenAiHandler {
 		}
 
 		if (tools && tools.length > 0) {
-			params.tools = tools
+			// Problem A root cause: MiMo (and most OpenAI-compatible non-OpenAI
+			// gateways) cannot honor OpenAI "strict mode" tool schemas — including
+			// MiMo's documented mishandling of nullable unions like
+			// `["string","null"]`. Receiving strict-mode schemas with all-required
+			// keys forces MiMo to emit literal `{}` placeholder objects for plain
+			// string parameters it can't satisfy, which the host then serializes
+			// as "[object Object]" (the original field-report symptom).
+			//
+			// Route MiMo through the shared convertToolsForOpenAI gateway-safe
+			// path (strict: false, optional params preserved, nullable unions
+			// untouched) — identical to every other OpenAI-compatible gateway in
+			// this package — so MiMo receives normal permissive schemas and emits
+			// real string values for optional params it can omit cleanly.
+			params.tools = this.convertToolsForOpenAI(tools)
 		}
 
 		let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>

@@ -48,6 +48,9 @@ export const commandIds = [
 	"toggleAutoApprove",
 
 	"showRipgrepDiagnostic",
+
+	/** Open virtual Spec Workspace panel (F-002) */
+	"openSpecWorkspace",
 ] as const
 
 export type CommandId = (typeof commandIds)[number]

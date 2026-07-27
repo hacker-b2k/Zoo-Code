@@ -2,6 +2,7 @@ import type { ToolName } from "@roo-code/types"
 
 import { Task } from "../task/Task"
 import type { ToolUse, HandleError, PushToolResult, AskApproval, NativeToolArgs } from "../../shared/tools"
+import { runToolCallGuard } from "./ToolCallGuard"
 
 /**
  * Callbacks passed to tool execution
@@ -99,6 +100,42 @@ export abstract class BaseTool<TName extends ToolName> {
 	}
 
 	/**
+	 * Validate that all required string parameters are present and non-empty.
+	 *
+	 * Returns the name of the first missing parameter, or null if all are valid.
+	 * Handles null, undefined, empty string, and whitespace-only values.
+	 *
+	 * @param params - The parsed tool parameters
+	 * @param required - Map of parameter names to their values
+	 * @returns The name of the first missing parameter, or null if all valid
+	 */
+	protected findMissingRequiredParam(
+		params: Record<string, unknown>,
+		required: Record<string, unknown>,
+	): string | null {
+		for (const [name, value] of Object.entries(required)) {
+			if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+				return name
+			}
+		}
+		return null
+	}
+
+	/**
+	 * Whether the pre-execution ToolCallGuard should run for this invocation.
+	 *
+	 * Subclasses override this to opt out for alternate parameter shapes that
+	 * the static registry cannot describe (e.g. the legacy `read_file` batch
+	 * format, which uses a `files` array instead of a `path` string).
+	 *
+	 * @param _params - The parsed tool parameters
+	 * @returns true when the guard should run (default)
+	 */
+	protected shouldRunGuard(_params: ToolParams<TName>): boolean {
+		return true
+	}
+
+	/**
 	 * Main entry point for tool execution.
 	 *
 	 * Handles the complete flow:
@@ -154,6 +191,35 @@ export abstract class BaseTool<TName extends ToolName> {
 			// Note: handleError already emits a tool_result via formatResponse.toolError in the caller.
 			// Do NOT call pushToolResult here to avoid duplicate tool_result payloads.
 			return
+		}
+
+		// Pre-execution guard: validate required params and path params before
+		// the tool runs (and before any approval prompt is shown to the user).
+		// Unknown/MCP/custom tools are not in the registry and pass through.
+		try {
+			const violation = this.shouldRunGuard(params)
+				? await runToolCallGuard(this.name, (params ?? {}) as Record<string, unknown>, { cwd: task.cwd })
+				: null
+
+			if (violation) {
+				task.consecutiveMistakeCount++
+				task.recordToolError(this.name)
+
+				if (violation.kind === "missing_param") {
+					// Preserve legacy behavior: tools historically surfaced missing
+					// params through sayAndCreateMissingParamError.
+					const errorMsg = await task.sayAndCreateMissingParamError(this.name, violation.paramName)
+					callbacks.pushToolResult(`${violation.prefix}${errorMsg}`)
+				} else {
+					await task.say("error", violation.message)
+					callbacks.pushToolResult(`${violation.prefix}${violation.message}`)
+				}
+
+				return
+			}
+		} catch (error) {
+			// A guard failure must never block tool execution.
+			console.error(`Error running tool call guard for ${this.name}:`, error)
 		}
 
 		// Execute with typed parameters

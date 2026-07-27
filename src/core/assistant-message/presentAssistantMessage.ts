@@ -14,6 +14,8 @@ import type { ToolParamName, ToolResponse, ToolUse, McpToolUse } from "../../sha
 import { AskIgnoredError } from "../task/AskIgnoredError"
 import { Task } from "../task/Task"
 
+import { looksLikeTextToolCall, parseTextToolCalls } from "./TextToolCallParser"
+
 import { listFilesTool } from "../tools/ListFilesTool"
 import { openTabsTool } from "../tools/OpenTabsTool"
 import { webResearchTool } from "../tools/WebResearchTool"
@@ -52,11 +54,22 @@ import { collectResultsTool } from "../tools/CollectResultsTool"
 import { cancelWorkerTool } from "../tools/CancelWorkerTool"
 import { getWorkerStatusTool } from "../tools/GetWorkerStatusTool"
 import { updateTodoListTool } from "../tools/UpdateTodoListTool"
+import { listSpecsTool } from "../tools/ListSpecsTool"
+import { readSpecTool } from "../tools/ReadSpecTool"
+import { writeSpecTool } from "../tools/WriteSpecTool"
+import { deleteSpecTool } from "../tools/DeleteSpecTool"
 import { runSlashCommandTool } from "../tools/RunSlashCommandTool"
 import { skillTool } from "../tools/SkillTool"
 import { generateImageTool } from "../tools/GenerateImageTool"
 import { applyDiffTool as applyDiffToolClass } from "../tools/ApplyDiffTool"
 import { isValidToolName, validateToolUse } from "../tools/validateToolUse"
+import {
+	buildToolUnavailableError,
+	formatUnavailableToolRecovery,
+	getModeAvailableTools,
+	shouldDiscourageShellFallback,
+	suggestToolAlternatives,
+} from "../tools/toolRecovery"
 import { codebaseSearchTool } from "../tools/CodebaseSearchTool"
 import { listProviderProfilesTool } from "../tools/ListProviderProfilesTool"
 import { getProviderProfileTool } from "../tools/GetProviderProfileTool"
@@ -326,6 +339,21 @@ export async function presentAssistantMessage(cline: Task) {
 				// Strip any streamed <thinking> tags from text output.
 				content = content.replace(/<thinking>\s?/g, "")
 				content = content.replace(/\s?<\/thinking>/g, "")
+
+				// Never display raw tool-call markup. Text blocks are normally
+				// cleaned by post-stream recovery before they get here, but a
+				// block can survive with markup intact (e.g. when a native
+				// tool call exists alongside text markup, so recovery defers
+				// to the native path). Strip recognizable markup for display
+				// so the UI always looks like the native tool-call flow.
+				if (looksLikeTextToolCall(content)) {
+					content = parseTextToolCalls(content).cleanedText
+				}
+
+				// Pure-markup block: nothing left worth displaying.
+				if (!content.trim()) {
+					break
+				}
 			}
 
 			await cline.say("text", content, undefined, block.partial)
@@ -473,6 +501,14 @@ export async function presentAssistantMessage(cline: Task) {
 						return `[${block.name} for '${block.params.artifact_id}']`
 					case "update_todo_list":
 						return `[${block.name}]`
+					case "list_specs":
+						return `[${block.name}]`
+					case "read_spec":
+						return `[${block.name} for '${block.params.doc ?? ""}']`
+					case "write_spec":
+						return `[${block.name} for '${block.params.doc ?? ""}']`
+					case "delete_spec":
+						return `[${block.name}]`
 					case "new_task": {
 						const mode = block.params.mode ?? defaultModeSlug
 						const message = block.params.message ?? "(no message)"
@@ -521,9 +557,24 @@ export async function presentAssistantMessage(cline: Task) {
 				const customTool = stateExperiments?.customTools ? customToolRegistry.get(block.name) : undefined
 				const isKnownTool = isValidToolName(String(block.name), stateExperiments)
 				if (isKnownTool && !block.nativeArgs && !customTool) {
+					const toolName = String(block.name)
+					// Spec tools: surface actionable create/import guidance instead of an opaque
+					// parser failure that stacks into consecutiveMistakeLimit ("Zoo is having trouble…").
 					const errorMessage =
-						`Invalid tool call for '${block.name}': missing nativeArgs. ` +
-						`This usually means the model streamed invalid or incomplete arguments and the call could not be finalized.`
+						toolName === "write_spec"
+							? `Invalid write_spec call: arguments could not be finalized (missing nativeArgs). ` +
+								`CREATE/import existing markdown: {"title":"<Spec Title>","spec_id":null,"doc":"requirements"|"design"|"tasks","content":"<full markdown>","mode":"replace"}. ` +
+								`UPDATE: pass full spec_id from list_specs (or null for active) with doc + content/mode. ` +
+								`Do not use write_to_file for Spec Workspace. Check extension host logs for [write_spec] / parser details.`
+							: toolName === "read_spec" || toolName === "list_specs" || toolName === "delete_spec"
+								? `Invalid ${toolName} call: arguments could not be finalized (missing nativeArgs). ` +
+									`Use list_specs for pack ids; read_spec needs doc + spec_id null/full id; delete_spec needs full id(s). Check extension host logs.`
+								: `Invalid tool call for '${toolName}': missing nativeArgs. ` +
+									`This usually means the model streamed invalid or incomplete arguments and the call could not be finalized.`
+
+					console.warn(
+						`[presentAssistantMessage] missing nativeArgs for tool=${toolName} tool_use_id=${toolCallId}`,
+					)
 
 					cline.consecutiveMistakeCount++
 					try {
@@ -713,7 +764,22 @@ export async function presentAssistantMessage(cline: Task) {
 					// 2. NOT set didAlreadyUseTool = true (the tool was never executed, just failed validation)
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"
 					// which would cause the extension to appear to hang
-					const errorContent = formatResponse.toolError(error.message)
+					const recoveryMessage =
+						error instanceof Error
+							? error.message
+							: buildToolUnavailableError(String(block.name), "unknown", effectiveMode, customModes)
+					const availableTools = getModeAvailableTools(effectiveMode, customModes)
+					const alternatives = suggestToolAlternatives(String(block.name), availableTools)
+					const reason: "unknown" | "mode" = /not allowed/i.test(recoveryMessage) ? "mode" : "unknown"
+					cline.recordToolError(block.name as ToolName, recoveryMessage)
+					// Surface the same user-visible error as the default unknown-tool branch
+					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
+					const errorContent = formatResponse.unknownToolError(String(block.name), alternatives, {
+						reason,
+						mode: effectiveMode,
+						discourageShellFallback: shouldDiscourageShellFallback(String(block.name), availableTools),
+						recoveryMessage,
+					})
 					// Push tool_result directly without setting didAlreadyUseTool
 					cline.pushToolResultToUserContent({
 						type: "tool_result",
@@ -1158,6 +1224,34 @@ export async function presentAssistantMessage(cline: Task) {
 						pushToolResult,
 					})
 					break
+				case "list_specs":
+					await listSpecsTool.handle(cline, block as ToolUse<"list_specs">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "read_spec":
+					await readSpecTool.handle(cline, block as ToolUse<"read_spec">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "write_spec":
+					await writeSpecTool.handle(cline, block as ToolUse<"write_spec">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "delete_spec":
+					await deleteSpecTool.handle(cline, block as ToolUse<"delete_spec">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
 				case "collect_results":
 					await collectResultsTool.handle(cline, block as ToolUse<"collect_results">, {
 						askApproval,
@@ -1268,18 +1362,32 @@ export async function presentAssistantMessage(cline: Task) {
 						break
 					}
 
-					// Not a custom tool - handle as unknown tool error
-					const errorMessage = `Unknown tool "${block.name}". This tool does not exist. Please use one of the available tools.`
+					// Not a custom tool - handle as unknown tool error with ranked alternatives
+					const availableTools = getModeAvailableTools(effectiveMode, customModes)
+					const alternatives = suggestToolAlternatives(String(block.name), availableTools)
+					const errorMessage = formatUnavailableToolRecovery({
+						toolName: String(block.name),
+						reason: "unknown",
+						mode: effectiveMode,
+						availableTools,
+						alternatives,
+					})
 					cline.consecutiveMistakeCount++
 					cline.recordToolError(block.name as ToolName, errorMessage)
 					workerToolFailed = true
 					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
 					// Push tool_result directly WITHOUT setting didAlreadyUseTool
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"
+					const structured = formatResponse.unknownToolError(String(block.name), alternatives, {
+						reason: "unknown",
+						mode: effectiveMode,
+						discourageShellFallback: shouldDiscourageShellFallback(String(block.name), availableTools),
+						recoveryMessage: errorMessage,
+					})
 					cline.pushToolResultToUserContent({
 						type: "tool_result",
 						tool_use_id: sanitizeToolUseId(toolCallId),
-						content: formatResponse.toolError(errorMessage),
+						content: structured,
 						is_error: true,
 					})
 					break

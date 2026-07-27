@@ -57,12 +57,20 @@ export class SpawnWorkerTool extends BaseTool<"spawn_worker"> {
 			if (!name) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("spawn_worker")
+				console.warn(
+					`[ToolValidator] spawn_worker: missing required param 'name' (attempt ${task.consecutiveMistakeCount}). Raw params:`,
+					JSON.stringify({ name: params.name, message: params.message?.slice(0, 50) }),
+				)
 				pushToolResult(await task.sayAndCreateMissingParamError("spawn_worker", "name"))
 				return
 			}
 			if (!message) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("spawn_worker")
+				console.warn(
+					`[ToolValidator] spawn_worker: missing required param 'message' (attempt ${task.consecutiveMistakeCount}). Raw params:`,
+					JSON.stringify({ name, message: params.message }),
+				)
 				pushToolResult(await task.sayAndCreateMissingParamError("spawn_worker", "message"))
 				return
 			}

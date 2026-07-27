@@ -92,6 +92,15 @@ async function main() {
 					if (fs.existsSync(pwSrc)) {
 						fs.cpSync(pwSrc, pwDest, { recursive: true, dereference: true })
 					}
+	
+					// F-008: copy pre-built mermaid UMD bundle so the Spec Workspace
+					// webview can load it via <script> tag (avoids bundling 3.5MB of
+					// d3/cytoscape through esbuild into the extension bundle).
+					const mermaidSrc = path.join(srcDir, "..", "webview-ui", "node_modules", "mermaid", "dist", "mermaid.min.js")
+					const mermaidDest = path.join(distDir, "mermaid.min.js")
+					if (fs.existsSync(mermaidSrc)) {
+						fs.copyFileSync(mermaidSrc, mermaidDest)
+					}
 				})
 			},
 		},
@@ -148,13 +157,29 @@ async function main() {
 		outdir: "dist/workers",
 	}
 
-	const [extensionCtx, workerCtx] = await Promise.all([
+	/**
+	 * F-008: Spec Workspace preview bundle (markdown + mermaid renderer).
+	 * Standalone browser IIFE loaded via <script> in the webview — NOT part of
+	 * the extension node bundle. Exposes window.__specPreview.
+	 * @type {import('esbuild').BuildOptions}
+	 */
+	const specPreviewConfig = {
+		...buildOptions,
+		entryPoints: ["core/specs/ui/specPreviewBundle.ts"],
+		outfile: "dist/spec-preview.js",
+		format: "iife",
+		platform: "browser",
+		// No node externals — fully self-contained browser bundle.
+	}
+
+	const [extensionCtx, workerCtx, specPreviewCtx] = await Promise.all([
 		esbuild.context(extensionConfig),
 		esbuild.context(workerConfig),
+		esbuild.context(specPreviewConfig),
 	])
 
 	if (watch) {
-		await Promise.all([extensionCtx.watch(), workerCtx.watch()])
+		await Promise.all([extensionCtx.watch(), workerCtx.watch(), specPreviewCtx.watch()])
 		copyLocales(srcDir, distDir)
 		setupLocaleWatcher(srcDir, distDir)
 	} else {
@@ -162,7 +187,8 @@ async function main() {
 		// onEnd hooks copy the same asset directories concurrently.
 		await extensionCtx.rebuild()
 		await workerCtx.rebuild()
-		await Promise.all([extensionCtx.dispose(), workerCtx.dispose()])
+		await specPreviewCtx.rebuild()
+		await Promise.all([extensionCtx.dispose(), workerCtx.dispose(), specPreviewCtx.dispose()])
 	}
 }
 

@@ -55,3 +55,8 @@ qdrant_storage/
 plans/
 
 roo-cli-*.tar.gz*
+
+# Temporary one-off fix scripts
+fix_spec.js
+fix_spec.mjs
+tmp-*.mjs

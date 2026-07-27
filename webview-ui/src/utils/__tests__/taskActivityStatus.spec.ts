@@ -195,6 +195,70 @@ describe("classifyActivity", () => {
 		expect(classifyActivity(messages)).toBe("updatingTodos")
 	})
 
+	// ---- Spec Workspace tools (F-019) ----
+
+	it('classifies say:"tool" with list_specs as listingSpecs', () => {
+		const messages = [makeToolSay("list_specs")]
+		expect(classifyActivity(messages)).toBe("listingSpecs")
+	})
+
+	it('classifies say:"tool" with read_spec as readingSpec', () => {
+		const messages = [makeSay("tool", JSON.stringify({ tool: "read_spec", doc: "design" }))]
+		expect(classifyActivity(messages)).toBe("readingSpec")
+	})
+
+	it("classifies write_spec create as creatingSpec", () => {
+		const messages = [
+			makeSay("tool", JSON.stringify({ tool: "write_spec", action: "create", title: "Auth", doc: "design" })),
+		]
+		expect(classifyActivity(messages)).toBe("creatingSpec")
+	})
+
+	it("classifies write_spec write + requirements as updatingRequirements", () => {
+		const messages = [
+			makeSay("tool", JSON.stringify({ tool: "write_spec", action: "write", doc: "requirements", specId: "x" })),
+		]
+		expect(classifyActivity(messages)).toBe("updatingRequirements")
+	})
+
+	it("classifies write_spec write + design as savingDesign", () => {
+		const messages = [
+			makeSay("tool", JSON.stringify({ tool: "write_spec", action: "write", doc: "design", specId: "x" })),
+		]
+		expect(classifyActivity(messages)).toBe("savingDesign")
+	})
+
+	it("classifies write_spec write + tasks as updatingTasks", () => {
+		const messages = [
+			makeSay("tool", JSON.stringify({ tool: "write_spec", action: "write", doc: "tasks", specId: "x" })),
+		]
+		expect(classifyActivity(messages)).toBe("updatingTasks")
+	})
+
+	it("classifies write_spec without action/doc as managingSpecs / updatingSpec", () => {
+		const bare = [makeSay("tool", JSON.stringify({ tool: "write_spec" }))]
+		expect(classifyActivity(bare)).toBe("managingSpecs")
+
+		const writeOnly = [makeSay("tool", JSON.stringify({ tool: "write_spec", action: "write" }))]
+		expect(classifyActivity(writeOnly)).toBe("updatingSpec")
+	})
+
+	it('classifies ask:"tool" write_spec create as creatingSpec (approval path)', () => {
+		const messages = [
+			makeAsk(
+				"tool",
+				JSON.stringify({ tool: "write_spec", action: "create", title: "Auth", doc: "requirements" }),
+			),
+		]
+		expect(classifyActivity(messages)).toBe("creatingSpec")
+	})
+
+	it("does not change classification of unrelated tools", () => {
+		expect(classifyActivity([makeToolSay("readFile")])).toBe("reading")
+		expect(classifyActivity([makeToolSay("newFileCreated")])).toBe("writing")
+		expect(classifyActivity([makeToolSay("updateTodoList")])).toBe("updatingTodos")
+	})
+
 	it('classifies say:"tool" with switchMode as usingTool', () => {
 		const messages = [makeToolSay("switchMode")]
 		expect(classifyActivity(messages)).toBe("usingTool")

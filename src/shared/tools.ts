@@ -107,6 +107,9 @@ export const toolParamNames = [
 	"review_target_id",
 	"include_completed",
 	"unread_only",
+	// Spec Workspace tools (F-004)
+	"spec_id",
+	"doc",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
@@ -187,6 +190,30 @@ export type NativeToolArgs = {
 	update_todo_list: { todos: string }
 	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
 	write_to_file: { path: string; content: string }
+	list_specs: Record<string, never>
+	read_spec: { spec_id?: string | null; doc: string }
+	/**
+	 * title: required for create (spec_id null); optional on update.
+	 * mode: replace (default) | append | upsert_section | search_replace (F-021).
+	 */
+	write_spec: {
+		title?: string | null
+		spec_id?: string | null
+		doc: string
+		content?: string
+		mode?: string | null
+		section_heading?: string | null
+		old_string?: string | null
+		new_string?: string | null
+		replace_all?: boolean | null
+	}
+	/** F-022 / F-022b: delete one or many virtual packs. */
+	delete_spec: {
+		spec_id?: string | null
+		spec_ids?: string[] | null
+		delete_all?: boolean | null
+		title_contains?: string | null
+	}
 	list_provider_profiles: Record<string, never>
 	get_provider_profile: { name: string }
 	list_provider_types: Record<string, never>
@@ -413,6 +440,10 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	get_worker_status: "get worker live status",
 	codebase_search: "codebase search",
 	update_todo_list: "update todo list",
+	list_specs: "list virtual specs",
+	read_spec: "read virtual spec",
+	write_spec: "write virtual spec",
+	delete_spec: "delete virtual spec",
 	run_slash_command: "run slash command",
 	skill: "load skill",
 	generate_image: "generate images",
@@ -515,6 +546,10 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"cancel_worker",
 	"get_worker_status",
 	"update_todo_list",
+	"list_specs",
+	"read_spec",
+	"write_spec",
+	"delete_spec",
 	"run_slash_command",
 	"skill",
 	"web_research",

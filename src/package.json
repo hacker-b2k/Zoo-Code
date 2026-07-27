@@ -3,7 +3,7 @@
 	"displayName": "%extension.displayName%",
 	"description": "%extension.description%",
 	"publisher": "ZooCodeOrganization",
-	"version": "3.64.11",
+	"version": "3.64.24",
 	"icon": "assets/icons/icon.png",
 	"galleryBanner": {
 		"color": "#617A91",
@@ -144,6 +144,12 @@
 				"command": "zoo-code.setCustomStoragePath",
 				"title": "%command.setCustomStoragePath.title%",
 				"category": "%configuration.title%"
+			},
+			{
+				"command": "zoo-code.openSpecWorkspace",
+				"title": "%command.openSpecWorkspace.title%",
+				"category": "%configuration.title%",
+				"icon": "$(notebook)"
 			},
 			{
 				"command": "zoo-code.importSettings",
