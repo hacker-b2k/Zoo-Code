@@ -714,6 +714,11 @@ export function buildSpecWorkspaceHtml(
     // F-020 live agent stream (UI preview only — not durable until finalized)
     let agentStreaming = false;
     let agentStreamId = null;
+    // Identity of the doc the active stream is writing, used to narrow the
+    // document-message guard so only stream-owned docs are protected from
+    // authoritative host pushes (other docs must always update live).
+    let streamSpecId = null;
+    let streamDocKind = null;
     let lastCommittedContent = "";
     let lastCommittedSpecId = null;
     let lastCommittedKind = null;
@@ -1037,6 +1042,10 @@ export function buildSpecWorkspaceHtml(
     function applyAgentPartial(msg) {
       if (msg.streamId && agentStreamId && msg.streamId !== agentStreamId) return;
       agentStreamId = msg.streamId || agentStreamId;
+      // Keep stream doc identity in sync (partial may arrive before started
+      // in edge orderings — started is the normal path).
+      if (msg.specId) streamSpecId = msg.specId;
+      if (msg.docKind) streamDocKind = msg.docKind;
 
       // Avoid list rebuild every chunk — only if selection identity changed
       let needList = false;
@@ -1322,7 +1331,21 @@ export function buildSpecWorkspaceHtml(
 
       if (msg.type === "document") {
         hideSelectionActions();
-        if (agentStreaming) return;
+        // F-020: only ignore host-pushed documents when they would stomp the
+        // ACTIVELY streaming editor for the exact same spec+doc. Any other
+        // document push (different doc, or no stream in flight) is always
+        // authoritative — the previous blanket agentStreaming guard is what
+        // wedged the panel when a finalize message was ever lost, leaving
+        // Refresh permanently unable to reload content until close-reopen.
+        var streamOwnsThisDoc =
+          agentStreaming &&
+          streamSpecId &&
+          msg.specId === streamSpecId &&
+          streamDocKind &&
+          (msg.docKind || activeKind) === streamDocKind;
+        if (streamOwnsThisDoc) return;
+        // A host-pushed document that is NOT stream-owned means any previous
+        // stream for a different doc is no longer relevant to this view.
         activeSpecId = msg.specId;
         activeKind = msg.docKind || activeKind;
         if (msg.docs && msg.docs.length) {
@@ -1369,6 +1392,8 @@ export function buildSpecWorkspaceHtml(
       if (msg.type === "agentWriteStarted") {
         hideSelectionActions();
         agentStreamId = msg.streamId || null;
+        streamSpecId = msg.specId || null;
+        streamDocKind = msg.docKind || null;
         streamPinnedAtBottom = true;
         lastMetaUpdateAt = 0;
         if (msg.specId && msg.specId !== activeSpecId) {
@@ -1392,6 +1417,8 @@ export function buildSpecWorkspaceHtml(
 
       if (msg.type === "agentWriteFinalized") {
         agentStreamId = null;
+        streamSpecId = null;
+        streamDocKind = null;
         setAgentStreaming(false, null);
         if (msg.specId) activeSpecId = msg.specId;
         if (msg.docKind) {
@@ -1420,6 +1447,8 @@ export function buildSpecWorkspaceHtml(
       if (msg.type === "agentWriteAborted") {
         const sid = agentStreamId;
         agentStreamId = null;
+        streamSpecId = null;
+        streamDocKind = null;
         setAgentStreaming(false, null);
         // Restore last committed content for the active doc when possible
         if (lastCommittedSpecId && lastCommittedKind === activeKind && lastCommittedSpecId === (msg.specId || activeSpecId)) {

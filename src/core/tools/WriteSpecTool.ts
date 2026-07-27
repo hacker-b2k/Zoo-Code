@@ -461,18 +461,24 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				contentLength: finalContent.length,
 			})
 
+			// F-020: the finalize notification is the ONLY signal that releases the
+			// webview from streaming mode. If it is lost, the panel wedges with
+			// agentStreaming=true and every subsequent document push (including the
+			// Refresh path) is silently dropped — the exact "content only appears
+			// after close-reopen" field bug. It must therefore NEVER be suppressed
+			// by failures in best-effort side operations (listWorkspaces,
+			// saveLastOpened): post it FIRST, with entries attached opportunistically.
+			let entries: unknown[] | undefined
 			try {
-				const provider = task.providerRef.deref()
-				if (provider?.context?.workspaceState) {
-					const hash = hashWorkspaceRoot(workspaceRoot)
-					await saveLastOpened(provider.context.workspaceState, hash, {
-						specId,
-						docKind: doc,
-						workspaceRoot,
-						updatedAt: Date.now(),
-					})
-				}
-				const entries = await service.listWorkspaces(workspaceRoot)
+				entries = await service.listWorkspaces(workspaceRoot)
+			} catch (entriesError) {
+				// Best-effort only — the card list can refresh on the next event; the
+				// finalize signal itself must still be delivered.
+				logWriteSpec("warn", "listWorkspaces failed during finalize notify (continuing)", {
+					message: entriesError instanceof Error ? entriesError.message : String(entriesError),
+				})
+			}
+			try {
 				const panel = SpecWorkspacePanel.getCurrent() ?? this.ensurePanel(task)
 				panel?.notifyAgentWriteFinalized({
 					streamId,
@@ -484,8 +490,26 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 					revision: updated.revision,
 					entries,
 				})
+			} catch (notifyError) {
+				logWriteSpec("warn", "notifyAgentWriteFinalized failed", {
+					message: notifyError instanceof Error ? notifyError.message : String(notifyError),
+				})
+			}
+
+			// Best-effort UI state — must not affect the write result or the notify.
+			try {
+				const provider = task.providerRef.deref()
+				if (provider?.context?.workspaceState) {
+					const hash = hashWorkspaceRoot(workspaceRoot)
+					await saveLastOpened(provider.context.workspaceState, hash, {
+						specId,
+						docKind: doc,
+						workspaceRoot,
+						updatedAt: Date.now(),
+					})
+				}
 			} catch {
-				// UI notify is best-effort
+				// UI state persistence is non-critical.
 			}
 
 			invalidateSpecContextCache(task.taskId)

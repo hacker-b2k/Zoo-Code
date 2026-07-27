@@ -11,6 +11,7 @@ import { buildSpecWorkspaceHtml } from "./specWorkspaceHtml"
 import { buildSpecDocumentUri } from "../virtualDocs/specUri"
 import { clearLastOpened, loadLastOpened, saveLastOpened } from "./specUiState"
 import { invalidateSpecContextCache } from "../specContext"
+import { specDocumentEvents, type SpecDocumentChangeEvent } from "../specDocumentEvents"
 import { type SelectionContextAction, selectionContextStore } from "../selection/SelectionContextStore"
 import { resolveSelectionContext } from "../selection/resolveSelectionContext"
 import { resolveVisibleClineProvider } from "./clineProviderAccessor"
@@ -101,6 +102,24 @@ export class SpecWorkspacePanel {
 	private readonly outputChannel?: vscode.OutputChannel
 	private disposables: vscode.Disposable[] = []
 
+	/**
+	 * Host-side record of the document currently displayed in the webview.
+	 * Updated whenever the panel pushes a `document` message (openDocument,
+	 * refresh, event-driven re-push) and when agent stream messages switch the
+	 * active doc. Used to re-push fresh content when the shared spec event bus
+	 * reports a committed change to exactly this document.
+	 */
+	private activeDocument: { specId: string; docKind: string } | undefined
+
+	/**
+	 * Host-side set of in-flight agent write streams (streamId → doc identity).
+	 * A committed writeDocument that belongs to an active stream does NOT get
+	 * re-pushed via the event bus — the stream's own started/partial/finalized
+	 * messages are authoritative for that doc, and a double push would race
+	 * the streaming editor. Docs without an active stream are always re-pushed.
+	 */
+	private readonly activeStreams = new Map<string, { specId: string | null; docKind: string }>()
+
 	private constructor(panel: vscode.WebviewPanel, deps: SpecWorkspacePanelDeps) {
 		this.panel = panel
 		this.context = deps.context
@@ -128,6 +147,22 @@ export class SpecWorkspacePanel {
 			null,
 			this.disposables,
 		)
+
+		// Event-driven live updates: the shared specDocumentEvents bus fires on
+		// EVERY committed spec mutation (writeDocument/create/import/template/
+		// delete), regardless of which SpecService instance or tool performed it.
+		// The card list and the active document must both follow the store —
+		// previously only the card list refreshed (and only via explicit
+		// refresh/ready), which is why doc content went stale until close-reopen.
+		const eventSubscription = specDocumentEvents.onDocumentChanged((event) => {
+			// Only the live singleton panel reacts. Panels replaced in tests (or
+			// disposed without full teardown) must not double-post.
+			if (SpecWorkspacePanel.current !== this) {
+				return
+			}
+			void this.handleSpecDocumentChanged(event)
+		})
+		this.disposables.push({ dispose: () => eventSubscription.dispose() })
 	}
 
 	/**
@@ -175,6 +210,11 @@ export class SpecWorkspacePanel {
 	// --- F-020 agent stream API (UI-only until finalize) ---
 
 	public notifyAgentWriteStarted(payload: AgentWriteStreamPayload): void {
+		this.activeStreams.set(payload.streamId, { specId: payload.specId ?? null, docKind: payload.docKind })
+		// Stream switches the webview's active doc — keep host record in sync.
+		if (payload.specId) {
+			this.activeDocument = { specId: payload.specId, docKind: payload.docKind }
+		}
 		void this.post({
 			type: "agentWriteStarted",
 			streamId: payload.streamId,
@@ -204,6 +244,10 @@ export class SpecWorkspacePanel {
 	}
 
 	public notifyAgentWriteFinalized(payload: AgentWriteStreamPayload): void {
+		this.activeStreams.delete(payload.streamId)
+		if (payload.specId) {
+			this.activeDocument = { specId: payload.specId, docKind: payload.docKind }
+		}
 		void this.post({
 			type: "agentWriteFinalized",
 			streamId: payload.streamId,
@@ -221,6 +265,7 @@ export class SpecWorkspacePanel {
 	public notifyAgentWriteAborted(
 		payload: Pick<AgentWriteStreamPayload, "streamId" | "specId" | "docKind" | "reason">,
 	): void {
+		this.activeStreams.delete(payload.streamId)
 		void this.post({
 			type: "agentWriteAborted",
 			streamId: payload.streamId,
@@ -228,6 +273,87 @@ export class SpecWorkspacePanel {
 			docKind: payload.docKind,
 			reason: payload.reason ?? "aborted",
 			streaming: false,
+		})
+	}
+
+	/**
+	 * True when any in-flight agent stream targets this exact document.
+	 * Stream-owned docs are updated exclusively via started/partial/finalized
+	 * messages — an event-bus re-push for the same doc would race the editor.
+	 */
+	private hasActiveStreamFor(specId: string, docId: string): boolean {
+		for (const stream of this.activeStreams.values()) {
+			if (stream.docKind === docId && (stream.specId === null || stream.specId === specId)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	/**
+	 * Shared specDocumentEvents handler: every committed spec mutation (from
+	 * ANY SpecService instance — WriteSpecTool, import, template, saveDocument,
+	 * delete_spec) refreshes the card list, and re-pushes the active document
+	 * when the change targets it. This is the permanent event-driven fix for
+	 * "doc content only appears after close-reopen".
+	 */
+	private async handleSpecDocumentChanged(event: SpecDocumentChangeEvent): Promise<void> {
+		try {
+			// Card list follows every mutation (create/delete/write may change
+			// titles, stages, or the entry set).
+			await this.pushList()
+
+			// Only re-push the document when the change targets the doc the
+			// webview is currently showing AND no in-flight stream owns it
+			// (stream messages are authoritative for stream-owned docs).
+			const active = this.activeDocument
+			if (!active) {
+				return
+			}
+			if (event.specId !== active.specId || event.docId !== active.docKind) {
+				return
+			}
+			if (this.hasActiveStreamFor(active.specId, active.docKind)) {
+				return
+			}
+			await this.pushDocument(active.specId, active.docKind)
+		} catch (error) {
+			this.log(`specDocumentEvents handler error: ${error instanceof Error ? error.message : String(error)}`)
+		}
+	}
+
+	/**
+	 * Fetch a document fresh from the store and push it to the webview.
+	 * Shared by openDocument, refresh, and the event-driven re-push path.
+	 */
+	private async pushDocument(specId: string, docKind: string): Promise<void> {
+		const root = this.workspaceRoot()
+		const doc = await this.service.getDocument(root, specId, docKind)
+		if (!doc) {
+			return
+		}
+		this.activeDocument = { specId, docKind: doc.meta.kind }
+
+		const hash = hashWorkspaceRoot(root)
+		await saveLastOpened(this.context.workspaceState, hash, {
+			specId,
+			docKind: doc.meta.kind,
+			workspaceRoot: root,
+			updatedAt: Date.now(),
+		})
+
+		// Include docs metadata for dynamic numbered tab rendering
+		const workspace = await this.service.getWorkspace(root, specId)
+		const docs = workspace?.docs?.map((d) => ({ kind: d.kind, title: d.title })) ?? []
+
+		await this.post({
+			type: "document",
+			specId,
+			docKind: doc.meta.kind,
+			title: doc.meta.title,
+			revision: doc.meta.revision,
+			content: doc.content,
+			docs,
 		})
 	}
 
@@ -247,8 +373,16 @@ export class SpecWorkspacePanel {
 		try {
 			switch (message.type) {
 				case "ready":
-				case "refresh":
 					await this.pushList()
+					break
+				case "refresh":
+					// Refresh must revalidate BOTH the card list and the active
+					// document content — previously it only pushed the list, which
+					// is why Refresh could never recover stale tab content.
+					await this.pushList()
+					if (this.activeDocument) {
+						await this.pushDocument(this.activeDocument.specId, this.activeDocument.docKind)
+					}
 					break
 				case "createSpec":
 					await this.createSpec(message.title)
@@ -293,12 +427,30 @@ export class SpecWorkspacePanel {
 		let activeSpecId = last?.specId
 		let activeDocKind = last?.docKind ?? "requirements"
 
+		// Stability: if the panel already tracks an active document that still
+		// exists, keep it. Event-driven refreshes (specDocumentEvents) can fire
+		// mid-flow — e.g. during import, events are emitted BEFORE the import
+		// coordinator persists last-opened — and must not transiently clear the
+		// user's active selection.
+		if (this.activeDocument && entries.some((e) => e.id === this.activeDocument!.specId)) {
+			activeSpecId = this.activeDocument.specId
+			activeDocKind = this.activeDocument.docKind
+		}
+
 		// Drop stale last-open if spec was deleted
 		if (activeSpecId && !entries.some((e) => e.id === activeSpecId)) {
 			activeSpecId = entries[0]?.id
 			activeDocKind = "requirements"
 		} else if (!activeSpecId && entries[0]) {
 			activeSpecId = entries[0].id
+		}
+
+		// Keep the host-side active-doc record in sync with what the webview
+		// will consider active, so the event bus can re-push it later.
+		if (activeSpecId) {
+			this.activeDocument = { specId: activeSpecId, docKind: activeDocKind }
+		} else {
+			this.activeDocument = undefined
 		}
 
 		await this.post({
@@ -323,6 +475,7 @@ export class SpecWorkspacePanel {
 			workspaceRoot: root,
 			updatedAt: Date.now(),
 		})
+		this.activeDocument = { specId: workspace.id, docKind: "requirements" }
 		await this.pushList()
 	}
 
@@ -656,6 +809,9 @@ export class SpecWorkspacePanel {
 		if (last?.specId === specId) {
 			await clearLastOpened(this.context.workspaceState, hash)
 		}
+		if (this.activeDocument?.specId === specId) {
+			this.activeDocument = undefined
+		}
 
 		await this.pushList()
 		await this.post({ type: "specDeleted", specId, title })
@@ -668,28 +824,7 @@ export class SpecWorkspacePanel {
 			await this.post({ type: "error", message: `Document not found: ${docKind}` })
 			return
 		}
-
-		const hash = hashWorkspaceRoot(root)
-		await saveLastOpened(this.context.workspaceState, hash, {
-			specId,
-			docKind,
-			workspaceRoot: root,
-			updatedAt: Date.now(),
-		})
-
-		// Include docs metadata for dynamic numbered tab rendering
-		const workspace = await this.service.getWorkspace(root, specId)
-		const docs = workspace?.docs?.map((d) => ({ kind: d.kind, title: d.title })) ?? []
-
-		await this.post({
-			type: "document",
-			specId,
-			docKind: doc.meta.kind,
-			title: doc.meta.title,
-			revision: doc.meta.revision,
-			content: doc.content,
-			docs,
-		})
+		await this.pushDocument(specId, docKind)
 	}
 
 	private async openInEditor(specId: string, docKind: string): Promise<void> {
@@ -721,6 +856,7 @@ export class SpecWorkspacePanel {
 			workspaceRoot: root,
 			updatedAt: Date.now(),
 		})
+		this.activeDocument = { specId, docKind: updated.kind }
 
 		const entries = await this.service.listWorkspaces(root)
 		await this.post({

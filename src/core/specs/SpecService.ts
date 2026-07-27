@@ -92,6 +92,20 @@ export class SpecService {
 			updatedAt: workspace.updatedAt,
 		})
 
+		// Emit for every starter doc so event-driven subscribers (Spec Workspace
+		// panel, virtual-doc provider) see the new pack immediately — previously
+		// only createWorkspaceFromDocuments/Template emitted, so packs created via
+		// write_spec/createSpec were invisible to the event bus until a doc write.
+		for (const doc of workspace.docs) {
+			this._eventBus.emitDocumentChanged({
+				workspaceRootHash,
+				specId,
+				docId: doc.id,
+				revision: doc.revision,
+				reason: "initial",
+			})
+		}
+
 		return workspace
 	}
 
