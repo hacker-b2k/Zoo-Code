@@ -251,7 +251,7 @@ describe("textToolCallRecovery", () => {
 			expect(result.recoveredCount).toBe(0)
 		})
 
-		it("does not apply when only unknown tool names are present", () => {
+		it("strips markup when only unknown tool names are present (no recovery, but no raw XML leak)", () => {
 			const text = `<tool_call>
 <function=definitely_not_a_real_tool>
 <parameter=x>1</parameter>
@@ -262,8 +262,11 @@ describe("textToolCallRecovery", () => {
 				assistantMessageContent: [{ type: "text", content: text, partial: true }],
 				currentStreamingContentIndex: 0,
 			})
-			expect(result.applied).toBe(false)
+			// No valid tools recovered, but markup IS stripped from display
 			expect(result.recoveredCount).toBe(0)
+			expect(result.applied).toBe(true) // applied=true because message changed
+			expect(result.assistantMessage).toBe("")
+			expect(result.assistantMessage).not.toContain("<tool_call>")
 		})
 	})
 })
