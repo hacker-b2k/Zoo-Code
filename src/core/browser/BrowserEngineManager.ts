@@ -164,6 +164,12 @@ export class BrowserEngineManager {
 	 * Get page text content — main-content extraction (#20/#24).
 	 * Tries <article>/<main> first, falls back to full page text.
 	 * Strips nav/footer/sidebar/header for compact output.
+	 *
+	 * Handles "Execution context was destroyed" from page.evaluate(): when
+	 * called immediately after a click-triggered navigation, the new page's
+	 * execution context may still be initializing. Retries up to 3 times
+	 * with a short delay — the page object itself is still valid (Playwright
+	 * pages survive navigation), only the JS context needs re-creation.
 	 */
 	async getSummary(taskId: string, pageId: string): Promise<string> {
 		const page = this.getPage(taskId, pageId)
@@ -171,7 +177,7 @@ export class BrowserEngineManager {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		const text = await page.evaluate(() => {
+		const extractText = () => {
 			// Try <article> or <main> first (most semantic, Issue #24)
 			const article = document.querySelector("article")
 			const main = document.querySelector("main")
@@ -185,9 +191,31 @@ export class BrowserEngineManager {
 			)
 			Array.from(removeEls).forEach((el) => el.remove())
 			return clone.innerText || ""
-		})
+		}
 
-		return text.trim().slice(0, 15000) || "(empty page)"
+		let lastError: unknown
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				const text = await page.evaluate(extractText)
+				return (typeof text === "string" ? text : "").trim().slice(0, 15000) || "(empty page)"
+			} catch (error: unknown) {
+				lastError = error
+				const msg = error instanceof Error ? error.message : String(error)
+				if (msg.includes("Execution context was destroyed") || msg.includes("context was destroyed")) {
+					// Page is still navigating / context re-initializing. Wait
+					// briefly and retry — the page object is still valid.
+					if (attempt < 2) {
+						await new Promise((r) => setTimeout(r, 350))
+						await page.waitForLoadState("domcontentloaded").catch(() => {})
+						continue
+					}
+				}
+				throw error
+			}
+		}
+
+		// All retries exhausted — re-throw the last error
+		throw lastError
 	}
 
 	/**
