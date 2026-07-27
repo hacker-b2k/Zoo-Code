@@ -12,7 +12,7 @@
  * nativeArgs — both are asserted here.
  */
 import { NativeToolCallParser } from "../NativeToolCallParser"
-import { looksLikeTextToolCall } from "../TextToolCallParser"
+import { looksLikeTextToolCall, stripMalformedToolCallMarkup } from "../TextToolCallParser"
 import {
 	applyTextualToolCallRecovery,
 	hasExecutableNativeToolUse,
@@ -263,6 +263,165 @@ describe("MiMo field-failure scenarios (regression)", () => {
 			expect(tool.name).toBe("read_spec")
 			expect(tool.nativeArgs).toBeDefined()
 			expect(tool.nativeArgs.doc).toBe("design")
+		})
+	})
+
+	describe("Scenario (d): malformed/garbled markup fragments — must never leak to UI", () => {
+		/**
+		 * Field report: model emitted a garbled fragment with no valid function
+		 * opener, just stray tokens like `=</parameter>` + `</function></tool_call>`.
+		 * The recovery parser correctly can't extract a valid tool call, but the
+		 * raw broken XML was displayed to the user. The fix: strip structural
+		 * tag-shaped tokens even when recovery fails, so the user only sees
+		 * clean prose.
+		 */
+
+		it("exact field-report fragment: prose + stray =</parameter> + </function></tool_call>", () => {
+			const fragment =
+				"All 8 passed. Let me verify the remaining tools and clean up:<tool_call>\n=</parameter>\n</function>\n</tool_call>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("All 8 passed. Let me verify the remaining tools and clean up:")
+			expect(stripped).not.toContain("<tool_call>")
+			expect(stripped).not.toContain("</parameter>")
+			expect(stripped).not.toContain("</function>")
+			expect(stripped).not.toContain("</tool_call>")
+		})
+
+		it("applyTextualToolCallRecovery strips malformed fragment when recovery fails", () => {
+			const fragment =
+				"All 8 passed. Let me verify the remaining tools and clean up:<tool_call>\n=</parameter>\n</function>\n</tool_call>"
+
+			const recovered = applyTextualToolCallRecovery({
+				assistantMessage: fragment,
+				assistantMessageContent: [{ type: "text", content: fragment, partial: true }] as any[],
+				currentStreamingContentIndex: 0,
+			})
+
+			// Recovery fails (no valid tools) but markup is stripped
+			expect(recovered.recoveredCount).toBe(0)
+			expect(recovered.applied).toBe(true) // applied=true because message changed
+			expect(recovered.assistantMessage).toBe("All 8 passed. Let me verify the remaining tools and clean up:")
+			expect(recovered.assistantMessage).not.toContain("<tool_call>")
+			expect(recovered.assistantMessage).not.toContain("</parameter>")
+		})
+
+		it("unclosed <tool_call> at end of text", () => {
+			const fragment = "Done. Now let me run the tests.<tool_call>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Done. Now let me run the tests.")
+		})
+
+		it("orphaned </tool_call> closer", () => {
+			const fragment = "Finished processing.</tool_call>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Finished processing.")
+		})
+
+		it("unclosed <function=write_spec> opener", () => {
+			const fragment = "Let me write the spec.<function=write_spec>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Let me write the spec.")
+		})
+
+		it("orphaned </function> closer", () => {
+			const fragment = "All done here.</function>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("All done here.")
+		})
+
+		it("unclosed <parameter=doc> opener", () => {
+			const fragment = "Setting the doc parameter.<parameter=doc>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Setting the doc parameter.")
+		})
+
+		it("stray =</parameter> closer", () => {
+			const fragment = "Value set.=</parameter>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Value set.")
+		})
+
+		it("orphaned </parameter> closer", () => {
+			const fragment = "Done with params.</parameter>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Done with params.")
+		})
+
+		it("pure markup fragment (no prose) → empty string", () => {
+			const fragment = "<tool_call>\n=</parameter>\n</function>\n</tool_call>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("")
+		})
+
+		it("multiple malformed fragments in one text", () => {
+			const fragment =
+				"First step done.<tool_call>\n=</parameter>\n</function>\n</tool_call>\nSecond step complete.</tool_call>"
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toContain("First step done.")
+			expect(stripped).toContain("Second step complete.")
+			expect(stripped).not.toContain("<tool_call>")
+			expect(stripped).not.toContain("</tool_call>")
+			expect(stripped).not.toContain("</function>")
+			expect(stripped).not.toContain("</parameter>")
+		})
+
+		it("normal prose with technical words is NEVER falsely stripped", () => {
+			const prose =
+				"The function parameter is set to null. Please call the tool_call function with the correct parameter."
+			const stripped = stripMalformedToolCallMarkup(prose)
+			expect(stripped).toBe(prose)
+		})
+
+		it("prose with angle brackets in code is preserved", () => {
+			const prose = "Use `if (a < b && c > d)` for the comparison."
+			const stripped = stripMalformedToolCallMarkup(prose)
+			expect(stripped).toBe(prose)
+		})
+
+		it("prose with HTML-like tags that are NOT tool-call structural is preserved", () => {
+			const prose = 'Use the <div> element with class="container" for layout.'
+			const stripped = stripMalformedToolCallMarkup(prose)
+			expect(stripped).toBe(prose)
+		})
+
+		it("well-formed tool call is NOT stripped (recovery handles it, not this path)", () => {
+			const wellFormed =
+				"Let me read the spec.\n<tool_call>\n<function=read_spec>\n<parameter=doc>design</parameter>\n</function>\n</tool_call>"
+			// stripMalformedToolCallMarkup strips it (it's structural markup), but
+			// the recovery path should handle it first. This test just documents
+			// that the strip function is structural, not semantic.
+			const stripped = stripMalformedToolCallMarkup(wellFormed)
+			expect(stripped).toBe("Let me read the spec.")
+		})
+
+		it("applyTextualToolCallRecovery with well-formed tool call still recovers (not just strips)", () => {
+			const wellFormed =
+				"Let me read the spec.\n<tool_call>\n<function=read_spec>\n<parameter=doc>design</parameter>\n</function>\n</tool_call>"
+
+			const recovered = applyTextualToolCallRecovery({
+				assistantMessage: wellFormed,
+				assistantMessageContent: [{ type: "text", content: wellFormed, partial: true }] as any[],
+				currentStreamingContentIndex: 0,
+			})
+
+			// Recovery succeeds — tool is extracted AND markup is stripped
+			expect(recovered.recoveredCount).toBe(1)
+			expect(recovered.applied).toBe(true)
+			expect(recovered.assistantMessage).toBe("Let me read the spec.")
+			const toolBlocks = recovered.assistantMessageContent.filter((b) => b.type === "tool_use")
+			expect(toolBlocks).toHaveLength(1)
+			expect((toolBlocks[0] as any).name).toBe("read_spec")
+		})
+
+		it("empty input returns empty", () => {
+			expect(stripMalformedToolCallMarkup("")).toBe("")
+			expect(stripMalformedToolCallMarkup("   ")).toBe("")
+		})
+
+		it("text with only whitespace between fragments collapses correctly", () => {
+			const fragment = "Start.<tool_call>\n\n\n</tool_call>\n\nEnd."
+			const stripped = stripMalformedToolCallMarkup(fragment)
+			expect(stripped).toBe("Start.\n\nEnd.")
 		})
 	})
 })

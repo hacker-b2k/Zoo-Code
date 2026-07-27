@@ -697,6 +697,69 @@ export function textEndsWithIncompleteMarkup(text: string): boolean {
 	return PARTIAL_TAG_TAIL_RE.test(text) || PARTIAL_FENCE_TAIL_RE.test(text)
 }
 
+/**
+ * Strip malformed/unparseable tool-call structural fragments from text.
+ *
+ * The recovery parser (parseTextToolCalls) only strips markup when it can
+ * successfully extract a valid tool call. But models sometimes emit garbled
+ * fragments — missing function names, stray `=</parameter>`, truncated tags —
+ * that don't assemble into anything executable. The user must never see raw
+ * broken XML, even when there's nothing valid to recover.
+ *
+ * This function strips tag-shaped tokens that are clearly tool-call structural
+ * fragments (not ordinary prose) while preserving any surrounding text. It is
+ * conservative: only strips text that looks like actual XML tags, never plain
+ * English words like "parameter" or "function".
+ *
+ * Returns the cleaned text (may be empty if the entire input was markup).
+ */
+export function stripMalformedToolCallMarkup(text: string): string {
+	if (!text) {
+		return text
+	}
+
+	let cleaned = text
+
+	// Strip complete <tool_call>…</tool_call> blocks (even if inner is garbled)
+	// — these are unambiguous tool-call containers.
+	cleaned = cleaned.replace(/<\s*tool_call\b[^>]*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, "")
+
+	// Strip complete <function_call>…</function_call> blocks.
+	cleaned = cleaned.replace(/<\s*function_call\b[^>]*>[\s\S]*?<\s*\/\s*function_call\s*>/gi, "")
+
+	// Strip complete <function=NAME>…</function> blocks (has a valid name).
+	cleaned = cleaned.replace(/<\s*function\s*=\s*[a-zA-Z0-9_.:-]+\s*>[\s\S]*?<\s*\/\s*function\s*>/gi, "")
+
+	// Strip complete <function|tool|invoke name="NAME">…</function|tool|invoke> blocks.
+	cleaned = cleaned.replace(
+		/<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=\s*["'][^"']+["'][^>]*>[\s\S]*?<\s*\/\s*(?:function|tool|invoke)\s*>/gi,
+		"",
+	)
+
+	// Strip stray/unclosed structural tag fragments that are clearly tool-call
+	// markup, not prose. These are the exact tokens from the field report:
+	//   <tool_call>          (unclosed)
+	//   </tool_call>         (orphaned closer)
+	//   <function=NAME>      (unclosed)
+	//   </function>          (orphaned closer)
+	//   <parameter=NAME>     (unclosed parameter)
+	//   <parameter name="N"> (unclosed parameter)
+	//   =</parameter>        (stray closer with stray equals)
+	//   </parameter>         (orphaned parameter closer)
+	// These are specific enough (angle brackets + structural names) that they
+	// virtually never appear in ordinary prose — plain English words like
+	// "function" or "parameter" without angle brackets are never matched.
+	cleaned = cleaned.replace(
+		/<\s*\/?\s*tool_call\b[^>]*>|<\s*\/?\s*function_call\b[^>]*>|<\s*\/?\s*function\s*=\s*[a-zA-Z0-9_.:-]*\s*>|<\s*\/\s*function\s*>|<\s*\/?\s*(?:function|tool|invoke)\b[^>]*\bname\s*=\s*["'][^"']*["'][^>]*>|<\s*\/?\s*parameter\s*(?:=\s*[a-zA-Z0-9_.:-]*\s*|\bname\s*=\s*["'][^"']*["']\s*)>|=\s*<\s*\/\s*parameter\s*>|<\s*\/\s*parameter\s*>/gi,
+		"",
+	)
+
+	// Collapse any double blank lines left behind by the strip.
+	cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim()
+
+	return cleaned
+}
+
 /** Test helper — reset synthetic id sequence. */
 export function resetTextToolCallSeqForTests(): void {
 	textToolCallSeq = 0

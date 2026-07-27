@@ -1,5 +1,5 @@
 import type { ToolUse, McpToolUse, TextContent } from "../../shared/tools"
-import { looksLikeTextToolCall, parseTextToolCalls } from "./TextToolCallParser"
+import { looksLikeTextToolCall, parseTextToolCalls, stripMalformedToolCallMarkup } from "./TextToolCallParser"
 
 /**
  * Content blocks that participate in textual tool-call recovery.
@@ -83,11 +83,31 @@ export function applyTextualToolCallRecovery(state: TextualToolCallRecoveryState
 
 	const recovered = parseTextToolCalls(assistantMessage)
 	if (!recovered.recovered || recovered.toolUses.length === 0) {
+		// Malformed/garbled tool-call fragments: nothing valid to execute, but
+		// the user must never see raw broken XML. Strip structural tag-shaped
+		// tokens (conservative — never touches plain English prose).
+		const strippedMessage = stripMalformedToolCallMarkup(assistantMessage)
+		const messageChanged = strippedMessage !== assistantMessage
+		if (messageChanged) {
+			// Update text blocks with the stripped version
+			for (const block of assistantMessageContent) {
+				if (block.type === "text") {
+					block.content = strippedMessage
+					block.partial = false
+				}
+			}
+			// Drop empty text blocks after stripping
+			if (!strippedMessage.trim()) {
+				assistantMessageContent = assistantMessageContent.filter(
+					(block) => block.type !== "text" || (block.content && block.content.trim()),
+				)
+			}
+		}
 		return {
-			assistantMessage,
+			assistantMessage: strippedMessage,
 			assistantMessageContent,
 			currentStreamingContentIndex,
-			applied: false,
+			applied: messageChanged,
 			recoveredCount: 0,
 		}
 	}
