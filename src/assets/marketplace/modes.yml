@@ -2948,10 +2948,12 @@ items:
                     <practice>Combine multiple resolutions in one diff when possible</practice>
                   </best_practices>
                   
-                  <example><![CDATA[
-            <apply_diff>
-            <path>src/feature.ts</path>
-            <diff>
+                  <example>
+                    Call the apply_diff tool (native structured tool call) with:
+                    path: src/feature.ts
+                    diff: the following SEARCH/REPLACE parameter value (parameter
+                    payload illustrated below, not tool-call markup):
+                    <![CDATA[
             <<<<<<< SEARCH
             :start_line:45
             -------
@@ -2970,9 +2972,8 @@ items:
               return "merged";
             }
             >>>>>>> REPLACE
-            </diff>
-            </apply_diff>
-                  ]]></example>
+                    ]]>
+                  </example>
                 </tool>
 
                 <tool name="search_and_replace">
@@ -2982,17 +2983,16 @@ items:
                     <practice>Always escape special characters</practice>
                   </best_practices>
                   
-                  <example><![CDATA[
-            <search_and_replace>
-            <path>src/config.ts</path>
-            <search>\<<<<<<< HEAD[\s\S]*?\>>>>>>> \w+</search>
-            <replace>// Resolved configuration
-            const config = {
-              // Merged settings from both branches
-            }</replace>
-            <use_regex>true</use_regex>
-            </search_and_replace>
-                  ]]></example>
+                  <example>
+                    Call the search_and_replace tool (native structured tool call) with:
+                    path: src/config.ts
+                    search: \<<<<<<< HEAD[\s\S]*?\>>>>>>> \w+
+                    replace: // Resolved configuration
+                      const config = {
+                        // Merged settings from both branches
+                      }
+                    use_regex: true
+                  </example>
                 </tool>
               </tool_specific_guidance>
 
@@ -3091,11 +3091,10 @@ items:
               <workflow>
                 <step number="1">
                   <description>Parse PR number and fetch PR information</description>
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>gh pr view 123 --json title,body,headRefName,baseRefName</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: gh pr view 123 --json title,body,headRefName,baseRefName
+                  </tool_use>
                   <expected_output><![CDATA[
             {
               "title": "Fix memory leak in data processor",
@@ -3112,31 +3111,28 @@ items:
 
                 <step number="2">
                   <description>Checkout PR branch and prepare for rebase</description>
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>gh pr checkout 123 --force</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: gh pr checkout 123 --force
+                  </tool_use>
                   <expected_output><![CDATA[
             Switched to branch 'fix/memory-leak'
             Your branch is up to date with 'origin/fix/memory-leak'.
                   ]]></expected_output>
                   
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git fetch origin main</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git fetch origin main
+                  </tool_use>
                   <expected_output><![CDATA[
             From github.com:user/repo
              * branch            main       -> FETCH_HEAD
                   ]]></expected_output>
                   
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git rebase origin/main</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git rebase origin/main
+                  </tool_use>
                   <expected_output><![CDATA[
             Auto-merging src/data/processor.ts
             CONFLICT (content): Merge conflict in src/data/processor.ts
@@ -3150,11 +3146,10 @@ items:
 
                 <step number="3">
                   <description>Check for merge conflicts</description>
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git status --porcelain | grep "^UU"</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git status --porcelain | grep "^UU"
+                  </tool_use>
                   <expected_output><![CDATA[
             UU src/data/processor.ts
             UU src/data/processor.test.ts
@@ -3167,11 +3162,10 @@ items:
 
                 <step number="4">
                   <description>Examine the conflicted processor file</description>
-                  <tool_use><![CDATA[
-            <read_file>
-            <path>src/data/processor.ts</path>
-            </read_file>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the read_file tool (native structured tool call) with:
+                    path: src/data/processor.ts
+                  </tool_use>
                   <expected_output><![CDATA[
             45 | export class DataProcessor {
             46 |   private listeners: Map<string, EventListener> = new Map();
@@ -3208,20 +3202,18 @@ items:
 
                 <step number="5">
                   <description>Analyze the conflicts using git blame</description>
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git blame -L 49,53 HEAD -- src/data/processor.ts | cut -d' ' -f1 | sort -u | xargs -I {} git log -1 --format="%h %s" {}</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git blame -L 49,53 HEAD -- src/data/processor.ts | cut -d' ' -f1 | sort -u | xargs -I {} git log -1 --format="%h %s" {}
+                  </tool_use>
                   <expected_output><![CDATA[
             def456 Refactor: Convert processData to async/await pattern
                   ]]></expected_output>
                   
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git log -1 --format="%h %s" abc123</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git log -1 --format="%h %s" abc123
+                  </tool_use>
                   <expected_output><![CDATA[
             abc123 Fix: Add listener cleanup to prevent memory leak
                   ]]></expected_output>
@@ -3237,10 +3229,13 @@ items:
 
                 <step number="6">
                   <description>Resolve the conflicts</description>
-                  <tool_use><![CDATA[
-            <apply_diff>
-            <path>src/data/processor.ts</path>
-            <diff>
+                  <tool_use>
+                    Call the apply_diff tool (native structured tool call) with:
+                    path: src/data/processor.ts
+                    diff: two SEARCH/REPLACE blocks that combine both sides of each
+                    conflicted region, as illustrated below (this is the VALUE of the
+                    diff parameter, not tool-call markup):
+                    <![CDATA[
             <<<<<<< SEARCH
             :start_line:48
             -------
@@ -3293,9 +3288,8 @@ items:
                 this.listeners.clear();
               }
             >>>>>>> REPLACE
-            </diff>
-            </apply_diff>
-                  ]]></tool_use>
+                    ]]>
+                  </tool_use>
                   <explanation>
                     Combined both changes: kept the async/await refactor from main
                     while preserving the memory leak fix (listener tracking and cleanup)
@@ -3305,35 +3299,29 @@ items:
 
                 <step number="7">
                   <description>Resolve test file conflicts</description>
-                  <tool_use><![CDATA[
-            <read_file>
-            <path>src/data/processor.test.ts</path>
-            </read_file>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the read_file tool (native structured tool call) with:
+                    path: src/data/processor.test.ts
+                  </tool_use>
                   <!-- Similar process for test file -->
-                  <tool_use><![CDATA[
-            <apply_diff>
-            <path>src/data/processor.test.ts</path>
-            <diff>
-            <!-- Test resolution would go here -->
-            </diff>
-            </apply_diff>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the apply_diff tool (native structured tool call) with:
+                    path: src/data/processor.test.ts
+                    diff: <!-- Test resolution would go here -->
+                  </tool_use>
                 </step>
 
                 <step number="8">
                   <description>Stage resolved files and continue rebase</description>
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git add src/data/processor.ts src/data/processor.test.ts</command>
-            </execute_command>
-                  ]]></tool_use>
-                  
-                  <tool_use><![CDATA[
-            <execute_command>
-            <command>git rebase --continue</command>
-            </execute_command>
-                  ]]></tool_use>
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git add src/data/processor.ts src/data/processor.test.ts
+                  </tool_use>
+
+                  <tool_use>
+                    Call the execute_command tool (native structured tool call) with:
+                    command: git rebase --continue
+                  </tool_use>
                   <expected_output><![CDATA[
             [detached HEAD def789] Fix memory leak in data processor
              2 files changed, 12 insertions(+), 2 deletions
@@ -4119,16 +4107,14 @@ items:
         Each time: 3–5 curated options (distinct in angle or depth), clearly labeled.
 
         BASELINE ASSESSMENT WORKFLOW
-        1. Prompt for Current Understanding:
-        <ask_followup_question>
-          <question>What's your current understanding or goal for [topic/feature]?</question>
-          <follow_up>
-            <suggest>I have a rough idea but want fundamentals.</suggest>
-            <suggest>I know the concept; need help structuring code.</suggest>
-            <suggest>I tried an approach; want a critique.</suggest>
-            <suggest>Not sure where to start—please outline paths.</suggest>
-          </follow_up>
-        </ask_followup_question>
+        1. Prompt for Current Understanding — call the ask_followup_question tool
+        (native structured tool call) with:
+        • question: "What's your current understanding or goal for [topic/feature]?"
+        • follow_up suggestions:
+          - "I have a rough idea but want fundamentals."
+          - "I know the concept; need help structuring code."
+          - "I tried an approach; want a critique."
+          - "Not sure where to start—please outline paths."
         2. Identify Gaps - Summarize what is *known / unclear / assumptions*.
         3. Present Concept Paths (theory-first, example-first, test-first, analogy-first) via ask_followup_question.
 
@@ -4142,16 +4128,14 @@ items:
         • One reflective question
 
         IMPLEMENTATION PHASE (Only After Concept Buy‑In)
-        1. Present 2–4 implementation strategies with tradeoffs:
-        <ask_followup_question>
-          <question>Which implementation path would you like to explore first?</question>
-          <follow_up>
-            <suggest>Path A: Minimal baseline (focus clarity).</suggest>
-            <suggest>Path B: Test-first (learn through specs).</suggest>
-            <suggest>Path C: Performance-aware structure.</suggest>
-            <suggest>Path D: Refactor an intentionally naive version.</suggest>
-          </follow_up>
-        </ask_followup_question>
+        1. Present 2–4 implementation strategies with tradeoffs — call the
+        ask_followup_question tool (native structured tool call) with:
+        • question: "Which implementation path would you like to explore first?"
+        • follow_up suggestions:
+          - "Path A: Minimal baseline (focus clarity)."
+          - "Path B: Test-first (learn through specs)."
+          - "Path C: Performance-aware structure."
+          - "Path D: Refactor an intentionally naive version."
         2. Break chosen path into micro-steps (5–15 min each): Goal, Rationale, Success signal.
         3. Provide ONLY the next code slice needed. Ask for confirmation or reflection before next slice.
         4. After each slice: Quick recap + a comprehension check question.
@@ -4171,16 +4155,14 @@ items:
         REFLECTION & NEXT STEPS
         After completing a concept or feature:
         1. Prompt for confidence & lingering questions.
-        2. Offer spaced reinforcement options:
-        <ask_followup_question>
-          <question>How would you like to reinforce what you learned?</question>
-          <follow_up>
-            <suggest>Explain it back in your own words.</suggest>
-            <suggest>Apply concept to a variant problem.</suggest>
-            <suggest>Refactor for readability.</suggest>
-            <suggest>Write tests for an edge case.</suggest>
-          </follow_up>
-        </ask_followup_question>
+        2. Offer spaced reinforcement options — call the ask_followup_question tool
+        (native structured tool call) with:
+        • question: "How would you like to reinforce what you learned?"
+        • follow_up suggestions:
+          - "Explain it back in your own words."
+          - "Apply concept to a variant problem."
+          - "Refactor for readability."
+          - "Write tests for an edge case."
         3. Suggest 2–3 possible next learning arcs (depth, breadth, application project).
 
         CRITIQUE & FEEDBACK MODE

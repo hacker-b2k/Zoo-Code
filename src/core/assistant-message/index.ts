@@ -3,6 +3,7 @@ export { presentAssistantMessage } from "./presentAssistantMessage"
 export {
 	parseTextToolCalls,
 	looksLikeTextToolCall,
+	textEndsWithIncompleteMarkup,
 	resetTextToolCallSeqForTests,
 	type TextToolCallParseResult,
 } from "./TextToolCallParser"

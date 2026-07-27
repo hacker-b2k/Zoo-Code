@@ -1,4 +1,9 @@
-import { looksLikeTextToolCall, parseTextToolCalls, resetTextToolCallSeqForTests } from "../TextToolCallParser"
+import {
+	looksLikeTextToolCall,
+	parseTextToolCalls,
+	resetTextToolCallSeqForTests,
+	textEndsWithIncompleteMarkup,
+} from "../TextToolCallParser"
 
 describe("TextToolCallParser", () => {
 	beforeEach(() => {
@@ -27,6 +32,33 @@ describe("TextToolCallParser", () => {
 
 		it("returns false for plain prose", () => {
 			expect(looksLikeTextToolCall("Hello, how can I help?")).toBe(false)
+		})
+	})
+
+	describe("textEndsWithIncompleteMarkup", () => {
+		it("detects partial opening tag tails", () => {
+			expect(textEndsWithIncompleteMarkup("Some prose <to")).toBe(true)
+			expect(textEndsWithIncompleteMarkup("Some prose <tool_cal")).toBe(true)
+			expect(textEndsWithIncompleteMarkup("Some prose <")).toBe(true)
+			expect(textEndsWithIncompleteMarkup("Some prose <function=execute_comma")).toBe(true)
+		})
+
+		it("detects partial closing tag tails", () => {
+			expect(textEndsWithIncompleteMarkup("value </par")).toBe(true)
+			expect(textEndsWithIncompleteMarkup("value </")).toBe(false) // bare "</" without a letter is not tag-ish
+		})
+
+		it("detects partial markdown fence tails", () => {
+			expect(textEndsWithIncompleteMarkup("Here is the call:\n```")).toBe(true)
+			expect(textEndsWithIncompleteMarkup("Here is the call:\n```jso")).toBe(true)
+		})
+
+		it("returns false for complete tags and plain prose", () => {
+			expect(textEndsWithIncompleteMarkup("Some prose <b>bold</b>")).toBe(false)
+			expect(textEndsWithIncompleteMarkup("Plain sentence.")).toBe(false)
+			expect(textEndsWithIncompleteMarkup("Use `read_file` for that")).toBe(false) // single backticks are fine
+			expect(textEndsWithIncompleteMarkup("a < b")).toBe(false)
+			expect(textEndsWithIncompleteMarkup("")).toBe(false)
 		})
 	})
 
@@ -296,6 +328,277 @@ Done.`
 			expect(result.cleanedText).toContain("Planning next step.")
 			expect(result.cleanedText).toContain("Done.")
 			expect(result.cleanedText).not.toContain("<function=")
+		})
+	})
+
+	describe("parseTextToolCalls — Xiaomi MiMo documented format", () => {
+		it("recovers the exact MiMo execute_command payload from the field report", () => {
+			// Verbatim shape from the user report: MiMo emits this inside
+			// message.content instead of native tool_calls.
+			const text = `<tool_call>
+<function=execute_command>
+<parameter=command>ls -R "d:/New folder"</parameter>
+<parameter=cwd>d:/New folder</parameter>
+<parameter=timeout>10</parameter>
+</function>
+</tool_call>`
+
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses).toHaveLength(1)
+			expect(result.toolUses[0].name).toBe("execute_command")
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({
+					command: 'ls -R "d:/New folder"',
+					cwd: "d:/New folder",
+					timeout: 10,
+				})
+			}
+		})
+
+		it("recovers MiMo delete_spec with delete_all", () => {
+			const text = `<tool_call>
+<function=delete_spec>
+<parameter=delete_all>true</parameter>
+</function>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("delete_spec")
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({ delete_all: true })
+			}
+		})
+
+		it("recovers spawn_worker with long multi-line message containing quotes and JSON", () => {
+			const text = `<tool_call>
+<function=spawn_worker>
+<parameter=name>researcher</parameter>
+<parameter=mode>code</parameter>
+<parameter=message>Investigate the parser.
+Steps:
+1. Read {"path": "src/index.ts"}
+2. Run <command>npm test</command> and report "quoted" results.</parameter>
+</function>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("spawn_worker")
+			if (result.toolUses[0].type === "tool_use") {
+				const args = result.toolUses[0].nativeArgs as { name: string; message: string }
+				expect(args.name).toBe("researcher")
+				expect(args.message).toContain("Investigate the parser.")
+				expect(args.message).toContain('"quoted" results.')
+			}
+		})
+	})
+
+	describe("parseTextToolCalls — tolerant parameter scanner", () => {
+		it("recovers Anthropic/invoke style with name attributes", () => {
+			const text = `<tool_call>
+<invoke name="read_file">
+<parameter name="path">src/index.ts</parameter>
+</invoke>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses).toHaveLength(1) // no duplicate across passes
+			expect(result.toolUses[0].name).toBe("read_file")
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({ path: "src/index.ts" })
+			}
+		})
+
+		it("recovers bare <invoke name=…> without an outer wrapper", () => {
+			const text = `<invoke name="list_files">
+<parameter name="path">.</parameter>
+<parameter name="recursive">true</parameter>
+</invoke>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("list_files")
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({ path: ".", recursive: true })
+			}
+		})
+
+		it("recovers an unclosed trailing parameter (stream cut before </parameter>)", () => {
+			const text = `<tool_call>
+<function=execute_command>
+<parameter=command>ls -la
+</function>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({ command: "ls -la", cwd: undefined, timeout: undefined })
+			}
+		})
+
+		it("recovers parameters with no closing </parameter> tags at all", () => {
+			const text = `<tool_call>
+<function=spawn_worker>
+<parameter=name>researcher
+<parameter=message>Do the thing
+</function>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({
+					name: "researcher",
+					message: "Do the thing",
+				})
+			}
+		})
+
+		it("recovers a stream truncated mid-value (max_tokens cut)", () => {
+			const text = `<tool_call>
+<function=spawn_worker>
+<parameter=name>researcher</parameter>
+<parameter=message>Investigate the parser thoroughly. Step 1: read the`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({
+					name: "researcher",
+					message: "Investigate the parser thoroughly. Step 1: read the",
+				})
+			}
+		})
+
+		it("recovers a stream truncated mid-closing-tag and strips the partial tag", () => {
+			const text = `<tool_call>
+<function=execute_command>
+<parameter=command>ls -la /tmp</par`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({
+					command: "ls -la /tmp",
+					cwd: undefined,
+					timeout: undefined,
+				})
+			}
+		})
+
+		it("decodes XML entities inside parameter values", () => {
+			const text = `<tool_call>
+<function=write_to_file>
+<parameter=path>test.txt</parameter>
+<parameter=content>if (a &lt; b &amp;&amp; c &gt; d) { return &quot;x&quot;; }</parameter>
+</function>
+</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({
+					path: "test.txt",
+					content: 'if (a < b && c > d) { return "x"; }',
+				})
+			}
+		})
+
+		it("decodes entities with correct &amp; precedence (&amp;lt; → literal &lt;)", () => {
+			const text = `<function=write_to_file>
+<parameter=path>x.txt</parameter>
+<parameter=content>&amp;lt;tag&amp;gt;</parameter>
+</function>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({ path: "x.txt", content: "&lt;tag&gt;" })
+			}
+		})
+	})
+
+	describe("parseTextToolCalls — markdown-fenced JSON tool calls", () => {
+		it("recovers a bare fenced JSON tool call with no XML wrapper", () => {
+			const text = '```json\n{"name":"list_files","arguments":{"path":"."}}\n```'
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("list_files")
+			expect(result.cleanedText.trim()).toBe("")
+		})
+
+		it("recovers fenced JSON inside <tool_call> tags", () => {
+			const text = `<tool_call>\n\`\`\`json\n{"name":"list_files","arguments":{"path":"."}}\n\`\`\`\n</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("list_files")
+		})
+
+		it("recovers fenced JSON with nested arguments object", () => {
+			const text = '```json\n{"name":"spawn_worker","arguments":{"name":"w1","message":"line1\\nline2"}}\n```'
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toMatchObject({ name: "w1", message: "line1\nline2" })
+			}
+		})
+
+		it("does NOT recover fenced JSON that is not a valid tool call (false-positive guard)", () => {
+			const text = 'Here is an example:\n```json\n{"name":"just-data","value":1}\n```\nHope that helps.'
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(false)
+			expect(result.toolUses).toHaveLength(0)
+			expect(result.cleanedText).toBe(text)
+		})
+
+		it("looksLikeTextToolCall detects fenced tool-call JSON", () => {
+			expect(looksLikeTextToolCall('```json\n{"name":"list_files","arguments":{"path":"."}}\n```')).toBe(true)
+		})
+
+		it("looksLikeTextToolCall ignores fenced JSON without an arguments-like key", () => {
+			expect(looksLikeTextToolCall('```json\n{"name":"just-data","value":1}\n```')).toBe(false)
+		})
+	})
+
+	describe("parseTextToolCalls — mixed and chunked delivery", () => {
+		it("recovers multiple tool calls of mixed formats in one response", () => {
+			const text = `<tool_call><function=execute_command><parameter=command>ls</parameter></function></tool_call>
+Some text between.
+<tool_call>{"name":"list_files","arguments":{"path":"."}}</tool_call>`
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses).toHaveLength(2)
+			expect(result.toolUses[0].name).toBe("execute_command")
+			expect(result.toolUses[1].name).toBe("list_files")
+			expect(result.cleanedText).toContain("Some text between.")
+			expect(result.cleanedText).not.toContain("<tool_call>")
+		})
+
+		it("recovers from text that was accumulated across arbitrary streaming chunk splits", () => {
+			// Chunked delivery: the full assistantMessage is identical regardless of
+			// where stream chunk boundaries fell, so parsing the concatenation must
+			// recover the same tool call.
+			const chunks = [
+				"<too",
+				"l_call>\n<func",
+				"tion=execute_command>\n<parameter=com",
+				"mand>ls -R /s",
+				"rc</parameter>\n</functi",
+				"on>\n</tool_call>",
+			]
+			const assembled = chunks.join("")
+			const result = parseTextToolCalls(assembled)
+			expect(result.recovered).toBe(true)
+			expect(result.toolUses[0].name).toBe("execute_command")
+			if (result.toolUses[0].type === "tool_use") {
+				expect(result.toolUses[0].nativeArgs).toEqual({
+					command: "ls -R /src",
+					cwd: undefined,
+					timeout: undefined,
+				})
+			}
+		})
+
+		it("fails gracefully on malformed garbage that merely looks tag-ish", () => {
+			const text = `<tool_call><function=><parameter=>junk</parameter></function></tool_call>`
+			expect(() => parseTextToolCalls(text)).not.toThrow()
+			const result = parseTextToolCalls(text)
+			expect(result.recovered).toBe(false)
+			expect(result.toolUses).toHaveLength(0)
 		})
 	})
 })

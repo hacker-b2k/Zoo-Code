@@ -7,7 +7,10 @@ import {
 	openAiModelInfoSaneDefaults,
 	type ProviderSettings,
 	type ProviderName,
+	type ModelInfo,
 } from "@roo-code/types"
+
+import { inferReasoningCapabilitiesFromModelId } from "../../../api/providers/utils/reasoning-capabilities"
 
 import type { Task } from "../../task/Task"
 
@@ -97,6 +100,21 @@ export const PROVIDER_FIELD_HINTS: Partial<
 
 /** Weak / placeholder reasoning levels that agent best-setup upgrades to high quality. */
 const WEAK_REASONING_EFFORTS = new Set(["", "disable", "none", "minimal", "low", "medium"])
+
+/**
+ * Reasoning-capability inference for profile defaults. Delegates to the shared
+ * provider-agnostic helper (single source of truth) keyed on the resolved model id;
+ * the request-time path (OpenAiHandler.getModel) uses the same helper so existing
+ * profiles saved without these flags are still enriched at runtime.
+ */
+export function inferReasoningCapabilities(settings: Record<string, unknown>): {
+	preserveReasoning?: boolean
+	supportsReasoningBinary?: boolean
+	supportedParameters?: ModelInfo["supportedParameters"]
+} {
+	const modelId = String(settings.customEndpointModelId ?? settings.openAiModelId ?? settings.apiModelId ?? "")
+	return inferReasoningCapabilitiesFromModelId(modelId)
+}
 
 /**
  * Infer context window from model id / custom info for agent setup.
@@ -312,6 +330,24 @@ export function applyBestProviderDefaults(
 			appliedDefaults.push("openAiCustomModelInfo.supportsReasoningEffort")
 		}
 
+		// Reasoning capabilities inferred generically from model id — only when absent.
+		const inferredOpenAi = inferReasoningCapabilities(out)
+		if (prev.preserveReasoning === undefined && inferredOpenAi.preserveReasoning !== undefined) {
+			prev.preserveReasoning = inferredOpenAi.preserveReasoning
+			touched = true
+			appliedDefaults.push("openAiCustomModelInfo.preserveReasoning")
+		}
+		if (prev.supportsReasoningBinary === undefined && inferredOpenAi.supportsReasoningBinary !== undefined) {
+			prev.supportsReasoningBinary = inferredOpenAi.supportsReasoningBinary
+			touched = true
+			appliedDefaults.push("openAiCustomModelInfo.supportsReasoningBinary")
+		}
+		if (prev.supportedParameters === undefined && inferredOpenAi.supportedParameters !== undefined) {
+			prev.supportedParameters = inferredOpenAi.supportedParameters
+			touched = true
+			appliedDefaults.push("openAiCustomModelInfo.supportedParameters")
+		}
+
 		if (touched) {
 			out.openAiCustomModelInfo = prev
 		}
@@ -386,6 +422,23 @@ export function applyBestProviderDefaults(
 			prev.supportsReasoningEffort = ["low", "medium", "high", "xhigh"]
 			touched = true
 			appliedDefaults.push("customEndpointModelInfo.supportsReasoningEffort")
+		}
+		// Reasoning capabilities inferred generically from model id — only when absent.
+		const inferredCustom = inferReasoningCapabilities(out)
+		if (prev.preserveReasoning === undefined && inferredCustom.preserveReasoning !== undefined) {
+			prev.preserveReasoning = inferredCustom.preserveReasoning
+			touched = true
+			appliedDefaults.push("customEndpointModelInfo.preserveReasoning")
+		}
+		if (prev.supportsReasoningBinary === undefined && inferredCustom.supportsReasoningBinary !== undefined) {
+			prev.supportsReasoningBinary = inferredCustom.supportsReasoningBinary
+			touched = true
+			appliedDefaults.push("customEndpointModelInfo.supportsReasoningBinary")
+		}
+		if (prev.supportedParameters === undefined && inferredCustom.supportedParameters !== undefined) {
+			prev.supportedParameters = inferredCustom.supportedParameters
+			touched = true
+			appliedDefaults.push("customEndpointModelInfo.supportedParameters")
 		}
 		if (touched) out.customEndpointModelInfo = prev
 	}

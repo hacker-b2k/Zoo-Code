@@ -108,17 +108,17 @@ export default {
 					description: "For search_replace: replace all matches (default false)",
 				},
 			},
-			required: [
-				"title",
-				"spec_id",
-				"doc",
-				"content",
-				"mode",
-				"section_heading",
-				"old_string",
-				"new_string",
-				"replace_all",
-			],
+			// Problem B root cause mitigation: marking all 9 keys as `required` with
+			// `strict: true` forces MiMo (and any non-OpenAI gateway that tries to
+			// honor strict mode) to emit literal `{}` for mode-irrelevant keys
+			// (e.g. section_heading when mode=replace, old_string when mode=append),
+			// producing silent "[object Object]" leakage or "arguments could not be
+			// finalized (missing nativeArgs)" errors. Only `doc` is truly uniform
+			// across every mode; every other param is mode-specific. With strict:
+			// false (the gateway-safe default applied by convertToolsForOpenAI for
+			// MiMo and other non-OpenAI gateways), trimming `required` lets models
+			// omit irrelevant keys instead of substituting null/objects.
+			required: ["doc"],
 			additionalProperties: false,
 		},
 	},

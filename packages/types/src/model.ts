@@ -65,7 +65,18 @@ export type ServiceTier = z.infer<typeof serviceTierSchema>
  * ModelParameter
  */
 
-export const modelParameters = ["max_tokens", "temperature", "reasoning", "include_reasoning"] as const
+export const modelParameters = [
+	"max_tokens",
+	"temperature",
+	"reasoning",
+	"include_reasoning",
+	// Tool-calling parameters (OpenRouter-style supported_parameters contract). Presence in
+	// a model's supportedParameters allow-list signals the endpoint accepts these fields;
+	// absence tells generic OpenAI-compatible handlers to omit them for compatibility.
+	"tools",
+	"tool_choice",
+	"parallel_tool_calls",
+] as const
 
 export const modelParametersSchema = z.enum(modelParameters)
 

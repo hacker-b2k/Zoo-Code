@@ -44,7 +44,14 @@ export default {
 						'Optional filter with delete_all: case-insensitive substring on pack title (e.g. "test").',
 				},
 			},
-			required: ["spec_id", "spec_ids", "delete_all", "title_contains"],
+			// Problem B / Problem A: every one of these parameters is mode-specific
+			// (single / bulk / delete_all). Forcing `required: [...]` (all keys)
+			// with strict:true makes non-OpenAI gateways (MiMo etc.) emit `{}` for
+			// the irrelevant params, leaking "[object Object]" into executing tools
+			// or producing "arguments could not be finalized (missing nativeArgs)"
+			// false-failure messages. Trim `required` to [] so each mode omits
+			// irrelevant keys; tool validates the mode-specific ones itself.
+			required: [],
 			additionalProperties: false,
 		},
 	},

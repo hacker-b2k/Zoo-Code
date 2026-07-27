@@ -29,7 +29,7 @@ export default {
 					description: 'Document kind: "requirements" | "design" | "tasks"',
 				},
 			},
-			required: ["spec_id", "doc"],
+			required: ["doc"],
 			additionalProperties: false,
 		},
 	},

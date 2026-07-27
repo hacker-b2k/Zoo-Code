@@ -13,7 +13,19 @@ export class ListMcpConfigTool extends BaseTool<"list_mcp_config"> {
 
 	async execute(params: ListMcpConfigParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
 		const { handleError, pushToolResult } = callbacks
-		const scopeFilter = params.scope ?? "all"
+
+		// Problem A defensive guard: scope must be a real string enum value or
+		// undefined. A non-string scope (object/array from broken gateways)
+		// would otherwise leak through `String(scopeFilter)` as
+		// "[object Object]" into the user-visible error message, hiding the
+		// actual failure mode. Coerce cleanly first.
+		const scopeRaw = params.scope
+		const scopeFilter =
+			typeof scopeRaw === "string"
+				? ((scopeRaw.trim().toLowerCase() || "all") as "project" | "global" | "all")
+				: scopeRaw === undefined || scopeRaw === null
+					? "all"
+					: "all"
 
 		try {
 			const hub = getMcpHub(task)
@@ -28,7 +40,9 @@ export class ListMcpConfigTool extends BaseTool<"list_mcp_config"> {
 				task.consecutiveMistakeCount++
 				task.recordToolError("list_mcp_config")
 				pushToolResult(
-					formatResponse.toolError(`Invalid scope. Use project | global | all. Got: ${String(scopeFilter)}`),
+					formatResponse.toolError(
+						`Invalid scope. Use project | global | all. Got: ${typeof scopeRaw === "string" ? scopeRaw : "(non-string)"}`,
+					),
 				)
 				return
 			}

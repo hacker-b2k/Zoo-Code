@@ -4,11 +4,12 @@ describe("getToolUseGuidelinesSection", () => {
 	it("should include proper numbered guidelines", () => {
 		const guidelines = getToolUseGuidelinesSection()
 
-		expect(guidelines).toContain("1. Assess what information")
-		expect(guidelines).toContain("2. Choose the most appropriate tool")
-		expect(guidelines).toContain("3. **Only call tools that exist")
-		expect(guidelines).toContain("4. **Prefer extension tools over shell.")
-		expect(guidelines).toContain("5. If multiple actions are needed")
+		expect(guidelines).toContain("1. **Tool calls must be structured, never textual.**")
+		expect(guidelines).toContain("2. Assess what information")
+		expect(guidelines).toContain("3. Choose the most appropriate tool")
+		expect(guidelines).toContain("4. **Only call tools that exist")
+		expect(guidelines).toContain("5. **Prefer extension tools over shell.")
+		expect(guidelines).toContain("6. If multiple actions are needed")
 	})
 
 	it("should include multiple-tools-per-message guidance", () => {

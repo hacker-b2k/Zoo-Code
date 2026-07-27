@@ -293,7 +293,9 @@ const formatImagesIntoBlocks = (images?: string[]): Anthropic.ImageBlockParam[] 
 
 const toolUseInstructionsReminderNative = `# Reminder: Instructions for Tool Use
 
-Tools are invoked using the platform's native tool calling mechanism. Each tool requires specific parameters as defined in the tool descriptions. Refer to the tool definitions provided in your system instructions for the correct parameter structure and usage examples.
+Tools are invoked using the platform's native structured tool calling mechanism (the tool_calls / function-calling API). Each tool requires specific parameters as defined in the tool schemas provided via the API tools parameter.
+
+If you wrote a tool call as text, XML markup, or a JSON block inside your message content (e.g. <tool_call>...</tool_call>, <function=name>, <parameter=key>, <invoke name="...">, or a \`\`\`json block), that was invalid — it was not executed as a tool call. Re-issue the same call now as a structured tool_calls entry.
 
 Always ensure you provide all required parameters for the tool you wish to use.
 

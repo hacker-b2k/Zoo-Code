@@ -20,7 +20,17 @@ export class ReadSpecTool extends BaseTool<"read_spec"> {
 		const { handleError, pushToolResult } = callbacks
 
 		try {
-			const doc = params.doc?.trim()
+			// Problem A defensive guard: a non-string doc (object/array/null)
+			// would throw "Object has no method trim" inside the catch handler
+			// below, surfacing a confusing TypeError instead of the actionable
+			// "doc is required" message. Coerce cleanly first.
+			const docRaw = params.doc
+			const doc =
+				typeof docRaw === "string"
+					? docRaw.trim()
+					: typeof docRaw === "number" || typeof docRaw === "boolean"
+						? String(docRaw).trim()
+						: ""
 			if (!doc) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true

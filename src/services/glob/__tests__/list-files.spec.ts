@@ -440,3 +440,83 @@ describe("listFiles nonexistent directory", () => {
 		)
 	})
 })
+
+describe("listFiles Node.js fallback (ripgrep binary unavailable)", () => {
+	const dirent = (name: string, kind: "file" | "dir" | "symlink") =>
+		({
+			name,
+			isFile: () => kind === "file",
+			isDirectory: () => kind === "dir",
+			isSymbolicLink: () => kind === "symlink",
+		}) as any
+
+	beforeEach(async () => {
+		vi.clearAllMocks()
+		resetFsPromiseMocks()
+		const { getBinPath } = await import("../../ripgrep")
+		// Binary not found → getRipgrepPath throws internally → fallback engages.
+		vi.mocked(getBinPath).mockResolvedValue(undefined)
+	})
+
+	it("lists top-level files via Node fs when ripgrep is unavailable (non-recursive)", async () => {
+		vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+			if (path.resolve(String(dir)) === path.resolve("/test/dir")) {
+				return [dirent("a.ts", "file"), dirent("b.ts", "file"), dirent("sub", "dir")] as any
+			}
+			return [] as any
+		})
+
+		const [files] = await listFiles("/test/dir", false, 100)
+
+		// ripgrep must not be spawned at all
+		expect(vi.mocked(childProcess.spawn)).not.toHaveBeenCalled()
+		expect(files.some((f) => f.endsWith("a.ts"))).toBe(true)
+		expect(files.some((f) => f.endsWith("b.ts"))).toBe(true)
+		// Non-recursive: nested files must not appear
+		expect(files.some((f) => f.endsWith("nested.ts"))).toBe(false)
+	})
+
+	it("walks recursively via Node fs, skipping .git and ignored dirs", async () => {
+		vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+			const resolved = path.resolve(String(dir))
+			if (resolved === path.resolve("/test/dir")) {
+				return [
+					dirent("a.ts", "file"),
+					dirent("sub", "dir"),
+					dirent(".git", "dir"),
+					dirent("node_modules", "dir"),
+				] as any
+			}
+			if (resolved === path.resolve("/test/dir/sub")) {
+				return [dirent("nested.ts", "file")] as any
+			}
+			if (resolved === path.resolve("/test/dir/.git")) {
+				return [dirent("HEAD", "file")] as any
+			}
+			if (resolved === path.resolve("/test/dir/node_modules")) {
+				return [dirent("pkg.js", "file")] as any
+			}
+			return [] as any
+		})
+
+		const [files] = await listFiles("/test/dir", true, 100)
+
+		expect(vi.mocked(childProcess.spawn)).not.toHaveBeenCalled()
+		expect(files.some((f) => f.endsWith("a.ts"))).toBe(true)
+		expect(files.some((f) => f.endsWith("nested.ts"))).toBe(true)
+		// .git and node_modules are never descended into
+		expect(files.some((f) => f.endsWith("HEAD"))).toBe(false)
+		expect(files.some((f) => f.endsWith("pkg.js"))).toBe(false)
+	})
+
+	it("respects the result limit in fallback mode", async () => {
+		vi.mocked(fs.promises.readdir).mockResolvedValue([
+			dirent("f1.ts", "file"),
+			dirent("f2.ts", "file"),
+			dirent("f3.ts", "file"),
+		] as any)
+
+		const [files] = await listFiles("/test/dir", false, 1)
+		expect(files.length).toBeLessThanOrEqual(1)
+	})
+})

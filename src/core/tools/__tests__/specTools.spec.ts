@@ -511,6 +511,132 @@ describe("F-004 Spec agent tools", () => {
 		expect(await fs.readdir(projectRoot)).toEqual([])
 	})
 
+	it("creates a new pack from existing markdown content even with last-opened multi-pack (import regression)", async () => {
+		// Agent path: read_file(md) → write_spec(title + spec_id null + full content + replace).
+		// Must CREATE a new pack and must NOT overwrite the Active/last-opened pack.
+		const service = new SpecService(globalStorage)
+		const auth = await service.createWorkspace({
+			title: "User Authentication & Authorization",
+			workspaceRoot: projectRoot,
+		})
+		await service.createWorkspace({ title: "Task Management GraphQL API", workspaceRoot: projectRoot })
+		await service.writeDocument({
+			specId: auth.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "requirements",
+			content: "# Auth Requirements\n\nDo not overwrite me\n",
+		})
+
+		const store = (task as any).__wsStore as Map<string, unknown>
+		const memento = {
+			get: (key: string, def?: unknown) => (store.has(key) ? store.get(key) : def),
+			update: async (key: string, value: unknown) => {
+				if (value === undefined) store.delete(key)
+				else store.set(key, value)
+			},
+		}
+		await saveLastOpened(memento as any, hashWorkspaceRoot(projectRoot), {
+			specId: auth.id,
+			docKind: "requirements",
+			workspaceRoot: projectRoot,
+			updatedAt: Date.now(),
+		})
+
+		const markdownFromExistingFile = [
+			"# Imported Design Spec",
+			"",
+			"## Overview",
+			"",
+			"Content that already lived in a project markdown file and is being",
+			"imported into Spec Workspace as a brand-new pack.",
+			"",
+			"### Acceptance",
+			"",
+			"- [ ] Pack created",
+			"- [ ] Active pack untouched",
+			"",
+		].join("\n")
+
+		await writeSpecTool.execute(
+			{
+				title: "Imported Design Spec",
+				spec_id: null,
+				doc: "design",
+				mode: "replace",
+				content: markdownFromExistingFile,
+			},
+			task,
+			callbacks,
+		)
+
+		const payload = JSON.parse(pushToolResult.mock.calls.at(-1)![0])
+		expect(payload.ok).toBe(true)
+		expect(payload.created).toBe(true)
+		expect(payload.specId).toBeTruthy()
+		expect(payload.specId).not.toBe(auth.id)
+		expect(payload.doc.kind).toBe("design")
+		expect(payload.contentLength).toBe(markdownFromExistingFile.length)
+
+		const list = await service.listWorkspaces(projectRoot)
+		expect(list).toHaveLength(3)
+		expect(list.some((e) => e.title === "Imported Design Spec")).toBe(true)
+		expect(list.some((e) => e.id === auth.id)).toBe(true)
+
+		const authDoc = await service.getDocument(projectRoot, auth.id, "requirements")
+		expect(authDoc?.content).toContain("Do not overwrite me")
+
+		const importedDoc = await service.getDocument(projectRoot, payload.specId, "design")
+		expect(importedDoc?.content).toBe(markdownFromExistingFile)
+		// Virtual storage only — never materialize project files
+		expect(await fs.readdir(projectRoot)).toEqual([])
+	})
+
+	it("create-from-markdown with matching Active title still updates (no accidental duplicate)", async () => {
+		const service = new SpecService(globalStorage)
+		const auth = await service.createWorkspace({
+			title: "User Authentication & Authorization",
+			workspaceRoot: projectRoot,
+		})
+		await service.createWorkspace({ title: "Other Pack", workspaceRoot: projectRoot })
+
+		const store = (task as any).__wsStore as Map<string, unknown>
+		const memento = {
+			get: (key: string, def?: unknown) => (store.has(key) ? store.get(key) : def),
+			update: async (key: string, value: unknown) => {
+				if (value === undefined) store.delete(key)
+				else store.set(key, value)
+			},
+		}
+		await saveLastOpened(memento as any, hashWorkspaceRoot(projectRoot), {
+			specId: auth.id,
+			docKind: "design",
+			workspaceRoot: projectRoot,
+			updatedAt: Date.now(),
+		})
+
+		await writeSpecTool.execute(
+			{
+				title: "User Authentication & Authorization",
+				spec_id: null,
+				doc: "design",
+				mode: "replace",
+				content: "# Design\n\nUpdated active pack from markdown body\n",
+			},
+			task,
+			callbacks,
+		)
+
+		const payload = JSON.parse(pushToolResult.mock.calls.at(-1)![0])
+		expect(payload.ok).toBe(true)
+		expect(payload.created).toBe(false)
+		expect(payload.specId).toBe(auth.id)
+		const list = await service.listWorkspaces(projectRoot)
+		expect(list).toHaveLength(2)
+		const doc = await service.getDocument(projectRoot, auth.id, "design")
+		expect(doc?.content).toContain("Updated active pack from markdown body")
+		expect(await fs.readdir(projectRoot)).toEqual([])
+	})
+
 	it("F-020: handlePartial never writes to SpecService / project (preview only)", async () => {
 		const notifyPartial = vi.fn()
 		const notifyStarted = vi.fn()

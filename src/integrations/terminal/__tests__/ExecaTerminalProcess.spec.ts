@@ -65,7 +65,8 @@ describe("ExecaTerminalProcess", () => {
 			const execaMock = vitest.mocked(execa)
 			expect(execaMock).toHaveBeenCalledWith(
 				expect.objectContaining({
-					shell: true,
+					// Problem C: on Windows the shell is now PowerShell path; on other
+					// platforms it stays `true`. Only assert the UTF-8 env, not the shell.
 					cwd: "/test/cwd",
 					all: true,
 					env: expect.objectContaining({
@@ -107,7 +108,14 @@ describe("ExecaTerminalProcess", () => {
 			)
 		})
 
-		it("should fall back to shell=true when execaShellPath is undefined", async () => {
+		it("should fall back to shell=true when execaShellPath is undefined (non-Windows)", async () => {
+			// On non-Windows (Linux/macOS in CI), no PowerShell resolution runs,
+			// so execa gets shell:true. On Windows in CI the actual powershell.exe
+			// probe may find PS; we only assert the non-Windows behavior here.
+			if (process.platform === "win32") {
+				// On Windows, PowerShell is found → shell won't be `true`. Skip.
+				return
+			}
 			BaseTerminal.setExecaShellPath(undefined)
 			await terminalProcess.run("echo test")
 			const execaMock = vitest.mocked(execa)
@@ -116,6 +124,81 @@ describe("ExecaTerminalProcess", () => {
 					shell: true,
 				}),
 			)
+		})
+
+		// Problem C regression: on Windows, ExecaTerminalProcess MUST pass an
+		// explicit PowerShell shell path to execa — otherwise execa falls through
+		// to ComSpec/cmd.exe and PowerShell cmdlets fail.
+		it("Problem C: on Windows with no execaShellPath, passes PowerShell path via BaseTerminal.resolveDefaultWindowsShellPath", async () => {
+			const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+
+			const resolveSpy = vitest
+				.spyOn(BaseTerminal, "resolveDefaultWindowsShellPath")
+				.mockReturnValue("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
+
+			try {
+				BaseTerminal.setExecaShellPath(undefined)
+				terminalProcess = new ExecaTerminalProcess(mockTerminal)
+				await terminalProcess.run("Remove-Item foo")
+				const calledOptions = vitest.mocked(execa).mock.calls.at(-1)![0] as any
+				expect(calledOptions.shell).toBe("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
+				expect(calledOptions.shell).not.toBe(true)
+			} finally {
+				resolveSpy.mockRestore()
+				if (originalPlatform) {
+					Object.defineProperty(process, "platform", originalPlatform)
+				} else {
+					Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+				}
+			}
+		})
+
+		it("Problem C: respects user-configured execaShellPath (never overrides with PowerShell)", async () => {
+			const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+
+			const resolveSpy = vitest.spyOn(BaseTerminal, "resolveDefaultWindowsShellPath")
+
+			try {
+				BaseTerminal.setExecaShellPath("/usr/bin/zsh") // explicit override
+				terminalProcess = new ExecaTerminalProcess(mockTerminal)
+				await terminalProcess.run("echo test")
+				// User's override must be used; resolveDefaultWindowsShellPath not called
+				expect(resolveSpy).not.toHaveBeenCalled()
+				const calledOptions = vitest.mocked(execa).mock.calls.at(-1)![0] as any
+				expect(calledOptions.shell).toBe("/usr/bin/zsh")
+			} finally {
+				BaseTerminal.setExecaShellPath(undefined)
+				resolveSpy.mockRestore()
+				if (originalPlatform) {
+					Object.defineProperty(process, "platform", originalPlatform)
+				} else {
+					Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+				}
+			}
+		})
+
+		it("Problem C: when resolveDefaultWindowsShellPath returns undefined, falls back to shell=true", async () => {
+			const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+
+			const resolveSpy = vitest.spyOn(BaseTerminal, "resolveDefaultWindowsShellPath").mockReturnValue(undefined)
+
+			try {
+				BaseTerminal.setExecaShellPath(undefined)
+				terminalProcess = new ExecaTerminalProcess(mockTerminal)
+				await terminalProcess.run("dir")
+				const calledOptions = vitest.mocked(execa).mock.calls.at(-1)![0] as any
+				expect(calledOptions.shell).toBe(true)
+			} finally {
+				resolveSpy.mockRestore()
+				if (originalPlatform) {
+					Object.defineProperty(process, "platform", originalPlatform)
+				} else {
+					Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+				}
+			}
 		})
 	})
 

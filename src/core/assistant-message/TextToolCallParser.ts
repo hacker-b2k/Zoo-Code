@@ -44,9 +44,14 @@ export type TextToolCallParseResult = {
 
 type Span = { start: number; end: number }
 
-/** Outer wrapper tags that historically held JSON tool bodies (must be closed). */
-const OUTER_CLOSED_BLOCK_RE =
-	/<\s*(?:tool_call|function_call|toolcall|invoke)\b([^>]*)>([\s\S]*?)<\s*\/\s*(?:tool_call|function_call|toolcall|invoke)\s*>/gi
+/**
+ * Outer wrapper tags that historically held JSON tool bodies (must be closed).
+ * The closing tag backreferences the opening tag (\1) so a nested block's
+ * closer (e.g. `</invoke>` inside `<tool_call>…</tool_call>`) cannot hijack
+ * the outer span — which previously caused double-recovery across passes.
+ * Groups: 1 = tag name, 2 = attributes, 3 = inner body.
+ */
+const OUTER_CLOSED_BLOCK_RE = /<\s*(tool_call|function_call|toolcall|invoke)\b([^>]*)>([\s\S]*?)<\s*\/\s*\1\s*>/gi
 
 /**
  * Outer MiniMax-style tool_call (closed or unclosed to EOS). Used after closed-pass
@@ -57,18 +62,41 @@ const OUTER_TOOL_CALL_LOOSE_RE = /<\s*tool_call\b[^>]*>\s*([\s\S]*?)(?:<\s*\/\s*
 /** <function=name>…</function> or unclosed to end of segment. */
 const FUNCTION_EQ_BLOCK_RE = /<\s*function\s*=\s*([a-zA-Z0-9_.:-]+)\s*>\s*([\s\S]*?)(?:<\s*\/\s*function\s*>|(?=$))/gi
 
-/** <parameter=name>value</parameter> */
-const PARAMETER_EQ_RE = /<\s*parameter\s*=\s*([a-zA-Z0-9_.:-]+)\s*>([\s\S]*?)<\s*\/\s*parameter\s*>/gi
+/**
+ * Opening tag for both parameter styles models emit:
+ *   MiniMax/Hermes:  <parameter=name>
+ *   Anthropic/invoke: <parameter name="name">
+ * Capture group 1 = eq-style name, group 2 = attribute-style name.
+ */
+const PARAMETER_OPEN_RE = /<\s*parameter\s*(?:=\s*([a-zA-Z0-9_.:-]+)\s*|\bname\s*=\s*["']([^"']+)["']\s*)>/gi
 
-/** Alternate: <function name="x"> or <tool name="x"> */
+/** Explicit parameter closer. */
+const PARAMETER_CLOSE_RE = /<\s*\/\s*parameter\s*>/gi
+
+/**
+ * Structural boundaries that terminate an unclosed parameter value
+ * (truncated streams and lazy models frequently omit </parameter>).
+ */
+const STRUCTURAL_CLOSE_RE = /<\s*\/\s*(?:function|invoke|tool_call|function_call|toolcall|tool)\s*>/gi
+
+/** Alternate: <function name="x">, <tool name="x">, or <invoke name="x"> */
 const FUNCTION_NAME_ATTR_BLOCK_RE =
-	/<\s*(?:function|tool)\b([^>]*\bname\s*=\s*["']([^"']+)["'][^>]*)>([\s\S]*?)(?:<\s*\/\s*(?:function|tool)\s*>|(?=$))/gi
+	/<\s*(?:function|tool|invoke)\b([^>]*\bname\s*=\s*["']([^"']+)["'][^>]*)>([\s\S]*?)(?:<\s*\/\s*(?:function|tool|invoke)\s*>|(?=$))/gi
 
 const NAME_ATTR_RE = /\bname\s*=\s*["']([^"']+)["']/i
 
+/** Inner-content detectors (any parameter style, any function-name style). */
+const HAS_FUNCTION_MARKUP_RE = /<\s*function\s*=|<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=/i
+const HAS_PARAMETER_MARKUP_RE = /<\s*parameter\s*(?:=|\bname\s*=)/i
+
+/** Fenced JSON block that looks like a tool call ({"name": ..., "arguments"/"parameters": ...}). */
+const FENCED_TOOL_JSON_RE = /```(?:json|JSON)?\s*\r?\n?(\{[\s\S]*?\})\r?\n?```/g
+
 // Require a tool-call surface — bare <parameter= alone is too weak (false positives).
+// The fence pattern requires BOTH a name-ish key and an arguments-ish key in the
+// same fenced block, which ordinary code samples virtually never combine.
 const LOOKS_LIKE_TEXT_TOOL_RE =
-	/<\s*(?:tool_call|function_call|toolcall|invoke)\b|<\s*function\s*=|<\s*function\b[^>]*\bname\s*=|<\s*tool\b[^>]*\bname\s*=/i
+	/<\s*(?:tool_call|function_call|toolcall|invoke)\b|<\s*function\s*=|<\s*function\b[^>]*\bname\s*=|<\s*tool\b[^>]*\bname\s*=|```(?:json|JSON)?\s*\r?\n?\s*\{\s*"(?:name|tool|function|tool_name)"\s*:[\s\S]{0,4000}?"(?:arguments|parameters|input|args)"\s*:/i
 
 let textToolCallSeq = 0
 
@@ -79,11 +107,38 @@ function nextSyntheticId(name: string): string {
 }
 
 /**
+ * Decode standard XML/HTML entities that models emit inside parameter values
+ * (e.g. code content written as `if (a &lt; b &amp;&amp; c &gt; d)`).
+ * `&amp;` is decoded LAST so a literal `&amp;lt;` becomes `&lt;` (correct XML
+ * semantics) rather than collapsing to `<`.
+ */
+function decodeXmlEntities(value: string): string {
+	if (!value.includes("&")) {
+		return value
+	}
+	return value
+		.replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => {
+			const cp = Number.parseInt(hex, 16)
+			return Number.isFinite(cp) && cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : _m
+		})
+		.replace(/&#(\d+);/g, (_m, dec: string) => {
+			const cp = Number.parseInt(dec, 10)
+			return Number.isFinite(cp) && cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : _m
+		})
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&amp;/g, "&")
+}
+
+/**
  * Normalize XML/text parameter values into JSON-friendly primitives.
  * Models often emit Python/JSON sentinels as plain text inside <parameter>.
+ * XML entities are decoded first so code/markup content survives recovery intact.
  */
 function coerceParameterValue(raw: string): unknown {
-	const value = raw.replace(/^\s+/, "").replace(/\s+$/, "")
+	const value = decodeXmlEntities(raw).replace(/^\s+/, "").replace(/\s+$/, "")
 	if (value === "") {
 		return ""
 	}
@@ -152,18 +207,77 @@ function stringifyArguments(value: unknown): string {
 	return JSON.stringify({ value })
 }
 
-function parseParameterEqBody(inner: string): Record<string, unknown> {
+/**
+ * Tolerant parameter scanner for MiniMax/Hermes (`<parameter=name>v</parameter>`)
+ * and Anthropic/invoke (`<parameter name="name">v</parameter>`) markup.
+ *
+ * Unlike a single global regex, this walks parameter openers in order and ends
+ * each value at the EARLIEST of:
+ *   1. an explicit `</parameter>` closer,
+ *   2. the next parameter opener (handles missing closers),
+ *   3. a structural closer (`</function>`, `</tool_call>`, … — handles
+ *      truncated/unclosed trailing parameters), or
+ *   4. end of input (handles stream truncation mid-value).
+ *
+ * A trailing partial tag left by truncation (e.g. `...</par`) is stripped.
+ * This is what makes multi-parameter calls with long multi-line values (and
+ * streams cut at max_tokens) recover instead of collapsing to zero arguments.
+ */
+function parseXmlParameters(inner: string): Record<string, unknown> {
 	const args: Record<string, unknown> = {}
-	PARAMETER_EQ_RE.lastIndex = 0
+
+	// Collect all parameter openers in document order.
+	const openers: Array<{ name: string; start: number; valueStart: number }> = []
+	PARAMETER_OPEN_RE.lastIndex = 0
 	let match: RegExpExecArray | null
-	while ((match = PARAMETER_EQ_RE.exec(inner)) !== null) {
-		const key = match[1]?.trim()
-		if (!key) {
+	while ((match = PARAMETER_OPEN_RE.exec(inner)) !== null) {
+		const name = (match[1] ?? match[2] ?? "").trim()
+		if (!name) {
 			continue
 		}
-		args[key] = coerceParameterValue(match[2] ?? "")
+		openers.push({ name, start: match.index, valueStart: match.index + match[0].length })
 	}
+
+	for (let i = 0; i < openers.length; i++) {
+		const open = openers[i]
+		let end = inner.length
+
+		// (1) explicit closer
+		PARAMETER_CLOSE_RE.lastIndex = open.valueStart
+		const close = PARAMETER_CLOSE_RE.exec(inner)
+		if (close) {
+			end = Math.min(end, close.index)
+		}
+
+		// (2) next opener (missing closer on this parameter)
+		if (i + 1 < openers.length) {
+			end = Math.min(end, openers[i + 1].start)
+		}
+
+		// (3) structural closer (unclosed trailing parameter)
+		STRUCTURAL_CLOSE_RE.lastIndex = open.valueStart
+		const structural = STRUCTURAL_CLOSE_RE.exec(inner)
+		if (structural) {
+			end = Math.min(end, structural.index)
+		}
+
+		let raw = inner.slice(open.valueStart, end)
+		// Strip a trailing partial tag left behind by mid-tag stream truncation.
+		raw = raw.replace(/<\/?[a-zA-Z][a-zA-Z0-9_-]*$/, "")
+		args[open.name] = coerceParameterValue(raw)
+	}
+
 	return args
+}
+
+/**
+ * Strip a surrounding markdown code fence (```json … ``` / ``` … ```) that
+ * models sometimes wrap around a JSON tool-call body. Returns the inner JSON
+ * when fenced, otherwise the input unchanged.
+ */
+function stripMarkdownFence(body: string): string {
+	const fence = body.match(/^```(?:json|JSON)?\s*\r?\n?([\s\S]*?)\r?\n?```\s*$/)
+	return fence ? fence[1].trim() : body
 }
 
 function extractNameAndArgumentsFromJson(
@@ -171,7 +285,8 @@ function extractNameAndArgumentsFromJson(
 	tagAttributes: string,
 ): { name: string; arguments: string } | null {
 	const attrName = tagAttributes.match(NAME_ATTR_RE)?.[1]?.trim()
-	const body = inner.trim()
+	// Tolerate markdown-fenced JSON bodies (```json {…} ```) inside wrappers.
+	const body = stripMarkdownFence(inner.trim())
 
 	if (!body) {
 		if (attrName) {
@@ -219,8 +334,8 @@ function extractNameAndArgumentsFromJson(
 	}
 
 	if (attrName) {
-		if (/<\s*parameter\s*=/i.test(body)) {
-			return { name: attrName, arguments: JSON.stringify(parseParameterEqBody(body)) }
+		if (HAS_PARAMETER_MARKUP_RE.test(body)) {
+			return { name: attrName, arguments: JSON.stringify(parseXmlParameters(body)) }
 		}
 		return { name: attrName, arguments: stringifyArguments(body) }
 	}
@@ -255,7 +370,7 @@ function extractAllXmlFunctions(segment: string): XmlFnHit[] {
 		}
 		out.push({
 			name,
-			arguments: JSON.stringify(parseParameterEqBody(match[2] ?? "")),
+			arguments: JSON.stringify(parseXmlParameters(match[2] ?? "")),
 		})
 	}
 
@@ -270,8 +385,8 @@ function extractAllXmlFunctions(segment: string): XmlFnHit[] {
 			continue
 		}
 		const inner = match[3] ?? ""
-		if (/<\s*parameter\s*=/i.test(inner)) {
-			out.push({ name, arguments: JSON.stringify(parseParameterEqBody(inner)) })
+		if (HAS_PARAMETER_MARKUP_RE.test(inner)) {
+			out.push({ name, arguments: JSON.stringify(parseXmlParameters(inner)) })
 		} else {
 			const extracted = extractNameAndArgumentsFromJson(inner, `name="${name}"`)
 			out.push({
@@ -386,10 +501,10 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 	while ((match = OUTER_CLOSED_BLOCK_RE.exec(text)) !== null) {
 		const start = match.index
 		const end = start + match[0].length
-		const attrs = match[1] ?? ""
-		const inner = match[2] ?? ""
+		const attrs = match[2] ?? ""
+		const inner = match[3] ?? ""
 
-		if (/<\s*function\s*=/i.test(inner) || /<\s*function\b[^>]*\bname\s*=/i.test(inner)) {
+		if (HAS_FUNCTION_MARKUP_RE.test(inner)) {
 			const xmlFns = extractAllXmlFunctions(inner)
 			if (xmlFns.length > 0 && pushTools(xmlFns)) {
 				mark(start, end)
@@ -397,7 +512,7 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 			}
 		}
 
-		if (/<\s*parameter\s*=/i.test(inner)) {
+		if (HAS_PARAMETER_MARKUP_RE.test(inner)) {
 			const attrName = attrs.match(NAME_ATTR_RE)?.[1]?.trim()
 			const xmlFns = extractAllXmlFunctions(inner)
 			if (xmlFns.length > 0 && pushTools(xmlFns)) {
@@ -405,7 +520,7 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 				continue
 			}
 			if (attrName) {
-				const toolUse = toToolUse(attrName, JSON.stringify(parseParameterEqBody(inner)))
+				const toolUse = toToolUse(attrName, JSON.stringify(parseXmlParameters(inner)))
 				if (toolUse) {
 					toolUses.push(toolUse)
 					mark(start, end)
@@ -465,7 +580,56 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 		if (!name) {
 			continue
 		}
-		const toolUse = toToolUse(name, JSON.stringify(parseParameterEqBody(match[2] ?? "")))
+		const toolUse = toToolUse(name, JSON.stringify(parseXmlParameters(match[2] ?? "")))
+		if (toolUse) {
+			toolUses.push(toolUse)
+			mark(start, end)
+		}
+	}
+
+	// ── Pass D: bare <function|tool|invoke name="x">… not already covered ───
+	FUNCTION_NAME_ATTR_BLOCK_RE.lastIndex = 0
+	while ((match = FUNCTION_NAME_ATTR_BLOCK_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		if (isSpanCovered(replacements, start, end)) {
+			continue
+		}
+		const name = match[2]?.trim()
+		if (!name) {
+			continue
+		}
+		const inner = match[3] ?? ""
+		let argsJson: string
+		if (HAS_PARAMETER_MARKUP_RE.test(inner)) {
+			argsJson = JSON.stringify(parseXmlParameters(inner))
+		} else {
+			const extracted = extractNameAndArgumentsFromJson(inner, `name="${name}"`)
+			argsJson = extracted?.arguments ?? "{}"
+		}
+		const toolUse = toToolUse(name, argsJson)
+		if (toolUse) {
+			toolUses.push(toolUse)
+			mark(start, end)
+		}
+	}
+
+	// ── Pass E: fenced JSON tool calls (```json {"name":…,"arguments":…} ```)
+	// Models sometimes emit the tool call as a markdown code block with no XML
+	// wrapper at all. Only fenced blocks whose JSON yields a valid tool are
+	// recovered, so ordinary code samples are never touched.
+	FENCED_TOOL_JSON_RE.lastIndex = 0
+	while ((match = FENCED_TOOL_JSON_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		if (isSpanCovered(replacements, start, end)) {
+			continue
+		}
+		const extracted = extractNameAndArgumentsFromJson(match[1] ?? "", "")
+		if (!extracted) {
+			continue
+		}
+		const toolUse = toToolUse(extracted.name, extracted.arguments)
 		if (toolUse) {
 			toolUses.push(toolUse)
 			mark(start, end)
@@ -504,6 +668,33 @@ export function looksLikeTextToolCall(text: string): boolean {
 		return false
 	}
 	return LOOKS_LIKE_TEXT_TOOL_RE.test(text)
+}
+
+/**
+ * Incomplete-tag tail: "<", "<to", "</par", "<tool_call" without its ">".
+ * Matches any ASCII tag-ish opener/closer fragment at end of string.
+ */
+const PARTIAL_TAG_TAIL_RE = /<\/?[a-zA-Z][a-zA-Z0-9_.:=\s-]*$|<$/
+
+/**
+ * Incomplete markdown fence tail: trailing "```" or "```jso" (double/triple
+ * backtick run possibly followed by a partial language tag). Single backticks
+ * are excluded so ordinary inline `code` prose never defers presentation.
+ */
+const PARTIAL_FENCE_TAIL_RE = /`{2,3}[a-zA-Z]*$/
+
+/**
+ * True when the text ENDS with an incomplete markup fragment that could become
+ * a tool-call tag (or fence) once more stream chunks arrive — e.g. "…<to",
+ * "…<tool_cal", "…</par", "…```j". Used by the streaming presenter to defer
+ * saying text until the fragment resolves, so raw tag fragments never flash
+ * in the chat UI mid-stream.
+ */
+export function textEndsWithIncompleteMarkup(text: string): boolean {
+	if (!text) {
+		return false
+	}
+	return PARTIAL_TAG_TAIL_RE.test(text) || PARTIAL_FENCE_TAIL_RE.test(text)
 }
 
 /** Test helper — reset synthetic id sequence. */

@@ -36,7 +36,13 @@ describe("F-004 native tool registration", () => {
 		// title may be string or string|null depending on schema strictness
 		expect(props.title.type === "string" || Array.isArray(props.title.type)).toBe(true)
 		expect(props.spec_id.type).toEqual(["string", "null"])
-		expect(fn.parameters.required).toEqual(expect.arrayContaining(["title", "spec_id", "doc", "content"]))
+		// Problem B fix: `required` now contains only truly universal keys.
+		// Mode-specific keys (title, content, mode, section_heading, old_string,
+		// new_string, replace_all) are intentionally NOT in required[] so
+		// non-strict gateways (MiMo, etc.) can omit them without emitting {}.
+		// The official OpenAI provider re-injects all-required via
+		// convertToolSchemaForOpenAI (enableStrict: true path).
+		expect(fn.parameters.required).toEqual(["doc"])
 		expect(fn.description).toContain("Create a new Spec Workspace")
 		expect(fn.description).toContain('"spec_id": null')
 	})

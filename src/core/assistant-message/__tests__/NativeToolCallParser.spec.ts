@@ -481,6 +481,81 @@ describe("NativeToolCallParser", () => {
 			})
 		})
 
+		it("always sets nativeArgs for write_spec when doc is present (create-from-markdown / missing content)", () => {
+			// Previously: content null + non-search mode left nativeArgs unset → throw →
+			// finalize returns null → presentAssistantMessage "missing nativeArgs" →
+			// consecutiveMistakeLimit → "Zoo is having trouble…".
+			// Now: nativeArgs always built so WriteSpecTool can return a real tool_error.
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_doc_only",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Imported From Markdown",
+					spec_id: null,
+					doc: "design",
+					content: null,
+					mode: "replace",
+					section_heading: null,
+					old_string: null,
+					new_string: null,
+					replace_all: null,
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs).toBeDefined()
+			expect(result?.nativeArgs?.doc).toBe("design")
+			expect(result?.nativeArgs?.title).toBe("Imported From Markdown")
+			expect(result?.nativeArgs?.spec_id).toBeNull()
+			expect(result?.nativeArgs?.mode).toBe("replace")
+			expect(result?.nativeArgs?.content).toBeUndefined()
+		})
+
+		it("preserves empty-string content on write_spec create-from-markdown", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_empty_content",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Empty Body Pack",
+					spec_id: null,
+					doc: "requirements",
+					content: "",
+					mode: "replace",
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs).toBeDefined()
+			expect(result?.nativeArgs?.content).toBe("")
+			expect(result?.nativeArgs?.doc).toBe("requirements")
+		})
+
+		it("finalizes write_spec import shape with full markdown content as nativeArgs", () => {
+			const markdown = "# Design\n\n## From existing file\n\n- item\n"
+			const id = "toolu_ws_import_md"
+			NativeToolCallParser.startStreamingToolCall(id, "write_spec")
+			NativeToolCallParser.processStreamingChunk(
+				id,
+				JSON.stringify({
+					title: "From Existing Markdown",
+					spec_id: null,
+					doc: "design",
+					content: markdown,
+					mode: "replace",
+					section_heading: null,
+					old_string: null,
+					new_string: null,
+					replace_all: null,
+				}),
+			)
+			const result = NativeToolCallParser.finalizeStreamingToolCall(id) as any
+			expect(result?.type).toBe("tool_use")
+			expect(result?.nativeArgs).toBeDefined()
+			expect(result?.nativeArgs?.title).toBe("From Existing Markdown")
+			expect(result?.nativeArgs?.spec_id).toBeNull()
+			expect(result?.nativeArgs?.doc).toBe("design")
+			expect(result?.nativeArgs?.content).toBe(markdown)
+			expect(result?.nativeArgs?.mode).toBe("replace")
+		})
+
 		it('coerces string "null" spec_id to null for write_spec create (F-005e)', () => {
 			const result = NativeToolCallParser.parseToolCall({
 				id: "toolu_ws_string_null",
@@ -546,6 +621,125 @@ describe("NativeToolCallParser", () => {
 				role: null,
 				review_target_id: null,
 			})
+		})
+	})
+
+	describe("parseArgumentsPayload hardening (truncated / object / double-encoded)", () => {
+		it("accepts arguments delivered as an already-parsed object (broken gateway)", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_obj",
+				name: "execute_command",
+				arguments: { command: "ls -la", timeout: 10 } as any,
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toEqual({ command: "ls -la", cwd: undefined, timeout: 10 })
+		})
+
+		it("double-decodes arguments that are a JSON string containing JSON", () => {
+			const inner = JSON.stringify({ path: ".", recursive: true })
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_double",
+				name: "list_files",
+				arguments: JSON.stringify(inner), // "\"{\\\"path\\\":...}\""
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toMatchObject({ path: ".", recursive: true })
+		})
+
+		it("strips a markdown fence around the JSON payload", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_fence",
+				name: "list_files",
+				arguments: '```json\n{"path": ".", "recursive": false}\n```',
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toMatchObject({ path: ".", recursive: false })
+		})
+
+		it("salvages truncated JSON (max_tokens cut mid-string) instead of failing", () => {
+			// Full payload would be {"name":"researcher","message":"...long..."} — the
+			// stream was cut inside the message string. partial-json extracts the
+			// complete prefix including the in-progress string value.
+			const truncated = '{"name":"researcher","message":"Investigate the parser thoroughly. Step 1: read the'
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_trunc",
+				name: "spawn_worker",
+				arguments: truncated,
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toMatchObject({
+				name: "researcher",
+				message: "Investigate the parser thoroughly. Step 1: read the",
+			})
+		})
+
+		it("salvages truncated JSON with a missing closing brace", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_trunc2",
+				name: "delete_spec",
+				arguments: '{"delete_all":true',
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toMatchObject({ delete_all: true })
+		})
+
+		it("returns null for unrecoverable garbage (graceful failure)", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_garbage",
+				name: "list_files",
+				arguments: "this is not json at all {{{",
+			})
+			expect(result).toBeNull()
+		})
+
+		it("treats empty string arguments as an empty object", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "call_empty",
+				name: "list_specs",
+				arguments: "",
+			})
+			expect(result).not.toBeNull()
+			expect((result as any)?.nativeArgs).toEqual({})
+		})
+	})
+
+	describe("streaming end-to-end with truncation (MiMo max_tokens scenario)", () => {
+		it("finalizes a streamed spawn_worker whose arguments JSON was cut mid-message", () => {
+			const id = "call_stream_trunc"
+			// Simulate Task.ts wiring: start event initializes streaming state, delta
+			// events accumulate arguments. The payload is cut at max_tokens inside the
+			// message string — no closing quote/brace ever arrives.
+			const fullPrefix =
+				'{"name":"researcher","mode":null,"message":"Line 1: gather requirements.\\nLine 2: read src/index.ts and summ'
+			const startEvents = NativeToolCallParser.processRawChunk({ index: 0, id, name: "spawn_worker" })
+			expect(startEvents.some((e) => e.type === "tool_call_start")).toBe(true)
+			NativeToolCallParser.startStreamingToolCall(id, "spawn_worker")
+			const mid = Math.floor(fullPrefix.length / 2)
+			NativeToolCallParser.processStreamingChunk(id, fullPrefix.slice(0, mid))
+			NativeToolCallParser.processStreamingChunk(id, fullPrefix.slice(mid))
+
+			const result = NativeToolCallParser.finalizeStreamingToolCall(id) as any
+			expect(result).not.toBeNull()
+			expect(result?.type).toBe("tool_use")
+			expect(result?.nativeArgs?.name).toBe("researcher")
+			expect(result?.nativeArgs?.message).toContain("Line 1: gather requirements.")
+		})
+
+		it("processRawChunk tolerates object-valued arguments from broken gateways", () => {
+			const id = "call_stream_obj"
+			// Non-conformant gateway: arguments arrive as an object, not a string.
+			// processRawChunk must normalize (not accumulate "[object Object]").
+			const events = NativeToolCallParser.processRawChunk({
+				index: 0,
+				id,
+				name: "execute_command",
+				arguments: { command: "ls -la" } as any,
+			})
+			// Emitted delta event must carry a valid JSON string.
+			const delta = events.find((e) => e.type === "tool_call_delta") as any
+			expect(delta).toBeDefined()
+			expect(typeof delta.delta).toBe("string")
+			expect(JSON.parse(delta.delta)).toEqual({ command: "ls -la" })
 		})
 	})
 })

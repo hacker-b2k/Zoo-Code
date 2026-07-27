@@ -112,17 +112,71 @@ export abstract class BaseProvider implements ApiHandler {
 
 			const useStrict = enableStrict && !isMcp && !hasFreeForm
 
+			// Problem A root fix (gateway path): many third-party OpenAI-compatible
+			// gateways (e.g. Xiaomi MiMo, Qwen, local LLMs) cannot handle nullable
+			// union types like `["string","null"]` in property schemas — even when
+			// strict mode is OFF. When the model sees `type: ["string","null"]` it
+			// can emit a literal `{}` object for what should be a plain string,
+			// causing "[object Object]" pollution across all tools that use them
+			// (read_spec.doc, web_research.query/url, write_spec.*, etc.).
+			//
+			// Strip nullable unions in the gateway-safe path: `["string","null"]` →
+			// `"string"`, `["number","null"]` → `"number"`, etc. This makes the
+			// schema simpler and unambiguous for weak models while remaining fully
+			// compatible with the OpenAI spec (nullable is represented differently
+			// on official OpenAI anyway — that path uses convertToolSchemaForOpenAI).
+			const processedParams =
+				!useStrict && !isMcp ? this.stripNullableUnions(tool.function.parameters) : tool.function.parameters
+
 			return {
 				...tool,
 				function: {
 					...tool.function,
 					strict: useStrict,
-					parameters: useStrict
-						? this.convertToolSchemaForOpenAI(tool.function.parameters)
-						: tool.function.parameters,
+					parameters: useStrict ? this.convertToolSchemaForOpenAI(tool.function.parameters) : processedParams,
 				},
 			}
 		})
+	}
+
+	/**
+	 * Strip nullable union types from a tool schema for gateway-safe delivery.
+	 *
+	 * Converts `type: ["string","null"]` → `type: "string"` (and similarly for
+	 * other nullable unions) so that non-OpenAI-compatible gateways (MiMo, Qwen,
+	 * local LLMs, etc.) never see a union type they might misinterpret as "emit
+	 * an object". Only removes "null" from the union; other multi-type unions are
+	 * left intact. Does NOT change `required` arrays or add `additionalProperties`.
+	 * Recursively processes nested object schemas.
+	 */
+	protected stripNullableUnions(schema: any): any {
+		if (!schema || typeof schema !== "object") {
+			return schema
+		}
+
+		const result = { ...schema }
+
+		if (result.properties && typeof result.properties === "object") {
+			const newProps: Record<string, any> = {}
+			for (const [key, prop] of Object.entries(result.properties as Record<string, any>)) {
+				let p = { ...prop }
+				// Strip null from union types: ["string","null"] → "string"
+				if (Array.isArray(p.type) && p.type.includes("null")) {
+					const nonNull = p.type.filter((t: string) => t !== "null")
+					p = { ...p, type: nonNull.length === 1 ? nonNull[0] : nonNull }
+				}
+				// Recurse into nested objects/arrays
+				if (p.type === "object") {
+					p = this.stripNullableUnions(p)
+				} else if (p.type === "array" && p.items) {
+					p = { ...p, items: this.stripNullableUnions(p.items) }
+				}
+				newProps[key] = p
+			}
+			result.properties = newProps
+		}
+
+		return result
 	}
 
 	/**

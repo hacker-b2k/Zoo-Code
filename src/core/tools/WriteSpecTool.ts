@@ -14,6 +14,21 @@ import { saveLastOpened } from "../specs/ui/specUiState"
 import { normalizeWriteSpecMode, resolveWriteBody } from "../specs/specMerge"
 import { invalidateSpecContextCache } from "../specs/specContext"
 
+const LOG_PREFIX = "[write_spec]"
+
+/** Structured Spec Workspace logging (extension host console / Output). */
+function logWriteSpec(level: "info" | "warn" | "error", message: string, details?: Record<string, unknown>): void {
+	const payload = details ? ` ${JSON.stringify(details)}` : ""
+	const line = `${LOG_PREFIX} ${message}${payload}`
+	if (level === "error") {
+		console.error(line)
+	} else if (level === "warn") {
+		console.warn(line)
+	} else {
+		console.info(line)
+	}
+}
+
 interface WriteSpecParams {
 	/** Required non-empty when creating (spec_id null); optional on update. */
 	title?: string | null
@@ -176,13 +191,40 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 		const { handleError, pushToolResult, askApproval } = callbacks
 		const streamId = this.streamId ?? `ws-final-${Date.now()}`
 
+		// Tool request received — log args summary (content length only; full body can be large).
+		logWriteSpec("info", "request received", {
+			title: typeof params.title === "string" ? params.title : params.title,
+			spec_id: params.spec_id === undefined ? "(omitted)" : params.spec_id,
+			doc: params.doc,
+			mode: params.mode ?? "(default replace)",
+			contentType: typeof params.content,
+			contentLength: typeof params.content === "string" ? params.content.length : null,
+			hasOldString: typeof params.old_string === "string" && params.old_string.length > 0,
+			hasNewString: typeof params.new_string === "string",
+			section_heading: params.section_heading ?? null,
+			replace_all: params.replace_all ?? null,
+		})
+
 		try {
-			const doc = params.doc?.trim()
+			// Problem A defensive guard: a non-string doc (object/array received
+			// from broken gateways) must not crash on `.trim()`. Coerce cleanly
+			// so the actionable "doc is required" error surfaces instead of an
+			// opaque "Object has no method trim" TypeError that this catch would
+			// otherwise mishandle as a generic final-failure message.
+			const docRaw = params.doc
+			const doc =
+				typeof docRaw === "string"
+					? docRaw.trim()
+					: typeof docRaw === "number" || typeof docRaw === "boolean"
+						? String(docRaw).trim()
+						: ""
 			if (!doc) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
+				const reason = "doc is required (e.g. requirements, design, tasks)"
+				logWriteSpec("warn", "validation failed", { reason })
 				this.abortStream(task, streamId, null, "requirements", "doc is required")
-				pushToolResult(formatResponse.toolError("doc is required (e.g. requirements, design, tasks)"))
+				pushToolResult(formatResponse.toolError(reason))
 				this.resetStreamState()
 				return
 			}
@@ -192,45 +234,46 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 			if (!isSearch && typeof params.content !== "string") {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
+				const reason = `content is required for mode "${writeMode}". For tiny edits use mode "search_replace" with old_string/new_string instead of rewriting the whole doc.`
+				logWriteSpec("warn", "validation failed", { reason, writeMode, contentType: typeof params.content })
 				this.abortStream(task, streamId, null, doc, "content is required")
-				pushToolResult(
-					formatResponse.toolError(
-						`content is required for mode "${writeMode}". For tiny edits use mode "search_replace" with old_string/new_string instead of rewriting the whole doc.`,
-					),
-				)
+				pushToolResult(formatResponse.toolError(reason))
 				this.resetStreamState()
 				return
 			}
 			if (isSearch && (typeof params.old_string !== "string" || !params.old_string.length)) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
+				const reason =
+					'mode search_replace requires non-empty old_string and new_string. Example: {"mode":"search_replace","old_string":"- [ ] Task","new_string":"- [x] Task","spec_id":"<id>","doc":"tasks","title":null,"content":null}'
+				logWriteSpec("warn", "validation failed", { reason: "old_string required for search_replace" })
 				this.abortStream(task, streamId, null, doc, "old_string required")
-				pushToolResult(
-					formatResponse.toolError(
-						'mode search_replace requires non-empty old_string and new_string. Example: {"mode":"search_replace","old_string":"- [ ] Task","new_string":"- [x] Task","spec_id":"<id>","doc":"tasks","title":null,"content":null}',
-					),
-				)
+				pushToolResult(formatResponse.toolError(reason))
 				this.resetStreamState()
 				return
 			}
 
 			const workspaceRoot = getSpecWorkspaceRoot(task)
 			const service = getSpecServiceForTask(task)
+			logWriteSpec("info", "SpecService resolved", { workspaceRoot })
 
 			// F-006b: reject display-only truncated ids from environment_details (e.g. "9b09f722…")
 			if (isTruncatedDisplaySpecId(params.spec_id)) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
 				const raw = String(params.spec_id)
+				const reason = truncatedSpecIdErrorMessage(raw)
+				logWriteSpec("warn", "validation failed", { reason: "truncated display spec_id", raw })
 				this.abortStream(task, streamId, null, doc, "truncated display spec_id")
-				pushToolResult(formatResponse.toolError(truncatedSpecIdErrorMessage(raw)))
+				pushToolResult(formatResponse.toolError(reason))
 				this.resetStreamState()
 				return
 			}
 
-			// F-005e / F-022c: null/sentinel → prefer UPDATE active/last-opened/sole pack.
-			// Create only when no pack exists, or multi packs without last-opened + title,
-			// or sole pack + distinct title + full replace (explicit new-pack title).
+			// F-005e / F-022c: null/sentinel → prefer UPDATE active/last-opened/sole pack when
+			// title is empty, matches, or mode is partial. CREATE when title is non-empty and
+			// distinct from the resolved pack (sole or multi with last-opened) on full replace —
+			// this is the agent path for "import existing markdown as a new Spec Workspace".
 			let specId = coerceOptionalSpecId(params.spec_id) ?? ""
 			let created = false
 			const titleForCreate = typeof params.title === "string" ? params.title.trim() : ""
@@ -243,19 +286,40 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 					const list = await service.listWorkspaces(workspaceRoot)
 					const isPartial =
 						writeMode === "search_replace" || writeMode === "append" || writeMode === "upsert_section"
-					// Always update last-opened/sole for partial modes or empty title.
-					// Full replace with a *different* title on sole pack → create new pack.
-					const titleMatches = !titleForCreate || (meta && titleForCreate === meta.title)
-					const solePack = list.length === 1
-					if (isPartial || !titleForCreate || titleMatches || !solePack) {
-						// Multi with last-opened: existingId is last-opened → update
-						// Sole: update unless distinct title + replace (handled below)
-						if (!(solePack && titleForCreate && !titleMatches && writeMode === "replace")) {
-							useExisting = true
-							specId = existingId
-						}
+					// Title matches active/resolved pack (or empty title) → update.
+					// Distinct non-empty title + full replace → create new pack (import/create-from-md).
+					const titleMatchesExisting = Boolean(meta && titleForCreate && titleForCreate === meta.title)
+					const titleEmpty = !titleForCreate
+					const distinctTitleReplace =
+						Boolean(titleForCreate) && !titleMatchesExisting && writeMode === "replace" && !isPartial
+
+					if (isPartial || titleEmpty || titleMatchesExisting) {
+						useExisting = true
+						specId = existingId
+					} else if (distinctTitleReplace) {
+						// Explicit create path: non-empty distinct title + replace, even when
+						// multiple packs exist and last-opened would otherwise force an update.
+						useExisting = false
+						logWriteSpec("info", "create path chosen (distinct title + replace)", {
+							titleForCreate,
+							resolvedExistingId: existingId,
+							resolvedExistingTitle: meta?.title ?? null,
+							packCount: list.length,
+							writeMode,
+						})
+					} else {
+						// Fallback: partial-ish or ambiguous → prefer update
+						useExisting = true
+						specId = existingId
 					}
 				}
+
+				logWriteSpec("info", "soft-resolve result", {
+					existingId,
+					useExisting,
+					titleForCreate: titleForCreate || "(empty)",
+					writeMode,
+				})
 
 				if (!useExisting && titleForCreate) {
 					const approvalCreate = await askApproval(
@@ -269,6 +333,7 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 						}),
 					)
 					if (!approvalCreate) {
+						logWriteSpec("warn", "user denied create", { title: titleForCreate, doc })
 						this.abortStream(task, streamId, null, doc, "user denied create")
 						pushToolResult(formatResponse.toolDenied())
 						this.resetStreamState()
@@ -277,29 +342,35 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 					const ws = await service.createWorkspace({ title: titleForCreate, workspaceRoot })
 					specId = ws.id
 					created = true
+					logWriteSpec("info", "SpecService.createWorkspace ok", {
+						specId,
+						title: titleForCreate,
+						doc,
+					})
 				} else if (!useExisting) {
 					const existing = await service.listWorkspaces(workspaceRoot)
 					task.consecutiveMistakeCount++
 					task.didToolFailInCurrentTurn = true
 					if (existing.length === 0) {
+						const reason =
+							'No specs exist and title is empty. CREATE: {"title":"My Spec","spec_id":null,"doc":"design","content":"# Design\\n","mode":"replace"}. Never use write_to_file for plans. Never create+copy+delete an existing pack.'
+						logWriteSpec("error", "final failure", { reason: "no specs and empty title" })
 						this.abortStream(task, streamId, null, doc, "no specs and empty title")
-						pushToolResult(
-							formatResponse.toolError(
-								'No specs exist and title is empty. CREATE: {"title":"My Spec","spec_id":null,"doc":"design","content":"# Design\\n","mode":"replace"}. Never use write_to_file for plans. Never create+copy+delete an existing pack.',
-							),
-						)
+						pushToolResult(formatResponse.toolError(reason))
 					} else {
 						const available = existing.map((e) => `${e.id} (${e.title})`).join("; ")
+						const reason =
+							`Multiple specs exist and no active/last-opened pack is set, so this call cannot choose a pack. ` +
+							`Update: pass full spec_id from list_specs (or open the pack in Spec Workspace). ` +
+							`Create a NEW pack when the user asks for a new/separate spec: non-empty title + spec_id: null. ` +
+							`Do not create a duplicate pack to work around missing document kinds — missing requirements/design/tasks are created inside the same pack on write. ` +
+							`Do not fall back to write_to_file / project Markdown for planning docs. Available: ${available}`
+						logWriteSpec("error", "final failure", {
+							reason: "multiple specs, empty title, no last-opened",
+							availableCount: existing.length,
+						})
 						this.abortStream(task, streamId, null, doc, "multiple specs, empty title")
-						pushToolResult(
-							formatResponse.toolError(
-								`Multiple specs exist and no active/last-opened pack is set, so this call cannot choose a pack. ` +
-									`Update: pass full spec_id from list_specs (or open the pack in Spec Workspace). ` +
-									`Create a NEW pack when the user asks for a new/separate spec: non-empty title + spec_id: null. ` +
-									`Do not create a duplicate pack to work around missing document kinds — missing requirements/design/tasks are created inside the same pack on write. ` +
-									`Do not fall back to write_to_file / project Markdown for planning docs. Available: ${available}`,
-							),
-						)
+						pushToolResult(formatResponse.toolError(reason))
 					}
 					this.resetStreamState()
 					return
@@ -309,18 +380,20 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				if (!meta) {
 					task.consecutiveMistakeCount++
 					task.didToolFailInCurrentTurn = true
-					this.abortStream(task, streamId, specId, doc, `Spec not found: ${specId}`)
 					const looksLikeSentinel = /^(null|none|undefined|nil)$/i.test(specId)
-					pushToolResult(
-						formatResponse.toolError(
-							looksLikeSentinel
-								? `Invalid spec_id "${specId}" (looks like a null sentinel). Use JSON null to update the active pack or CREATE with a non-empty title when no pack exists.`
-								: `Spec not found: ${specId}. UPDATE: real id from list_specs or spec_id null for active pack. CREATE only when user wants a new pack: title + spec_id null. Missing doc kinds are auto-created inside the same pack — do not create+copy+delete.`,
-						),
-					)
+					const reason = looksLikeSentinel
+						? `Invalid spec_id "${specId}" (looks like a null sentinel). Use JSON null to update the active pack or CREATE with a non-empty title when no pack exists.`
+						: `Spec not found: ${specId}. UPDATE: real id from list_specs or spec_id null for active pack. CREATE only when user wants a new pack: title + spec_id null. Missing doc kinds are auto-created inside the same pack — do not create+copy+delete.`
+					logWriteSpec("error", "final failure", {
+						reason: looksLikeSentinel ? "spec_id sentinel" : "spec not found",
+						specId,
+					})
+					this.abortStream(task, streamId, specId, doc, `Spec not found: ${specId}`)
+					pushToolResult(formatResponse.toolError(reason))
 					this.resetStreamState()
 					return
 				}
+				logWriteSpec("info", "explicit spec_id resolved", { specId, title: meta.title })
 			}
 
 			// Load existing body for merge modes; replace uses content only
@@ -345,6 +418,7 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
 				const msg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr)
+				logWriteSpec("error", "final failure", { reason: "merge failed", message: msg, writeMode, specId })
 				this.abortStream(task, streamId, specId, doc, msg)
 				pushToolResult(formatResponse.toolError(msg))
 				this.resetStreamState()
@@ -364,6 +438,7 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 					}),
 				)
 				if (!didApprove) {
+					logWriteSpec("warn", "user denied write", { specId, doc, writeMode })
 					this.abortStream(task, streamId, specId, doc, "user denied write")
 					pushToolResult(formatResponse.toolDenied())
 					this.resetStreamState()
@@ -376,6 +451,14 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				workspaceRoot,
 				docIdOrKind: doc,
 				content: finalContent,
+			})
+			logWriteSpec("info", "SpecService.writeDocument ok", {
+				specId,
+				doc: updated.kind,
+				revision: updated.revision,
+				created,
+				writeMode,
+				contentLength: finalContent.length,
 			})
 
 			try {
@@ -407,6 +490,13 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 
 			invalidateSpecContextCache(task.taskId)
 			task.consecutiveMistakeCount = 0
+			logWriteSpec("info", "success", {
+				created,
+				specId,
+				doc: updated.kind,
+				revision: updated.revision,
+				writeMode,
+			})
 			pushToolResult(
 				JSON.stringify(
 					{
@@ -434,15 +524,11 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				),
 			)
 		} catch (error) {
-			this.abortStream(
-				task,
-				streamId,
-				this.streamSpecId,
-				this.streamDocKind || "requirements",
-				error instanceof Error ? error.message : String(error),
-			)
+			const message = error instanceof Error ? error.message : String(error)
+			logWriteSpec("error", "final failure", { reason: "unhandled exception", message })
+			this.abortStream(task, streamId, this.streamSpecId, this.streamDocKind || "requirements", message)
 			await handleError("writing spec", error as Error)
-			pushToolResult(formatResponse.toolError((error as Error).message))
+			pushToolResult(formatResponse.toolError(message))
 		} finally {
 			this.resetStreamState()
 		}

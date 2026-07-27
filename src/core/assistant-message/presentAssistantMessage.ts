@@ -14,6 +14,8 @@ import type { ToolParamName, ToolResponse, ToolUse, McpToolUse } from "../../sha
 import { AskIgnoredError } from "../task/AskIgnoredError"
 import { Task } from "../task/Task"
 
+import { looksLikeTextToolCall, parseTextToolCalls } from "./TextToolCallParser"
+
 import { listFilesTool } from "../tools/ListFilesTool"
 import { openTabsTool } from "../tools/OpenTabsTool"
 import { webResearchTool } from "../tools/WebResearchTool"
@@ -337,6 +339,21 @@ export async function presentAssistantMessage(cline: Task) {
 				// Strip any streamed <thinking> tags from text output.
 				content = content.replace(/<thinking>\s?/g, "")
 				content = content.replace(/\s?<\/thinking>/g, "")
+
+				// Never display raw tool-call markup. Text blocks are normally
+				// cleaned by post-stream recovery before they get here, but a
+				// block can survive with markup intact (e.g. when a native
+				// tool call exists alongside text markup, so recovery defers
+				// to the native path). Strip recognizable markup for display
+				// so the UI always looks like the native tool-call flow.
+				if (looksLikeTextToolCall(content)) {
+					content = parseTextToolCalls(content).cleanedText
+				}
+
+				// Pure-markup block: nothing left worth displaying.
+				if (!content.trim()) {
+					break
+				}
 			}
 
 			await cline.say("text", content, undefined, block.partial)
@@ -540,9 +557,24 @@ export async function presentAssistantMessage(cline: Task) {
 				const customTool = stateExperiments?.customTools ? customToolRegistry.get(block.name) : undefined
 				const isKnownTool = isValidToolName(String(block.name), stateExperiments)
 				if (isKnownTool && !block.nativeArgs && !customTool) {
+					const toolName = String(block.name)
+					// Spec tools: surface actionable create/import guidance instead of an opaque
+					// parser failure that stacks into consecutiveMistakeLimit ("Zoo is having trouble…").
 					const errorMessage =
-						`Invalid tool call for '${block.name}': missing nativeArgs. ` +
-						`This usually means the model streamed invalid or incomplete arguments and the call could not be finalized.`
+						toolName === "write_spec"
+							? `Invalid write_spec call: arguments could not be finalized (missing nativeArgs). ` +
+								`CREATE/import existing markdown: {"title":"<Spec Title>","spec_id":null,"doc":"requirements"|"design"|"tasks","content":"<full markdown>","mode":"replace"}. ` +
+								`UPDATE: pass full spec_id from list_specs (or null for active) with doc + content/mode. ` +
+								`Do not use write_to_file for Spec Workspace. Check extension host logs for [write_spec] / parser details.`
+							: toolName === "read_spec" || toolName === "list_specs" || toolName === "delete_spec"
+								? `Invalid ${toolName} call: arguments could not be finalized (missing nativeArgs). ` +
+									`Use list_specs for pack ids; read_spec needs doc + spec_id null/full id; delete_spec needs full id(s). Check extension host logs.`
+								: `Invalid tool call for '${toolName}': missing nativeArgs. ` +
+									`This usually means the model streamed invalid or incomplete arguments and the call could not be finalized.`
+
+					console.warn(
+						`[presentAssistantMessage] missing nativeArgs for tool=${toolName} tool_use_id=${toolCallId}`,
+					)
 
 					cline.consecutiveMistakeCount++
 					try {

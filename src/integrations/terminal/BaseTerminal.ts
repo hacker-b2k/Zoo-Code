@@ -1,4 +1,7 @@
 import { truncateOutput, applyRunLengthEncoding } from "../misc/extract-text"
+import { existsSync } from "fs"
+import * as path from "path"
+import { spawnSync } from "child_process"
 
 import type {
 	RooTerminalProvider,
@@ -324,5 +327,42 @@ export abstract class BaseTerminal implements RooTerminal {
 
 	public static getExecaShellPath(): string | undefined {
 		return BaseTerminal.execaShellPath
+	}
+
+	/**
+	 * Problem C: on Windows, when no explicit `execaShellPath` is configured,
+	 * prefer PowerShell over execa's default (cmd.exe / ComSpec). This method
+	 * is on BaseTerminal so tests can spy on it without ESM limitations.
+	 *
+	 * Probe order:
+	 *   1. `pwsh.exe` on PATH via `where.exe` (PowerShell Core — no extra dep).
+	 *   2. `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`
+	 *      (Windows PowerShell 5.1, present on every supported Windows).
+	 *   3. undefined — preserves prior execa default behavior on exotic setups.
+	 */
+	public static resolveDefaultWindowsShellPath(): string | undefined {
+		if (process.platform !== "win32") {
+			return undefined
+		}
+
+		try {
+			const where = spawnSync("where.exe", ["pwsh"], { windowsHide: true, encoding: "utf8" })
+			if (where.status === 0 && where.stdout) {
+				const first = (where.stdout as string).split(/\r?\n/).find((line) => line.trim().length > 0)
+				if (first && existsSync(first.trim())) {
+					return first.trim()
+				}
+			}
+		} catch {
+			// where.exe unavailable — fall through to well-known path.
+		}
+
+		const sysRoot = process.env.SystemRoot || process.env.windir || "C:\\Windows"
+		const ps51 = path.join(sysRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+		if (existsSync(ps51)) {
+			return ps51
+		}
+
+		return undefined
 	}
 }
