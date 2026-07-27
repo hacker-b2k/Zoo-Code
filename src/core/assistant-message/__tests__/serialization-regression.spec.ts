@@ -483,3 +483,85 @@ describe("Problem D: text/XML tool-call recovery note behavior is unchanged", ()
 		expect(typeof parser.looksLikeTextToolCall).toBe("function")
 	})
 })
+
+describe("generate_image: 'None' sentinel treated as null (MiMo quirk)", () => {
+	it("image: 'None' → coerceNullableStringParam returns null (not the string 'None')", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_none",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "A sunset",
+				path: "images/sunset.png",
+				image: "None", // MiMo sends string "None" instead of JSON null
+			}),
+		}) as any
+		expect(result.nativeArgs.prompt).toBe("A sunset")
+		expect(result.nativeArgs.path).toBe("images/sunset.png")
+		expect(result.nativeArgs.image).toBeNull()
+	})
+
+	it("image: 'null' → coerceNullableStringParam returns null", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_null",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "A sunset",
+				path: "images/sunset.png",
+				image: "null",
+			}),
+		}) as any
+		expect(result.nativeArgs.image).toBeNull()
+	})
+
+	it("image: 'undefined' → coerceNullableStringParam returns null", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_undef",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "A sunset",
+				path: "images/sunset.png",
+				image: "undefined",
+			}),
+		}) as any
+		expect(result.nativeArgs.image).toBeNull()
+	})
+
+	it("image: real path → preserved as string", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_path",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "Enhance this",
+				path: "images/enhanced.png",
+				image: "images/original.jpg",
+			}),
+		}) as any
+		expect(result.nativeArgs.image).toBe("images/original.jpg")
+	})
+
+	it("image: JSON null → preserved as null", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_jsonnull",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "A sunset",
+				path: "images/sunset.png",
+				image: null,
+			}),
+		}) as any
+		expect(result.nativeArgs.image).toBeNull()
+	})
+
+	it("image: object {} → undefined (not '[object Object]')", () => {
+		const result = NativeToolCallParser.parseToolCall({
+			id: "call_gi_obj",
+			name: "generate_image",
+			arguments: JSON.stringify({
+				prompt: "A sunset",
+				path: "images/sunset.png",
+				image: {},
+			}),
+		}) as any
+		expect(result.nativeArgs.image).toBeUndefined()
+	})
+})

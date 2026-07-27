@@ -27,8 +27,18 @@ export class GenerateImageTool extends BaseTool<"generate_image"> {
 	readonly name = "generate_image" as const
 
 	async execute(params: GenerateImageParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
-		const { prompt, path: relPath, image: inputImagePath } = params
+		const { prompt, path: relPath } = params
 		const { handleError, pushToolResult, askApproval } = callbacks
+
+		// Problem: models sometimes send the string "None" (or "null"/"undefined")
+		// for the optional `image` parameter instead of JSON null. Treat these
+		// sentinel strings as absent so we don't try to read a file literally
+		// named "None".
+		const rawImage = params.image
+		const inputImagePath =
+			typeof rawImage === "string" && rawImage.trim() && !/^(none|null|undefined|nil)$/i.test(rawImage.trim())
+				? rawImage
+				: undefined
 
 		const provider = task.providerRef.deref()
 		const state = await provider?.getState()

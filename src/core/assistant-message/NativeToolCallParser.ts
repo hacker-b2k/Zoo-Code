@@ -134,12 +134,21 @@ export class NativeToolCallParser {
 	/**
 	 * Variant of coerceOptionalStringParam for nullable string fields where
 	 * JSON `null` is a first-class sentinel (e.g. `query`/`url` in web_research,
-	 * `spec_id` create-new signal). Preserves `null` as-is; everything else
-	 * follows the same coercion rules as coerceOptionalStringParam.
+	 * `spec_id` create-new signal, `image` in generate_image). Preserves JSON
+	 * `null` as-is; sentinel strings ("None"/"null"/"undefined"/"nil") also map
+	 * to `null` so the tool receives a consistent nullable signal instead of
+	 * `undefined` (which some tools treat differently from JSON null).
+	 * Everything else follows the same coercion rules as coerceOptionalStringParam.
 	 */
 	private static coerceNullableStringParam(value: unknown): string | null | undefined {
 		if (value === null) {
 			return null
+		}
+		if (typeof value === "string") {
+			const trimmed = value.trim().toLowerCase()
+			if (trimmed === "null" || trimmed === "undefined" || trimmed === "none" || trimmed === "nil") {
+				return null
+			}
 		}
 		return this.coerceOptionalStringParam(value)
 	}
@@ -713,9 +722,9 @@ export class NativeToolCallParser {
 			case "generate_image":
 				if (partialArgs.prompt !== undefined || partialArgs.path !== undefined) {
 					nativeArgs = {
-						prompt: partialArgs.prompt,
-						path: partialArgs.path,
-						image: partialArgs.image,
+						prompt: this.coerceOptionalStringParam(partialArgs.prompt),
+						path: this.coerceOptionalStringParam(partialArgs.path),
+						image: this.coerceNullableStringParam(partialArgs.image),
 					}
 				}
 				break
@@ -1484,9 +1493,9 @@ export class NativeToolCallParser {
 				case "generate_image":
 					if (args.prompt !== undefined && args.path !== undefined) {
 						nativeArgs = {
-							prompt: args.prompt,
-							path: args.path,
-							image: args.image,
+							prompt: this.coerceOptionalStringParam(args.prompt),
+							path: this.coerceOptionalStringParam(args.path),
+							image: this.coerceNullableStringParam(args.image),
 						} as NativeArgsFor<TName>
 					}
 					break
