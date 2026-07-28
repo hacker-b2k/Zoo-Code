@@ -52,3 +52,99 @@ export const followUpDataSchema = z.object({
 })
 
 export type FollowUpDataType = z.infer<typeof followUpDataSchema>
+
+/**
+ * Result of decoding a follow-up payload. Keeping parsing in the shared types
+ * package ensures extension-host producers and webview consumers use the same
+ * runtime contract rather than trusting a TypeScript-only type assertion.
+ */
+export type ParsedFollowUpData = { valid: true; data: FollowUpDataType } | { valid: false; fallbackText: string }
+
+const MAX_ELICITATIONS = 12
+const MAX_ELICITATION_TEXT_LENGTH = 4_000
+
+/** Decode XML entities used by text-form interaction markup. */
+function decodeEntities(value: string): string {
+	return value
+		.replace(/&quot;/gi, '"')
+		.replace(/&apos;/gi, "'")
+		.replace(/&lt;/gi, "<")
+		.replace(/&gt;/gi, ">")
+		.replace(/&amp;/gi, "&")
+}
+
+/**
+ * Reads quoted attributes without depending on their order or quote style.
+ * This intentionally accepts only quoted values: unquoted attributes are too
+ * ambiguous to safely turn into interactive UI.
+ */
+function readAttribute(attributes: string, name: string): string | undefined {
+	const match = new RegExp(`\\b${name}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, "i").exec(attributes)
+	return match?.[2] === undefined ? undefined : decodeEntities(match[2]).trim()
+}
+
+/** Remove recognized interaction tags while retaining any explanatory prose. */
+function stripElicitationMarkup(value: string): string {
+	return value
+		.replace(/<\s*\/?\s*ElicitationsGroup\b[^>]*>/gi, "")
+		.replace(/<\s*Elicitation\b[^>]*\/?>/gi, "")
+		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim()
+}
+
+/**
+ * Converts compatibility markup emitted by older/weak models into the
+ * existing follow-up wire format. It is deliberately bounded and supports
+ * self-closing Elicitation definitions only; malformed groups are never
+ * surfaced as raw markup.
+ */
+function parseElicitationMarkup(text: string): ParsedFollowUpData | undefined {
+	const group = /<\s*ElicitationsGroup\b([^>]*)>([\s\S]*?)<\s*\/\s*ElicitationsGroup\s*>/i.exec(text)
+	if (!group) {
+		return undefined
+	}
+
+	const groupAttributes = group[1] ?? ""
+	const groupContent = group[2] ?? ""
+	const question = readAttribute(groupAttributes, "message")
+	const suggestions: SuggestionItem[] = []
+	const elicitation = /<\s*Elicitation\b([^>]*?)\/\s*>/gi
+	let match: RegExpExecArray | null
+	while ((match = elicitation.exec(groupContent)) !== null && suggestions.length < MAX_ELICITATIONS) {
+		const attributes = match[1] ?? ""
+		const answer = readAttribute(attributes, "query") ?? readAttribute(attributes, "label")
+		if (answer && answer.length <= MAX_ELICITATION_TEXT_LENGTH) {
+			suggestions.push({ answer })
+		}
+	}
+
+	if (!question || question.length > MAX_ELICITATION_TEXT_LENGTH || suggestions.length === 0) {
+		return { valid: false, fallbackText: stripElicitationMarkup(text) }
+	}
+
+	return { valid: true, data: { question, suggest: suggestions } }
+}
+
+/**
+ * Parse legacy JSON first, then accept compatible Elicitation markup emitted
+ * as assistant text. Invalid payloads return a display-safe fallback so raw
+ * protocol tags never reach the chat renderer.
+ */
+export function parseFollowUpData(text: string): ParsedFollowUpData {
+	try {
+		const parsed = followUpDataSchema.safeParse(JSON.parse(text))
+		if (parsed.success) {
+			return { valid: true, data: parsed.data }
+		}
+	} catch {
+		// Compatibility markup is not JSON; continue to its bounded parser.
+	}
+
+	const elicitation = parseElicitationMarkup(text)
+	if (elicitation) {
+		return elicitation
+	}
+
+	return { valid: false, fallbackText: stripElicitationMarkup(text) }
+}

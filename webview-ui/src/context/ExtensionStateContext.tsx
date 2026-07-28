@@ -365,6 +365,13 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 	const handleMessage = useCallback(
 		(event: MessageEvent) => {
 			const message: ExtensionMessage = event.data
+			// Incremental chat events can remain queued after the user switches
+			// tasks. Apply them only when they identify the currently hydrated task
+			// generation. Events without identity are retained for older hosts.
+			const isCurrentChatGeneration = (currentState: ExtensionState): boolean =>
+				!message.taskId ||
+				(message.taskId === currentState.currentTaskId &&
+					message.taskInstanceId === currentState.currentTaskInstanceId)
 			switch (message.type) {
 				case "state": {
 					const newState = message.state ?? {}
@@ -433,6 +440,10 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 				case "messageUpdated": {
 					const clineMessage = message.clineMessage!
 					setState((prevState) => {
+						if (!isCurrentChatGeneration(prevState)) {
+							console.warn("[messageUpdated] Dropping stale task-generation event.")
+							return prevState
+						}
 						// worth noting it will never be possible for a more up-to-date message to be sent here or in normal messages post since the presentAssistantContent function uses lock
 						const lastIndex = findLastIndex(prevState.clineMessages, (msg) => msg.ts === clineMessage.ts)
 						if (lastIndex !== -1) {
@@ -456,6 +467,10 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 				case "messageAdded": {
 					const clineMessage = message.clineMessage!
 					setState((prevState) => {
+						if (!isCurrentChatGeneration(prevState)) {
+							console.warn("[messageAdded] Dropping stale task-generation event.")
+							return prevState
+						}
 						// Guard against duplicate appends (e.g. concurrent full state push).
 						const exists = prevState.clineMessages.some((msg) => msg.ts === clineMessage.ts)
 						if (exists) {

@@ -68,6 +68,7 @@ import { findLastIndex } from "../../shared/array"
 import { combineApiRequests } from "../../shared/combineApiRequests"
 import { combineCommandSequences } from "../../shared/combineCommandSequences"
 import { t } from "../../i18n"
+
 import { hasTokenUsageChanged, hasToolUsageChanged } from "../../shared/getApiMetrics"
 import { ClineAskResponse } from "../../shared/WebviewMessage"
 import { defaultModeSlug, getModeBySlug } from "../../shared/modes"
@@ -136,6 +137,11 @@ import { MessageManager } from "../message-manager"
 import { validateAndFixToolResultIds } from "./validateToolResultIds"
 import { mergeConsecutiveApiMessages } from "./mergeConsecutiveApiMessages"
 import { prepareApiConversationMessage } from "./apiConversationHistory"
+
+// A provider profile may intentionally disable the general mistake limit, but
+// repeated text-only responses can never make progress on an actionable task.
+// Keep this provider-neutral guard bounded before asking the user for guidance.
+const MAX_CONSECUTIVE_NO_TOOL_RESPONSES = 3
 
 const MAX_EXPONENTIAL_BACKOFF_SECONDS = 600 // 10 minutes
 const DEFAULT_USAGE_COLLECTION_TIMEOUT_MS = 5000 // 5 seconds
@@ -1273,7 +1279,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Prefer incremental messageAdded to avoid full-list re-render duplication.
 		const isUiFocused = provider?.getCurrentTask()?.instanceId === this.instanceId
 		if (isUiFocused) {
-			await provider?.postMessageToWebview({ type: "messageAdded", clineMessage: message })
+			await provider?.postMessageToWebview({
+				type: "messageAdded",
+				clineMessage: message,
+				taskId: this.taskId,
+				taskInstanceId: this.instanceId,
+			})
 		}
 		this.emit(RooCodeEventName.Message, { action: "created", message })
 		await this.saveClineMessages()
@@ -1311,7 +1322,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const messageSnapshot: ClineMessage = { ...message }
 		const isUiFocused = provider?.getCurrentTask()?.instanceId === this.instanceId
 		if (isUiFocused) {
-			await provider?.postMessageToWebview({ type: "messageUpdated", clineMessage: messageSnapshot })
+			await provider?.postMessageToWebview({
+				type: "messageUpdated",
+				clineMessage: messageSnapshot,
+				taskId: this.taskId,
+				taskInstanceId: this.instanceId,
+			})
 		}
 		this.emit(RooCodeEventName.Message, { action: "updated", message: messageSnapshot })
 
@@ -2857,17 +2873,20 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				throw new Error(`[RooCode#recursivelyMakeRooRequests] task ${this.taskId}.${this.instanceId} aborted`)
 			}
 
-			if (this.consecutiveMistakeLimit > 0 && this.consecutiveMistakeCount >= this.consecutiveMistakeLimit) {
+			if (
+				(this.consecutiveMistakeLimit > 0 && this.consecutiveMistakeCount >= this.consecutiveMistakeLimit) ||
+				this.consecutiveNoToolUseCount >= MAX_CONSECUTIVE_NO_TOOL_RESPONSES
+			) {
 				// Track consecutive mistake errors in telemetry via event and PostHog exception tracking.
 				// The reason is "no_tools_used" because this limit is reached via initiateTaskLoop
 				// which increments consecutiveMistakeCount when the model doesn't use any tools.
 				TelemetryService.instance.captureConsecutiveMistakeError(this.taskId)
 				TelemetryService.instance.captureException(
 					new ConsecutiveMistakeError(
-						`Task reached consecutive mistake limit (${this.consecutiveMistakeLimit})`,
+						`Task reached consecutive mistake/no-tool limit (${this.consecutiveMistakeLimit}/${MAX_CONSECUTIVE_NO_TOOL_RESPONSES})`,
 						this.taskId,
 						this.consecutiveMistakeCount,
-						this.consecutiveMistakeLimit,
+						this.consecutiveMistakeLimit || MAX_CONSECUTIVE_NO_TOOL_RESPONSES,
 						"no_tools_used",
 						this.apiConfiguration.apiProvider,
 						getModelId(this.apiConfiguration),
@@ -2891,6 +2910,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				}
 
 				this.consecutiveMistakeCount = 0
+				// User guidance begins a fresh recovery cycle. Without this reset an
+				// unlimited-mistake profile would immediately reopen the same prompt.
+				this.consecutiveNoToolUseCount = 0
 			}
 
 			// Getting verbose details is an expensive operation, it uses ripgrep to
@@ -4050,7 +4072,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						// Increment consecutive no-tool-use counter
 						this.consecutiveNoToolUseCount++
 
-						// Only show error and count toward mistake limit after 2 consecutive failures
+						// The first retry is silent. Later failures become visible and feed
+						// the shared mistake guard; the independent cap above also applies
+						// when a profile configured an unlimited mistake limit.
 						if (this.consecutiveNoToolUseCount >= 2) {
 							await this.say("error", "MODEL_NO_TOOLS_USED")
 							// Only count toward mistake limit after second consecutive failure

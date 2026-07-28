@@ -74,7 +74,7 @@ Call one of these tools now. If one of them is not the right fit, call a differe
 			attemptCount && attemptCount > 1
 				? `
 
-⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. You MUST invoke a tool in this response. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
+⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. Do not output reasoning, plans, XML, JSON, or an explanation as message text. Emit only a native structured tool call. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
 				: ""
 
 		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.

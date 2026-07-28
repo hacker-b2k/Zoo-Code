@@ -1,4 +1,5 @@
 import type { ToolUse, McpToolUse, TextContent } from "../../shared/tools"
+import { parseFollowUpData } from "@roo-code/types"
 import { looksLikeTextToolCall, parseTextToolCalls, stripMalformedToolCallMarkup } from "./TextToolCallParser"
 
 /**
@@ -83,6 +84,17 @@ export function applyTextualToolCallRecovery(state: TextualToolCallRecoveryState
 
 	const recovered = parseTextToolCalls(assistantMessage)
 	if (!recovered.recovered || recovered.toolUses.length === 0) {
+		// Complete ElicitationsGroup markup is a compatibility interaction, not a
+		// tool call. Keep it intact for the webview's schema-validated renderer;
+		// malformed variants continue through the sanitizer below.
+		if (parseFollowUpData(assistantMessage).valid) {
+			return {
+				...cloneState(state),
+				applied: false,
+				recoveredCount: 0,
+			}
+		}
+
 		// Malformed/garbled tool-call fragments: nothing valid to execute, but
 		// the user must never see raw broken XML. Strip structural tag-shaped
 		// tokens (conservative — never touches plain English prose).

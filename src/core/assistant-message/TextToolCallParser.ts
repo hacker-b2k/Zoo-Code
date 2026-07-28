@@ -98,6 +98,9 @@ const FENCED_TOOL_JSON_RE = /```(?:json|JSON)?\s*\r?\n?(\{[\s\S]*?\})\r?\n?```/g
 const LOOKS_LIKE_TEXT_TOOL_RE =
 	/<\s*(?:tool_call|function_call|toolcall|invoke)\b|<\s*function\s*=|<\s*function\b[^>]*\bname\s*=|<\s*tool\b[^>]*\bname\s*=|```(?:json|JSON)?\s*\r?\n?\s*\{\s*"(?:name|tool|function|tool_name)"\s*:[\s\S]{0,4000}?"(?:arguments|parameters|input|args)"\s*:/i
 
+/** Text-form interaction protocol emitted by non-conforming models. */
+const ELICITATION_MARKUP_RE = /<\s*\/?\s*ElicitationsGroup\b|<\s*Elicitation\b/i
+
 let textToolCallSeq = 0
 
 function nextSyntheticId(name: string): string {
@@ -673,7 +676,7 @@ export function looksLikeTextToolCall(text: string): boolean {
 	if (!text) {
 		return false
 	}
-	return LOOKS_LIKE_TEXT_TOOL_RE.test(text)
+	return LOOKS_LIKE_TEXT_TOOL_RE.test(text) || ELICITATION_MARKUP_RE.test(text)
 }
 
 /**
@@ -770,6 +773,16 @@ export function stripMalformedToolCallMarkup(text: string): string {
 		/<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=\s*["'][^"']+["'][^>]*>[\s\S]*?<\s*\/\s*(?:function|tool|invoke)\s*>/gi,
 		"",
 	)
+
+	// Elicitation markup is not a tool invocation and cannot safely be executed
+	// from assistant prose. A valid follow-up payload is rendered through the
+	// typed follow-up channel; stray markup in regular text is removed so broken
+	// protocol tags never leak into the chat transcript.
+	cleaned = cleaned
+		.replace(/<\s*ElicitationsGroup\b[^>]*>[\s\S]*?<\s*\/\s*ElicitationsGroup\s*>/gi, "")
+		.replace(/<\s*\/?\s*ElicitationsGroup\b[^>]*>/gi, "")
+		.replace(/<\s*Elicitation\b[^>]*\/?>/gi, "")
+		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
 
 	// Strip stray/unclosed structural tag fragments that are clearly tool-call
 	// markup, not prose. These are the exact tokens from the field report:

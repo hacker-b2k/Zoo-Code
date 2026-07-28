@@ -33,6 +33,14 @@ describe("TextToolCallParser", () => {
 		it("returns false for plain prose", () => {
 			expect(looksLikeTextToolCall("Hello, how can I help?")).toBe(false)
 		})
+
+		it("detects text-form elicitation markup for deferred sanitization", () => {
+			expect(
+				looksLikeTextToolCall(
+					'<ElicitationsGroup message="Choose"><Elicitation label="One" /></ElicitationsGroup>',
+				),
+			).toBe(true)
+		})
 	})
 
 	describe("textEndsWithIncompleteMarkup", () => {

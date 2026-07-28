@@ -6,13 +6,13 @@ import { VSCodeBadge } from "@vscode/webview-ui-toolkit/react"
 
 import type {
 	ClineMessage,
-	FollowUpData,
 	SuggestionItem,
 	ClineApiReqInfo,
 	ClineAskUseMcpServer,
 	ClineSayTool,
 	CompletionCheckpoint,
 } from "@roo-code/types"
+import { parseFollowUpData } from "@roo-code/types"
 import type { CollapseDecision } from "@src/utils/messageSize"
 
 import { Mode } from "@roo/modes"
@@ -458,12 +458,15 @@ export const ChatRowContent = ({
 		return () => vscode.postMessage({ type: "openFile", text: "./" + tool.path })
 	}, [tool])
 
-	const followUpData = useMemo(() => {
+	const followUpPayload = useMemo(() => {
 		if (message.type === "ask" && message.ask === "followup" && !message.partial) {
-			return safeJsonParse<FollowUpData>(message.text)
+			return parseFollowUpData(message.text ?? "")
 		}
 		return null
 	}, [message.type, message.ask, message.partial, message.text])
+
+	const followUpData = followUpPayload?.valid ? followUpPayload.data : undefined
+	const followUpFallbackText = followUpPayload && !followUpPayload.valid ? followUpPayload.fallbackText : ""
 
 	if (tool) {
 		const toolIcon = (name: string) => (
@@ -1255,7 +1258,17 @@ export const ChatRowContent = ({
 				}
 				case "api_req_finished":
 					return null // we should never see this message type
-				case "text":
+				case "text": {
+					// Some weak providers emit the compatibility interaction markup as
+					// ordinary assistant text. Recognize complete groups here so users
+					// receive the same accessible suggestion controls as native followups.
+					const textInteraction =
+						!message.partial && /<\s*ElicitationsGroup\b/i.test(message.text ?? "")
+							? parseFollowUpData(message.text ?? "")
+							: undefined
+					const interactionData = textInteraction?.valid ? textInteraction.data : undefined
+					const textFallback =
+						textInteraction && !textInteraction.valid ? textInteraction.fallbackText : message.text
 					return (
 						<div className="group">
 							<div style={headerStyle}>
@@ -1265,7 +1278,20 @@ export const ChatRowContent = ({
 								<OpenMarkdownPreviewButton markdown={message.text} />
 							</div>
 							<div className="pl-6">
-								<Markdown markdown={message.text} partial={message.partial} />
+								<Markdown
+									markdown={interactionData?.question ?? textFallback}
+									partial={message.partial}
+								/>
+								{interactionData?.suggest && (
+									<FollowUpSuggest
+										suggestions={interactionData.suggest}
+										onSuggestionClick={onSuggestionClick}
+										ts={message.ts}
+										onCancelAutoApproval={onFollowUpUnmount}
+										isAnswered={false}
+										isFollowUpAutoApprovalPaused={isFollowUpAutoApprovalPaused}
+									/>
+								)}
 								{message.images && message.images.length > 0 && (
 									<div style={{ marginTop: "10px" }}>
 										{message.images.map((image, index) => (
@@ -1276,6 +1302,7 @@ export const ChatRowContent = ({
 							</div>
 						</div>
 					)
+				}
 				case "user_feedback":
 					return (
 						<div className="group">
@@ -1771,7 +1798,12 @@ export const ChatRowContent = ({
 					} else {
 						return null // Don't render anything when we get a completion_result ask without text
 					}
-				case "followup":
+				case "followup": {
+					// Final follow-up messages are validated at the shared protocol boundary.
+					// Invalid JSON or malformed elicitation markup is rendered only as safe
+					// fallback text, never as raw protocol tags.
+					const followUpText =
+						message.partial === true ? message.text : (followUpData?.question ?? followUpFallbackText)
 					return (
 						<>
 							{title && (
@@ -1781,9 +1813,7 @@ export const ChatRowContent = ({
 								</div>
 							)}
 							<div className="flex flex-col gap-2 ml-6">
-								<Markdown
-									markdown={message.partial === true ? message?.text : followUpData?.question}
-								/>
+								<Markdown markdown={followUpText} />
 								<FollowUpSuggest
 									suggestions={followUpData?.suggest}
 									onSuggestionClick={onSuggestionClick}
@@ -1795,6 +1825,7 @@ export const ChatRowContent = ({
 							</div>
 						</>
 					)
+				}
 				case "auto_approval_max_req_reached": {
 					return <AutoApprovedRequestLimitWarning message={message} />
 				}
