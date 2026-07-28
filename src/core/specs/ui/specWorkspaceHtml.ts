@@ -135,6 +135,48 @@ export function buildSpecWorkspaceHtml(
     @media (prefers-reduced-motion: reduce) {
       button { transition: none; }
     }
+    /*
+     * Icon-only toolbar action (Refresh). No background box or border in the
+     * idle state — only the glyph is visible, matching the reference design.
+     * Hover reveals a subtle surface highlight so the hit target is still
+     * discoverable; keyboard focus keeps the standard focus ring for
+     * accessibility. Size matches the shared toolbar rhythm.
+     */
+    button.icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 4px;
+      box-shadow: none;
+      transition:
+        background var(--motion-fast) var(--motion-ease),
+        color var(--motion-fast) var(--motion-ease),
+        border-color var(--motion-fast) var(--motion-ease);
+    }
+    button.icon-button svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      fill: currentColor;
+    }
+    button.icon-button:hover:not(:disabled) {
+      background: var(--surface-hover);
+      color: var(--fg);
+      border-color: transparent;
+      box-shadow: none;
+    }
+    button.icon-button:active:not(:disabled) {
+      background: var(--surface);
+      box-shadow: none;
+    }
+    button.icon-button:focus-visible {
+      outline: 1px solid var(--focus-ring);
+      outline-offset: 1px;
+    }
     .status {
       padding: 4px 12px;
       font-size: 12px;
@@ -650,7 +692,7 @@ export function buildSpecWorkspaceHtml(
 <body>
   <header>
     <h1>Spec Workspace</h1>
-    <button id="btnRefresh" class="secondary" type="button">Refresh</button>
+    <button id="btnRefresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M2.006 8.267L.78 9.5 0 8.73l2.09-2.07.76.01 2.09 2.12-.76.76-1.167-1.18a5 5 0 0 0 9.4 1.983l.813.597a6 6 0 0 1-11.22-2.683zm10.99-.466L11.76 6.55l-.76.76 2.09 2.11.76.01 2.09-2.07-.75-.76-1.194 1.18a6 6 0 0 0-11.11-2.92l.81.594a5 5 0 0 1 9.3 2.346z"/></svg></button>
     <button id="btnImport" class="secondary" type="button">Import</button>
     <button id="btnExport" class="secondary" type="button">Export</button>
     <button id="btnDelete" class="secondary" type="button" disabled>Delete</button>

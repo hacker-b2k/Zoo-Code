@@ -146,4 +146,50 @@ describe("F-025 Spec Workspace interaction design", () => {
 	it("honours reduced-motion preferences", () => {
 		expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/)
 	})
+
+	// -----------------------------------------------------------------------
+	// Refresh button redesign: icon-only, transparent idle state, subtle hover.
+	// The rest of the header actions intentionally keep the legacy text style.
+	// -----------------------------------------------------------------------
+
+	it("renders the Refresh action as an icon-only button (no text label)", () => {
+		// The button carries the VS Code codicon sync glyph (two curved arrows)
+		// inline — no new dependency; the SVG path comes from @vscode/codicons,
+		// already a project dependency. Its name is exposed only to assistive tech.
+		const btnMatch = /<button id="btnRefresh"([^>]*)>([\s\S]*?)<\/button>/.exec(html)
+		expect(btnMatch, "btnRefresh must exist").toBeTruthy()
+		const attrs = btnMatch![1]
+		const inner = btnMatch![2]
+		expect(attrs).toContain('class="icon-button"')
+		expect(attrs).not.toContain("secondary")
+		expect(attrs).toContain('aria-label="Refresh"')
+		expect(attrs).toContain('title="Refresh"')
+		expect(inner).toContain("<svg")
+		expect(inner).toContain("M2.006 8.267L.78 9.5") // codicon sync (two-arrow) path signature
+		expect(inner).not.toMatch(/>\s*Refresh\s*</)
+	})
+
+	it("icon-button has no visible box in the idle state", () => {
+		const idle = ruleBody(css, "button.icon-button")
+		expect(idle).toMatch(/background:\s*transparent/)
+		expect(idle).toMatch(/border:\s*1px solid transparent/)
+		expect(idle).toMatch(/box-shadow:\s*none/)
+		// Glyph colour comes from theme tokens, never a literal colour.
+		expect(idle).toMatch(/color:\s*var\(--muted\)/)
+		expect(idle).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+	})
+
+	it("icon-button reveals a subtle surface highlight on hover", () => {
+		const hover = ruleBody(css, "button.icon-button:hover:not(:disabled)")
+		expect(hover).toMatch(/background:\s*var\(--surface-hover\)/)
+		expect(hover).toMatch(/color:\s*var\(--fg\)/)
+		// Still no border or elevation on hover — feedback is background-only.
+		expect(hover).toMatch(/border-color:\s*transparent/)
+		expect(hover).toMatch(/box-shadow:\s*none/)
+	})
+
+	it("icon-button keeps keyboard focus discoverable", () => {
+		const focus = ruleBody(css, "button.icon-button:focus-visible")
+		expect(focus).toMatch(/outline:\s*1px solid var\(--focus-ring\)/)
+	})
 })
