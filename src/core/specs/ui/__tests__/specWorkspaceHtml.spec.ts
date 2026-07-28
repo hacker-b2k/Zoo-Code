@@ -112,7 +112,9 @@ describe("buildSpecWorkspaceHtml", () => {
 		expect(html).toContain('event.key === "Escape"')
 		expect(html).toContain('editor.addEventListener("scroll", hideSelectionActions)')
 		expect(html).toContain("hideSelectionActions();\n      agentStreaming = !!on")
-		expect(html).toContain("hideSelectionActions();\n      if (agentStreaming) {")
+		// Issue C: selection actions still hide on stream state changes (setAgentStreaming),
+		// but selectSpec/handleTabClick no longer lock on agentStreaming.
+		expect(html).toContain("function setAgentStreaming(on, meta) {\n      hideSelectionActions();")
 	})
 
 	it("F-024b: derives no selection context in the webview — the host is authoritative", () => {

@@ -45,7 +45,7 @@ Server loads current doc and appends. Use for multi-turn large designs.
 }
 Replaces that section if present, else appends it. title optional.
 
-## Surgical edit (checkbox / one line) — DO NOT rewrite the whole doc
+## Surgical edit (checkbox / one line / ONE broken diagram) — DO NOT rewrite the whole doc
 {
   "spec_id": "<id>",
   "doc": "tasks",
@@ -55,6 +55,14 @@ Replaces that section if present, else appends it. title optional.
   "replace_all": false
 }
 content may be omitted for search_replace. Prefer this for tiny edits.
+
+IMPORTANT — fixing ONE broken part (e.g. a single Mermaid diagram that failed to render, one wrong paragraph, one checkbox):
+NEVER use full "replace" to fix a localized problem. A full rewrite risks silently changing/losing content that was fine, is slower, and is riskier.
+Instead:
+1. read_spec the doc to get the exact current text.
+2. To fix one diagram/paragraph: use mode "search_replace" with old_string = the exact broken block (copy it verbatim from the read_spec output, including the \`\`\` code fences and all whitespace) and new_string = the corrected block. Everything outside old_string stays byte-identical.
+3. To fix a whole markdown section: use mode "upsert_section" with section_heading = that section's heading and content = the corrected section body.
+Only use full "replace" when the user explicitly asks to restructure/rewrite the entire document, or when most of the document must change.
 
 Prefer write_spec over write_to_file for plans. Create while other packs exist: non-empty title + spec_id null. On failure: fix params and retry write_spec; never fall back to write_to_file / plans/*.md.`
 

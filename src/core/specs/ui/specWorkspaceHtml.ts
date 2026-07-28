@@ -833,6 +833,10 @@ export function buildSpecWorkspaceHtml(
     let lastMetaUpdateAt = 0;
     let pendingPartialRaf = null;
     let pendingPartialMsg = null;
+    // Issue C: latest streamed content for the in-flight stream, kept updated
+    // even when the user navigates away from the streamed doc, so returning
+    // restores the exact live state with no data loss.
+    let bufferedStreamContent = null;
     // F-008: preview state
     let viewMode = "split"; // "edit" | "split" | "preview"
     let previewDebounceTimer = null;
@@ -1109,10 +1113,15 @@ export function buildSpecWorkspaceHtml(
       hideSelectionActions();
       agentStreaming = !!on;
       if (on) {
-        editor.readOnly = true;
-        btnSave.disabled = true;
-        // F-008: show overlay during streaming; preview stays at last markdown (no mermaid)
-        if (previewOverlay) previewOverlay.classList.add("visible");
+        // Issue C: only lock the visible editor + show the overlay when the
+        // user is actually viewing the doc being streamed. When they are on a
+        // different spec/doc, the stream runs in the background and the editor
+        // stays interactive for the doc they are looking at.
+        if (isViewingStreamedDoc()) {
+          editor.readOnly = true;
+          btnSave.disabled = true;
+          if (previewOverlay) previewOverlay.classList.add("visible");
+        }
         const kind = (meta && meta.docKind) || activeKind;
         const mode = (meta && meta.mode) || "update";
         const title = (meta && meta.title) || "";
@@ -1132,6 +1141,54 @@ export function buildSpecWorkspaceHtml(
         if (previewOverlay) previewOverlay.classList.remove("visible");
         schedulePreviewRender(0);
       }
+    }
+
+    /**
+     * Issue C: is the user currently viewing the exact doc the stream is writing?
+     * Streaming state is keyed by (streamSpecId, streamDocKind); navigation to
+     * any other spec or doc kind means the user is NOT viewing the streamed doc.
+     */
+    function isViewingStreamedDoc() {
+      return (
+        agentStreaming &&
+        streamSpecId &&
+        activeSpecId === streamSpecId &&
+        streamDocKind &&
+        activeKind === streamDocKind
+      );
+    }
+
+    /**
+     * Issue C: re-enter the live streaming view for the streamed doc.
+     * Restores read-only streaming editor with the latest buffered content and
+     * re-shows the streaming status/overlay. Used when the user switches back
+     * to the spec+doc currently being written.
+     */
+    function enterStreamingView() {
+      editor.disabled = false;
+      editor.readOnly = true;
+      btnSave.disabled = true;
+      if (previewOverlay) previewOverlay.classList.add("visible");
+      editor.value = bufferedStreamContent != null ? bufferedStreamContent : editor.value;
+      dirty = false;
+      maybeScrollStream();
+      schedulePreviewDebounced();
+      docMeta.textContent = (streamDocKind || activeKind) + " · streaming…";
+      setStatus(
+        "Agent writing… " + (streamDocKind || activeKind) + " — preview only, not saved yet",
+        "streaming"
+      );
+    }
+
+    /**
+     * Issue C: leave the streaming display because the user navigated to a
+     * different spec/doc. The stream itself keeps running in the background;
+     * partials are buffered (see applyAgentPartial) and re-applied on return.
+     * The editor is made interactive for the newly-viewed doc.
+     */
+    function exitStreamingViewForOtherDoc() {
+      editor.readOnly = false;
+      if (previewOverlay) previewOverlay.classList.remove("visible");
     }
 
     function isNearBottom() {
@@ -1157,36 +1214,42 @@ export function buildSpecWorkspaceHtml(
       if (msg.specId) streamSpecId = msg.specId;
       if (msg.docKind) streamDocKind = msg.docKind;
 
-      // Avoid list rebuild every chunk — only if selection identity changed
-      let needList = false;
-      if (msg.specId && msg.specId !== activeSpecId) {
-        activeSpecId = msg.specId;
-        needList = true;
+      // Issue C: compute the new stream content first so we can buffer it
+      // regardless of whether the user is currently viewing the streamed doc.
+      const fullResync = msg.fullResync === true || (msg.content != null && msg.append == null);
+      const base = bufferedStreamContent != null ? bufferedStreamContent : "";
+      let nextContent = null;
+      if (fullResync) {
+        nextContent = msg.content || "";
+      } else if (typeof msg.append === "string" && typeof msg.baseLen === "number") {
+        if (base.length === msg.baseLen) {
+          nextContent = base + msg.append;
+        } else if (msg.content != null) {
+          nextContent = msg.content || "";
+        } else {
+          // Mismatch without full body — wait for next fullResync to heal.
+          return;
+        }
+      } else if (msg.content != null) {
+        nextContent = msg.content || "";
       }
-      if (msg.docKind && msg.docKind !== activeKind) {
-        activeKind = msg.docKind;
-        setTabs();
+      if (nextContent != null) {
+        bufferedStreamContent = nextContent;
       }
-      if (needList) renderList();
+
+      // Issue C: if the user has navigated away from the streamed doc, do NOT
+      // touch the editor / active selection — the stream keeps buffering in
+      // the background and is re-applied when the user returns. The agent no
+      // longer hijacks the view (previous behavior force-followed the stream).
+      if (!isViewingStreamedDoc()) {
+        return;
+      }
 
       editor.disabled = false;
       if (!agentStreaming) setAgentStreaming(true, msg);
 
-      const fullResync = msg.fullResync === true || (msg.content != null && msg.append == null);
-      if (fullResync) {
-        editor.value = msg.content || "";
-      } else if (typeof msg.append === "string" && typeof msg.baseLen === "number") {
-        if (editor.value.length === msg.baseLen) {
-          // F-020b: pure append of new suffix only
-          editor.value = editor.value + msg.append;
-        } else if (msg.content != null) {
-          editor.value = msg.content || "";
-        } else {
-          // Mismatch without full body — request nothing; next fullResync will heal
-          return;
-        }
-      } else if (msg.content != null) {
-        editor.value = msg.content || "";
+      if (nextContent != null) {
+        editor.value = nextContent;
       }
 
       dirty = false;
@@ -1286,15 +1349,24 @@ export function buildSpecWorkspaceHtml(
 
     function selectSpec(id) {
       hideSelectionActions();
-      if (agentStreaming) {
-        setStatus("Wait for agent write to finish (or cancel the task)", "error");
-        return;
-      }
-      if (dirty && !confirm("Discard unsaved changes?")) return;
+      // Issue C fix: spec switching is ALWAYS free, even mid-agent-write.
+      // The in-flight stream is keyed by (streamSpecId, streamDocKind); when
+      // the user navigates away, partials are buffered and flushed on return
+      // to the streamed doc. Switching never cancels or corrupts the write.
+      if (dirty && !agentStreaming && !confirm("Discard unsaved changes?")) return;
       dirty = false;
       activeSpecId = id;
       renderList();
-      vscode.postMessage({ type: "openDocument", specId: id, docKind: activeKind });
+      if (isViewingStreamedDoc()) {
+        // Returning to the doc being actively written: restore the live
+        // streaming view (editor shows buffered stream content, read-only).
+        enterStreamingView();
+      } else {
+        // Viewing a different doc while a stream runs elsewhere: leave
+        // streaming display mode so the editor is interactive for this doc.
+        exitStreamingViewForOtherDoc();
+        vscode.postMessage({ type: "openDocument", specId: id, docKind: activeKind });
+      }
     }
 
     /** Get the 1-based document order for the active doc kind. */
@@ -1333,16 +1405,18 @@ export function buildSpecWorkspaceHtml(
     function handleTabClick(kind) {
       hideSelectionActions();
       if (!kind || kind === activeKind) return;
-      if (agentStreaming) {
-        setStatus("Wait for agent write to finish before switching tabs", "error");
-        return;
-      }
-      if (dirty && !confirm("Discard unsaved changes?")) return;
+      // Issue C fix: tab switching is ALWAYS free, even mid-agent-write.
+      if (dirty && !agentStreaming && !confirm("Discard unsaved changes?")) return;
       dirty = false;
       activeKind = kind;
       setTabs();
       if (activeSpecId) {
-        vscode.postMessage({ type: "openDocument", specId: activeSpecId, docKind: activeKind });
+        if (isViewingStreamedDoc()) {
+          enterStreamingView();
+        } else {
+          exitStreamingViewForOtherDoc();
+          vscode.postMessage({ type: "openDocument", specId: activeSpecId, docKind: activeKind });
+        }
       }
     }
 
@@ -1506,19 +1580,18 @@ export function buildSpecWorkspaceHtml(
         streamDocKind = msg.docKind || null;
         streamPinnedAtBottom = true;
         lastMetaUpdateAt = 0;
-        if (msg.specId && msg.specId !== activeSpecId) {
-          activeSpecId = msg.specId;
-          renderList();
-        } else if (msg.specId) {
-          activeSpecId = msg.specId;
-        }
-        if (msg.docKind && msg.docKind !== activeKind) {
-          activeKind = msg.docKind;
-          setTabs();
-        }
-        editor.disabled = false;
+        bufferedStreamContent = "";
         setAgentStreaming(true, msg);
-        docMeta.textContent = (msg.title || msg.docKind || activeKind) + " · streaming…";
+        // Issue C: only surface the streaming editor if the user is already
+        // viewing the doc being written. If they are on a different spec/doc,
+        // let them stay put — partials buffer in the background and the view
+        // switches over only if/when the user navigates to the streamed doc.
+        if (isViewingStreamedDoc()) {
+          editor.disabled = false;
+          editor.readOnly = true;
+          if (previewOverlay) previewOverlay.classList.add("visible");
+          docMeta.textContent = (msg.title || msg.docKind || activeKind) + " · streaming…";
+        }
       }
 
       if (msg.type === "agentWritePartial") {
@@ -1526,53 +1599,74 @@ export function buildSpecWorkspaceHtml(
       }
 
       if (msg.type === "agentWriteFinalized") {
+        // Issue C: the write ALWAYS completes and commits regardless of which
+        // doc the user is viewing — capture identity before clearing stream
+        // state, then decide whether to update the visible editor.
+        const finalizedSpecId = msg.specId || streamSpecId;
+        const finalizedKind = msg.docKind || streamDocKind;
+        const wasViewing = isViewingStreamedDoc();
         agentStreamId = null;
         streamSpecId = null;
         streamDocKind = null;
         setAgentStreaming(false, null);
-        if (msg.specId) activeSpecId = msg.specId;
-        if (msg.docKind) {
-          activeKind = msg.docKind;
-          setTabs();
-        }
+        bufferedStreamContent = null;
         if (msg.entries) {
           specs = msg.entries;
         }
-        renderList();
-        editor.disabled = false;
-        editor.readOnly = false;
-        editor.value = msg.content || "";
-        lastCommittedContent = editor.value;
-        lastCommittedSpecId = activeSpecId;
-        lastCommittedKind = activeKind;
-        dirty = false;
-        currentRevision = msg.revision;
-        btnSave.disabled = true;
-        docMeta.textContent = (msg.title || activeKind) + " · rev " + (msg.revision ?? "?");
-        setStatus("Agent write saved · rev " + (msg.revision ?? "?"), "ok");
-        // F-008: full preview render with mermaid after agent write finalized
-        schedulePreviewRender(0);
+        if (wasViewing && finalizedSpecId && finalizedKind) {
+          // User is watching the doc that was just written — show final state.
+          activeSpecId = finalizedSpecId;
+          activeKind = finalizedKind;
+          setTabs();
+          renderList();
+          editor.disabled = false;
+          editor.readOnly = false;
+          editor.value = msg.content || "";
+          lastCommittedContent = editor.value;
+          lastCommittedSpecId = activeSpecId;
+          lastCommittedKind = activeKind;
+          dirty = false;
+          currentRevision = msg.revision;
+          btnSave.disabled = true;
+          docMeta.textContent = (msg.title || activeKind) + " · rev " + (msg.revision ?? "?");
+          setStatus("Agent write saved · rev " + (msg.revision ?? "?"), "ok");
+          schedulePreviewRender(0);
+        } else {
+          // User is on another doc — write completed in the background.
+          // Refresh the list (revision/date changed) and record the committed
+          // content so returning to that doc shows the final state.
+          if (finalizedSpecId && finalizedKind) {
+            if (lastCommittedSpecId === finalizedSpecId && lastCommittedKind === finalizedKind) {
+              lastCommittedContent = msg.content || lastCommittedContent;
+            }
+          }
+          renderList();
+          setStatus("Agent write saved (background) · rev " + (msg.revision ?? "?"), "ok");
+        }
       }
 
       if (msg.type === "agentWriteAborted") {
-        const sid = agentStreamId;
+        const wasViewing = isViewingStreamedDoc();
         agentStreamId = null;
         streamSpecId = null;
         streamDocKind = null;
         setAgentStreaming(false, null);
-        // Restore last committed content for the active doc when possible
-        if (lastCommittedSpecId && lastCommittedKind === activeKind && lastCommittedSpecId === (msg.specId || activeSpecId)) {
-          editor.value = lastCommittedContent;
-          dirty = false;
-          btnSave.disabled = true;
-          // F-008: restore committed preview (markdown + mermaid)
-          schedulePreviewRender(0);
-        } else if (msg.specId || activeSpecId) {
-          vscode.postMessage({
-            type: "openDocument",
-            specId: msg.specId || activeSpecId,
-            docKind: msg.docKind || activeKind,
-          });
+        bufferedStreamContent = null;
+        // Restore last committed content for the active doc when possible,
+        // but only touch the editor if the user is viewing the affected doc.
+        if (wasViewing) {
+          if (lastCommittedSpecId && lastCommittedKind === activeKind && lastCommittedSpecId === (msg.specId || activeSpecId)) {
+            editor.value = lastCommittedContent;
+            dirty = false;
+            btnSave.disabled = true;
+            schedulePreviewRender(0);
+          } else if (msg.specId || activeSpecId) {
+            vscode.postMessage({
+              type: "openDocument",
+              specId: msg.specId || activeSpecId,
+              docKind: msg.docKind || activeKind,
+            });
+          }
         }
         setStatus("Agent write cancelled: " + (msg.reason || "aborted"), "error");
       }

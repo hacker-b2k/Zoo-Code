@@ -17,6 +17,7 @@ import type {
 	ApiStreamToolCallEndChunk,
 } from "../../api/transform/stream"
 import { MCP_TOOL_PREFIX, MCP_TOOL_SEPARATOR, parseMcpToolName, normalizeMcpToolName } from "../../utils/mcp-name"
+import { decodeXmlEntities } from "./TextToolCallParser"
 
 /**
  * Helper type to extract properly typed native arguments for a given tool.
@@ -122,7 +123,14 @@ export class NativeToolCallParser {
 			if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
 				return undefined
 			}
-			return value
+			// Decode XML/HTML entities that models sometimes emit inside
+			// string parameters (e.g. Mermaid `<<abstract>>` sent as
+			// `&lt;&lt;abstract&gt;&gt;` even inside JSON strings). Without
+			// this, entity-encoded content reaches storage verbatim and the
+			// preview renderer shows `&lt;` literally instead of `<`.
+			// The XML recovery path already decodes via decodeXmlEntities in
+			// TextToolCallParser; this brings the native JSON path to parity.
+			return value.includes("&") ? decodeXmlEntities(value) : value
 		}
 		if (typeof value === "number" || typeof value === "boolean") {
 			return String(value)
@@ -1608,8 +1616,13 @@ export class NativeToolCallParser {
 							) {
 								contentCoerced = undefined
 							} else {
-								// Keep empty string and all other string bodies (including whitespace-only)
-								contentCoerced = args.content
+								// Keep empty string and all other string bodies (including whitespace-only).
+								// Decode XML/HTML entities that models sometimes emit inside content
+								// (e.g. Mermaid <<abstract>> sent as &lt;&lt;abstract&gt;&gt; even in
+								// JSON strings) — parity with the XML recovery path's decodeXmlEntities.
+								contentCoerced = args.content.includes("&")
+									? decodeXmlEntities(args.content)
+									: args.content
 							}
 						} else {
 							// Non-string content (object/array/number) dropped to undefined —

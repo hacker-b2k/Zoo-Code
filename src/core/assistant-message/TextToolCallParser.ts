@@ -111,8 +111,14 @@ function nextSyntheticId(name: string): string {
  * (e.g. code content written as `if (a &lt; b &amp;&amp; c &gt; d)`).
  * `&amp;` is decoded LAST so a literal `&amp;lt;` becomes `&lt;` (correct XML
  * semantics) rather than collapsing to `<`.
+ *
+ * Exported so NativeToolCallParser can share the same decoding logic for
+ * native JSON tool call string parameters — some models entity-encode
+ * bracket-heavy content (e.g. Mermaid `<<abstract>>` as `&lt;&lt;abstract&gt;&gt;`)
+ * even inside JSON strings, and the content must be decoded before storage
+ * to avoid double-encoding in the preview renderer.
  */
-function decodeXmlEntities(value: string): string {
+export function decodeXmlEntities(value: string): string {
 	if (!value.includes("&")) {
 		return value
 	}
@@ -689,12 +695,41 @@ const PARTIAL_FENCE_TAIL_RE = /`{2,3}[a-zA-Z]*$/
  * "…<tool_cal", "…</par", "…```j". Used by the streaming presenter to defer
  * saying text until the fragment resolves, so raw tag fragments never flash
  * in the chat UI mid-stream.
+ *
+ * Mermaid fix: a trailing ``` is only treated as "incomplete" when it
+ * OPENS a new code block (unmatched fence). When the text contains an even
+ * number of ``` sequences, the trailing fence CLOSES a complete block and
+ * the text is safe to present immediately. Without this distinction, any
+ * response ending with a fenced code block (Mermaid diagrams, code samples)
+ * is incorrectly deferred — and if the stream ends there, the text is
+ * held back from the user until the post-stream flush.
  */
 export function textEndsWithIncompleteMarkup(text: string): boolean {
 	if (!text) {
 		return false
 	}
-	return PARTIAL_TAG_TAIL_RE.test(text) || PARTIAL_FENCE_TAIL_RE.test(text)
+	if (PARTIAL_TAG_TAIL_RE.test(text)) {
+		return true
+	}
+	if (PARTIAL_FENCE_TAIL_RE.test(text)) {
+		// Determine whether the trailing fence opens or closes a block by
+		// toggling fence state on each ``` sequence. If we end up "inside"
+		// a fence, the trailing ``` opened a new block (incomplete → defer).
+		// If we end up "outside", the trailing ``` closed a block (complete
+		// → safe to present).
+		let insideFence = false
+		let i = 0
+		while (i < text.length) {
+			if (text[i] === "`" && text[i + 1] === "`" && text[i + 2] === "`") {
+				insideFence = !insideFence
+				i += 3
+			} else {
+				i++
+			}
+		}
+		return insideFence
+	}
+	return false
 }
 
 /**

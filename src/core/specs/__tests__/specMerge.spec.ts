@@ -58,4 +58,45 @@ describe("specMerge (F-021)", () => {
 	it("resolveWriteBody replace ignores existing", () => {
 		expect(resolveWriteBody({ mode: "replace", existingContent: "old", content: "new" })).toBe("new")
 	})
+
+	// Issue B regression: fixing ONE broken Mermaid diagram inside a
+	// multi-diagram design doc via a targeted search_replace must leave the
+	// rest of the document byte-identical (no full rewrite side-effects).
+	it("Issue B: targeted edit of one mermaid block leaves rest byte-identical", () => {
+		const diagramA = "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```"
+		const diagramBbroken = "```mermaid\nsequenceDiagram\n  Alice->>Bob: hi\n  deactivate Alice\n```"
+		const diagramBfixed = "```mermaid\nsequenceDiagram\n  Alice->>Bob: hi\n```"
+		const diagramC = "```mermaid\nclassDiagram\n  Animal <|-- Dog\n```"
+		const doc =
+			"# Design\n\n## Flow\n\n" +
+			diagramA +
+			"\n\n## Sequence\n\n" +
+			diagramBbroken +
+			"\n\n## Classes\n\n" +
+			diagramC +
+			"\n"
+
+		const out = applySearchReplace(doc, diagramBbroken, diagramBfixed, false)
+
+		// The broken diagram is fixed.
+		expect(out).toContain(diagramBfixed)
+		expect(out).not.toContain("deactivate Alice")
+		// Everything else is byte-identical: replacing the fixed block back
+		// must reproduce the original document exactly.
+		const roundTrip = out.replace(diagramBfixed, diagramBbroken)
+		expect(roundTrip).toBe(doc)
+		// Untouched diagrams preserved verbatim.
+		expect(out).toContain(diagramA)
+		expect(out).toContain(diagramC)
+	})
+
+	it("Issue B: upsert_section rewrites only the targeted diagram section", () => {
+		const doc =
+			"# Design\n\n## Overview\n\nkeep this overview\n\n## Data Model\n\nold broken body\n\n## API\n\nkeep this api\n"
+		const out = applyUpsertSection(doc, "## Data Model", "```mermaid\nerDiagram\n  USER ||--o{ POST : writes\n```")
+		expect(out).toContain("keep this overview")
+		expect(out).toContain("keep this api")
+		expect(out).toContain("erDiagram")
+		expect(out).not.toContain("old broken body")
+	})
 })
