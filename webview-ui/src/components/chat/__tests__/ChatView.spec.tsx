@@ -82,10 +82,13 @@ vi.mock("../ChatRow", () => ({
 			}
 		}
 
-		return <div data-testid="chat-row">{JSON.stringify(message)}</div>
+		// Mirror the user-visible surface of ChatRow for non-follow-up messages.
+		// Serializing the mock input hid completion text and made the lifecycle
+		// assertion depend on an implementation detail rather than chat behavior.
+		return <div data-testid="chat-row">{message.text}</div>
 	},
 	ChatRowContent: function MockChatRowContent({ message }: { message: ClineMessage }) {
-		return <div data-testid="chat-row-content">{JSON.stringify(message)}</div>
+		return <div data-testid="chat-row-content">{message.text}</div>
 	},
 }))
 
