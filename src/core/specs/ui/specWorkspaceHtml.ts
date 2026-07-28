@@ -136,11 +136,18 @@ export function buildSpecWorkspaceHtml(
       button { transition: none; }
     }
     /*
-     * Icon-only toolbar action (Refresh). No background box or border in the
-     * idle state — only the glyph is visible, matching the reference design.
-     * Hover reveals a subtle surface highlight so the hit target is still
-     * discoverable; keyboard focus keeps the standard focus ring for
-     * accessibility. Size matches the shared toolbar rhythm.
+     * Icon-only toolbar action. Convention for all header/toolbar icon buttons:
+     *   1. Use class="icon-button" on the <button> element.
+     *   2. Inline the VS Code codicon SVG (from @vscode/codicons, already a
+     *      project dependency) with fill="currentColor" so the icon inherits
+     *      the button text-color token.
+     *   3. Set aria-label="<action name>" and title="<action name>" for
+     *      accessibility and tooltip.
+     *   4. Add the disabled attribute when the action is unavailable — the
+     *      disabled style below renders a clearly-off state (muted color,
+     *      no hover) and the native disabled attribute prevents clicks.
+     * Existing examples: Refresh, Import, Export, Delete, Open in Editor.
+     * For primary CTAs needing a text label, use class="cta-button" instead.
      */
     button.icon-button {
       display: inline-flex;
@@ -176,6 +183,33 @@ export function buildSpecWorkspaceHtml(
     button.icon-button:focus-visible {
       outline: 1px solid var(--focus-ring);
       outline-offset: 1px;
+    }
+    button.icon-button:disabled {
+      color: var(--surface-border);
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+      opacity: 0.55;
+      cursor: default;
+    }
+    /*
+     * Primary CTA with icon + text (New Spec, Save). Keeps the accent
+     * background for discoverability but uses inline-flex to align the
+     * icon and label on a clean baseline with a small gap. Inherits the
+     * shared button transitions for a consistent feel.
+     */
+    button.cta-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+    }
+    button.cta-button svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      fill: currentColor;
+      flex-shrink: 0;
     }
     .status {
       padding: 4px 12px;
@@ -233,9 +267,9 @@ export function buildSpecWorkspaceHtml(
     }
     .spec-card:hover {
       background: var(--surface-hover);
-      border-color: var(--focus-ring);
+      border-color: var(--surface-border);
       border-left-color: var(--focus-ring);
-      box-shadow: var(--elevation-2);
+      box-shadow: var(--elevation-1);
     }
     .spec-card:focus-visible {
       outline: 1px solid var(--focus-ring);
@@ -328,7 +362,7 @@ export function buildSpecWorkspaceHtml(
     }
     .tabs {
       display: flex;
-      gap: 4px;
+      gap: 8px;
       padding: 8px 12px 4px;
       border-bottom: 1px solid var(--border);
     }
@@ -338,6 +372,8 @@ export function buildSpecWorkspaceHtml(
      * actions so they never look like bare text; hover lifts only the hovered
      * tab; the active tab switches to the theme accent. font-weight is fixed
      * across all three states so activating a tab cannot change its width.
+     * Background is tight-fit to content (badge + label) — no oversized box.
+     * The 8px gap between tabs gives each one clear separation.
      */
     .tab {
       display: inline-flex;
@@ -346,11 +382,12 @@ export function buildSpecWorkspaceHtml(
       color: var(--muted);
       border: 1px solid var(--surface-border);
       border-radius: 999px;
-      padding: 4px 12px;
+      padding: 3px 10px 3px 6px;
       cursor: pointer;
       font-size: 12px;
       font-weight: 500;
       line-height: 1;
+      width: auto;
       box-shadow: var(--elevation-0);
       transition:
         background var(--motion-fast) var(--motion-ease),
@@ -483,35 +520,63 @@ export function buildSpecWorkspaceHtml(
       background: var(--bg);
       color: var(--fg);
     }
+    /*
+     * Segmented view-toggle control (Edit / Split / Preview).
+     * One shared container with a single border, segments sit flush
+     * against each other (no individual boxes). Active segment uses the
+     * theme accent; inactive segments are transparent. Each segment shows
+     * an inline codicon + short label.
+     */
     .view-toggle {
-      display: flex;
-      gap: 2px;
+      display: inline-flex;
+      align-items: stretch;
       margin-left: auto;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: transparent;
     }
     .view-toggle button {
-      background: var(--surface);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: transparent;
       color: var(--muted);
-      border: 1px solid var(--surface-border);
-      padding: 2px 10px;
+      border: none;
+      border-right: 1px solid var(--border);
+      padding: 3px 8px;
       font-size: 11px;
-      border-radius: 2px;
+      box-shadow: none;
+      border-radius: 0;
+    }
+    .view-toggle button:last-child { border-right: none; }
+    .view-toggle button svg {
+      width: 13px;
+      height: 13px;
+      display: block;
+      fill: currentColor;
+      flex-shrink: 0;
     }
     .view-toggle button:hover:not(:disabled) {
       background: var(--surface-hover);
       color: var(--fg);
-      border-color: var(--focus-ring);
-      box-shadow: var(--elevation-2);
+      border-color: var(--border);
+      border-right-color: var(--border);
+      box-shadow: none;
     }
     .view-toggle button.active {
       color: var(--accent-fg);
-      border-color: var(--accent);
       background: var(--accent);
     }
     .view-toggle button.active:hover:not(:disabled) {
       background: var(--accent-hover);
       color: var(--accent-fg);
-      border-color: var(--focus-ring);
-      box-shadow: var(--elevation-2);
+      box-shadow: none;
+    }
+    .view-toggle button:disabled {
+      opacity: 0.5;
+      cursor: default;
+      box-shadow: none;
     }
     #preview {
       flex: 1;
@@ -693,11 +758,11 @@ export function buildSpecWorkspaceHtml(
   <header>
     <h1>Spec Workspace</h1>
     <button id="btnRefresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M2.006 8.267L.78 9.5 0 8.73l2.09-2.07.76.01 2.09 2.12-.76.76-1.167-1.18a5 5 0 0 0 9.4 1.983l.813.597a6 6 0 0 1-11.22-2.683zm10.99-.466L11.76 6.55l-.76.76 2.09 2.11.76.01 2.09-2.07-.75-.76-1.194 1.18a6 6 0 0 0-11.11-2.92l.81.594a5 5 0 0 1 9.3 2.346z"/></svg></button>
-    <button id="btnImport" class="secondary" type="button">Import</button>
-    <button id="btnExport" class="secondary" type="button">Export</button>
-    <button id="btnDelete" class="secondary" type="button" disabled>Delete</button>
-    <button id="btnCreate" type="button">New Spec</button>
-    <button id="btnSave" type="button" disabled>Save</button>
+    <button id="btnImport" class="icon-button" type="button" aria-label="Import plans/specs" title="Import plans/specs"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.957 6h.05a2.99 2.99 0 0 1 2.116.879 3.003 3.003 0 0 1 0 4.242 2.99 2.99 0 0 1-2.117.879v-1a2.002 2.002 0 0 0 0-4h-.914l-.123-.857a2.49 2.49 0 0 0-2.126-2.122A2.478 2.478 0 0 0 6.231 5.5l-.333.762-.809-.189A2.49 2.49 0 0 0 4.523 6c-.662 0-1.297.263-1.764.732A2.503 2.503 0 0 0 4.523 11h.498v1h-.498a3.486 3.486 0 0 1-2.628-1.16 3.502 3.502 0 0 1 1.958-5.78 3.462 3.462 0 0 1 1.468.04 3.486 3.486 0 0 1 3.657-2.06A3.479 3.479 0 0 1 11.957 6zm-5.25 5.121l1.314 1.314V7h.994v5.4l1.278-1.279.707.707-2.146 2.147h-.708L6 11.829l.707-.708z"/></svg></button>
+    <button id="btnExport" class="icon-button" type="button" aria-label="Export spec" title="Export spec"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.956 6h.05a2.99 2.99 0 0 1 2.117.879 3.003 3.003 0 0 1 0 4.242 2.99 2.99 0 0 1-2.117.879h-1.995v-1h1.995a2.002 2.002 0 0 0 0-4h-.914l-.123-.857a2.49 2.49 0 0 0-2.126-2.122A2.478 2.478 0 0 0 6.23 5.5l-.333.762-.809-.189A2.49 2.49 0 0 0 4.523 6c-.662 0-1.297.263-1.764.732A2.503 2.503 0 0 0 4.523 11h2.494v1H4.523a3.486 3.486 0 0 1-2.628-1.16 3.502 3.502 0 0 1-.4-4.137A3.497 3.497 0 0 1 3.853 5.06c.486-.09.987-.077 1.468.041a3.486 3.486 0 0 1 3.657-2.06A3.479 3.479 0 0 1 11.956 6zm-1.663 3.853L8.979 8.54v5.436h-.994v-5.4L6.707 9.854 6 9.146 8.146 7h.708L11 9.146l-.707.707z"/></svg></button>
+    <button id="btnDelete" class="icon-button" type="button" aria-label="Delete spec" title="Delete spec" disabled><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M10 3h3v1h-1v9l-1 1H4l-1-1V4H2V3h3V2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zM9 2H6v1h3V2zM4 13h7V4H4v9zm2-8H5v7h1V5zm1 0h1v7H7V5zm2 0h1v7H9V5z"/></svg></button>
+    <button id="btnCreate" class="cta-button" type="button" aria-label="New Spec" title="New Spec"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M14 7v1H8v6H7V8H1V7h6V1h1v6h6z"/></svg>New Spec</button>
+    <button id="btnSave" class="cta-button" type="button" aria-label="Save" title="Save" disabled><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.353 1.146l1.5 1.5L15 3v11.5l-.5.5h-13l-.5-.5v-13l.5-.5H13l.353.146zM2 2v12h12V3.208L12.793 2H11v4H4V2H2zm6 0v3h2V2H8z"/></svg>Save</button>
   </header>
   <div id="status" class="status">Loading…</div>
   <div id="createRow" class="create-row">
@@ -713,11 +778,11 @@ export function buildSpecWorkspaceHtml(
       <div class="tabs" id="tabs"></div>
       <div class="editor-toolbar">
         <span id="docMeta" class="rev">Select a spec</span>
-        <button id="btnOpenEditor" type="button" title="Open as read-only editor tab" disabled>Open in Editor</button>
-        <div class="view-toggle">
-          <button id="btnViewEdit" type="button" title="Edit only">Edit</button>
-          <button id="btnViewSplit" class="active" type="button" title="Edit + Preview">Split</button>
-          <button id="btnViewPreview" type="button" title="Preview only">Preview</button>
+        <button id="btnOpenEditor" class="icon-button" type="button" aria-label="Open in Editor" title="Open in Editor" disabled><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M6 5.914l2.06-2.06v-.708L5.915 1l-.707.707.043.043.25.25 1 1h-3a2.5 2.5 0 0 0 0 5H4V7h-.5a1.5 1.5 0 1 1 0-3h3L5.207 5.293 5.914 6 6 5.914zM11 2H8.328l-1-1H12l.71.29 3 3L16 5v9l-1 1H6l-1-1V6.5l1 .847V14h9V6h-4V2zm1 0v3h3l-3-3z"/></svg></button>
+        <div class="view-toggle" role="group" aria-label="Document view mode">
+          <button id="btnViewEdit" type="button" aria-label="Edit only" title="Edit only" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M13.23 1h-1.46L3.52 9.25l-.16.22L1 13.59 2.41 15l4.12-2.36.22-.16L15 4.23V2.77L13.23 1zM2.41 13.59l1.51-3 1.45 1.45-2.96 1.55zm3.83-2.06L4.47 9.76l8-8 1.77 1.77-8 8z"/></svg>Edit</button>
+          <button id="btnViewSplit" class="active" type="button" aria-label="Split view" title="Edit + Preview" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path d="M14 1H3L2 2v11l1 1h11l1-1V2l-1-1zM8 13H3V2h5v11zm6 0H9V2h5v11z"/></svg>Split</button>
+          <button id="btnViewPreview" type="button" aria-label="Preview only" title="Preview only" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M3 1h11l1 1v5.3a3.21 3.21 0 0 0-1-.3V2H9v10.88L7.88 14H3l-1-1V2l1-1zm0 12h5V2H3v11zm10.379-4.998a2.53 2.53 0 0 0-1.19.348h-.03a2.51 2.51 0 0 0-.799 3.53L9 14.23l.71.71 2.35-2.36c.325.22.7.358 1.09.4a2.47 2.47 0 0 0 1.14-.13 2.51 2.51 0 0 0 1-.63 2.46 2.46 0 0 0 .58-1 2.63 2.63 0 0 0 .07-1.15 2.53 2.53 0 0 0-1.35-1.81 2.53 2.53 0 0 0-1.211-.258zm.24 3.992a1.5 1.5 0 0 1-.979-.244 1.55 1.55 0 0 1-.56-.68 1.49 1.49 0 0 1-.08-.86 1.49 1.49 0 0 1 1.18-1.18 1.49 1.49 0 0 1 .86.08c.276.117.512.311.68.56a1.5 1.5 0 0 1-1.1 2.324z"/></svg>Preview</button>
         </div>
       </div>
       <div class="pane-grid mode-split" id="paneGrid">
@@ -1021,8 +1086,11 @@ export function buildSpecWorkspaceHtml(
       viewMode = mode;
       paneGrid.className = "pane-grid mode-" + mode;
       btnViewEdit.classList.toggle("active", mode === "edit");
+      btnViewEdit.setAttribute("aria-pressed", mode === "edit" ? "true" : "false");
       btnViewSplit.classList.toggle("active", mode === "split");
+      btnViewSplit.setAttribute("aria-pressed", mode === "split" ? "true" : "false");
       btnViewPreview.classList.toggle("active", mode === "preview");
+      btnViewPreview.setAttribute("aria-pressed", mode === "preview" ? "true" : "false");
       if (mode !== "edit") {
         schedulePreviewRender(0);
       }
