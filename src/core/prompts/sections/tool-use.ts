@@ -1,4 +1,32 @@
-export function getSharedToolUseSection(): string {
+/**
+ * Shared tool-use instructions injected into the system prompt.
+ *
+ * @param textOnly When true, instructs the model to use structured text
+ *   tool-call tags instead of provider-native function-calling — used when
+ *   the provider is detected as lacking native tool support.
+ */
+export function getSharedToolUseSection(textOnly = false): string {
+	if (textOnly) {
+		return `====
+
+TOOL USE (Text Mode)
+
+Your provider does not support native tool calling. You MUST invoke tools by writing them as structured text in your response using this EXACT format:
+
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+</tool_call>
+
+Rules:
+- Each tool call MUST be wrapped in <tool_call>...</tool_call> tags.
+- The JSON inside MUST have "name" and "arguments" keys.
+- You can include multiple tool calls in a single response.
+- Do NOT write code blocks as plain text when you intend to create or modify a file — use write_to_file instead.
+- For an actionable request, do not expose reasoning or planning before the tool call: emit only the required tool call(s).
+- You must call at least one tool per assistant response.
+- If you have completed the task, use attempt_completion.`
+	}
+
 	return `====
 
 TOOL USE

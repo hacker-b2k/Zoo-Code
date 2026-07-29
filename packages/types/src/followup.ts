@@ -88,6 +88,8 @@ function stripElicitationMarkup(value: string): string {
 	return value
 		.replace(/<\s*\/?\s*ElicitationsGroup\b[^>]*>/gi, "")
 		.replace(/<\s*Elicitation\b[^>]*\/?>/gi, "")
+		.replace(/<\s*\/?\s*FollowUp\b[^>]*>/gi, "")
+		.replace(/<\s*\/?\s*Suggestion\b[^>]*>/gi, "")
 		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim()
@@ -127,9 +129,64 @@ function parseElicitationMarkup(text: string): ParsedFollowUpData | undefined {
 }
 
 /**
- * Parse legacy JSON first, then accept compatible Elicitation markup emitted
- * as assistant text. Invalid payloads return a display-safe fallback so raw
- * protocol tags never reach the chat renderer.
+ * Converts `<FollowUp>` tags emitted by some models into the existing follow-up
+ * wire format. Supports two shapes:
+ *
+ *   <FollowUp question="..." suggestions="A,B,C" />
+ *   <FollowUp question="..."><Suggestion>A</Suggestion><Suggestion>B</Suggestion></FollowUp>
+ */
+function parseFollowUpMarkup(text: string): ParsedFollowUpData | undefined {
+	// Match either a self-closing or open+close FollowUp tag.
+	const tag =
+		/<\s*FollowUp\b([^>]*)\/\s*>/i.exec(text) ?? /<\s*FollowUp\b([^>]*)>([\s\S]*?)<\s*\/\s*FollowUp\s*>/i.exec(text)
+	if (!tag) {
+		return undefined
+	}
+
+	const attributes = tag[1] ?? ""
+	const innerContent = tag[2] ?? ""
+	const question = readAttribute(attributes, "question") ?? readAttribute(attributes, "message")
+	const suggestions: SuggestionItem[] = []
+
+	// Attribute-based suggestions: suggestions="A,B,C" or suggestions="A|B|C"
+	const suggestionsAttr = readAttribute(attributes, "suggestions")
+	if (suggestionsAttr) {
+		const items = suggestionsAttr
+			.split(/[,|]/)
+			.map((s) => s.trim())
+			.filter(Boolean)
+		for (const item of items) {
+			if (suggestions.length < MAX_ELICITATIONS && item.length <= MAX_ELICITATION_TEXT_LENGTH) {
+				suggestions.push({ answer: item })
+			}
+		}
+	}
+
+	// Child-element suggestions: <Suggestion>...</Suggestion>
+	if (innerContent) {
+		const childSuggestion = /<\s*Suggestion\b[^>]*>([\s\S]*?)<\s*\/\s*Suggestion\s*>/gi
+		let match: RegExpExecArray | null
+		while ((match = childSuggestion.exec(innerContent)) !== null && suggestions.length < MAX_ELICITATIONS) {
+			const answer = (match[1] ?? "").trim()
+			if (answer && answer.length <= MAX_ELICITATION_TEXT_LENGTH) {
+				suggestions.push({ answer })
+			}
+		}
+	}
+
+	if (!question || question.length > MAX_ELICITATION_TEXT_LENGTH) {
+		return { valid: false, fallbackText: stripElicitationMarkup(text) }
+	}
+
+	// A FollowUp with just a question (no suggestions) is still valid — the
+	// renderer will show the question as markdown without buttons.
+	return { valid: true, data: { question, suggest: suggestions.length > 0 ? suggestions : undefined } }
+}
+
+/**
+ * Parse legacy JSON first, then accept compatible Elicitation and FollowUp
+ * markup emitted as assistant text. Invalid payloads return a display-safe
+ * fallback so raw protocol tags never reach the chat renderer.
  */
 export function parseFollowUpData(text: string): ParsedFollowUpData {
 	try {
@@ -138,7 +195,12 @@ export function parseFollowUpData(text: string): ParsedFollowUpData {
 			return { valid: true, data: parsed.data }
 		}
 	} catch {
-		// Compatibility markup is not JSON; continue to its bounded parser.
+		// Compatibility markup is not JSON; continue to its bounded parsers.
+	}
+
+	const followUp = parseFollowUpMarkup(text)
+	if (followUp) {
+		return followUp
 	}
 
 	const elicitation = parseElicitationMarkup(text)

@@ -362,6 +362,22 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	consecutiveNoToolUseCount: number = 0
 	consecutiveNoAssistantMessagesCount: number = 0
 	/**
+	 * Tracks whether the current provider has emitted at least one native
+	 * tool_call in this task session. When a provider never returns native
+	 * tool calls (despite tools being sent), the task can switch to
+	 * text-based intent extraction and stop wasting tokens on tool schemas.
+	 *
+	 * - undefined = no decision yet (first request or unknown)
+	 * - true      = native tool calls observed
+	 * - false     = native tool calls never observed after enough attempts
+	 */
+	nativeToolCallsDetected?: boolean
+	/**
+	 * Counts text-only API responses observed while tools were sent. Used to
+	 * decide when to switch the provider to text-only mode.
+	 */
+	textOnlyResponseCount: number = 0
+	/**
 	 * Intent detected from the most recent genuine user request, used to give a
 	 * no-tool-call retry concrete context (what was asked, which tool category
 	 * applies). Undefined when the request was a question or explanation, so
@@ -2600,6 +2616,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Reset consecutive error counters on abort (manual intervention)
 		this.consecutiveNoToolUseCount = 0
 		this.consecutiveNoAssistantMessagesCount = 0
+		// Re-detect provider capability after abort — user may change config.
+		this.nativeToolCallsDetected = undefined
+		this.textOnlyResponseCount = 0
 
 		// Force final token usage update before abort event
 		this.emitFinalTokenUsageUpdate()
@@ -2913,6 +2932,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// User guidance begins a fresh recovery cycle. Without this reset an
 				// unlimited-mistake profile would immediately reopen the same prompt.
 				this.consecutiveNoToolUseCount = 0
+				// Re-detect provider capability after user intervention — they may
+				// have changed the provider/model or fixed the proxy configuration.
+				this.nativeToolCallsDetected = undefined
+				this.textOnlyResponseCount = 0
 			}
 
 			// Getting verbose details is an expensive operation, it uses ripgrep to
@@ -4071,6 +4094,26 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					if (!didToolUse) {
 						// Increment consecutive no-tool-use counter
 						this.consecutiveNoToolUseCount++
+						this.textOnlyResponseCount++
+
+						// After enough text-only responses, mark the provider as
+						// lacking native tool support. Subsequent requests will
+						// stop sending tool schemas (saving tokens and avoiding
+						// proxy errors) and use text-based intent extraction.
+						if (this.nativeToolCallsDetected === undefined && this.textOnlyResponseCount >= 2) {
+							this.nativeToolCallsDetected = false
+							console.warn(
+								`[Task#${this.taskId}] Provider appears to lack native tool calling ` +
+									`(${this.textOnlyResponseCount} text-only responses). ` +
+									`Switching to text-based intent extraction mode.`,
+							)
+							// Inject text-format instructions so the model knows
+							// how to write tool calls as structured text.
+							this.userMessageContent.push({
+								type: "text",
+								text: formatResponse.textOnlyMode(),
+							})
+						}
 
 						// The first retry is silent. Later failures become visible and feed
 						// the shared mistake guard; the independent cap above also applies
@@ -4083,15 +4126,26 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 						// Use the task's locked protocol for consistent behavior.
 						// The detected intent turns a context-free nudge into an
-						// actionable one: what the user asked for, and which tools
+						// actionable one: what was asked for, and which tools
 						// satisfy it. Undefined for conversational turns.
 						this.userMessageContent.push({
 							type: "text",
 							text: formatResponse.noToolsUsed(this.lastActionIntent, this.consecutiveNoToolUseCount),
 						})
+						// When in text-only mode, remind the model about the text
+						// tool-call format since it cannot use native tool_calls.
+						if (this.nativeToolCallsDetected === false) {
+							this.userMessageContent.push({
+								type: "text",
+								text: formatResponse.textOnlyMode(),
+							})
+						}
 					} else {
 						// Reset counter when tools are used successfully
 						this.consecutiveNoToolUseCount = 0
+						// Mark that native tool calls work for this provider.
+						this.nativeToolCallsDetected = true
+						this.textOnlyResponseCount = 0
 					}
 
 					// Push to stack if there's content OR if we're paused waiting for a subtask.
@@ -4297,6 +4351,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				undefined, // todoList
 				this.api.getModel().id,
 				provider.getSkillsManager(),
+				this.nativeToolCallsDetected === false, // textOnly
 			)
 		})()
 	}
@@ -4794,7 +4849,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			allowedFunctionNames = toolsResult.allowedFunctionNames
 		}
 
-		const shouldIncludeTools = allTools.length > 0
+		// When the provider is detected as text-only (never returned native tool
+		// calls despite tools being sent), stop sending tool schemas. This saves
+		// tokens, avoids proxy errors, and lets the model focus on text output
+		// which we parse via the intent-extraction fallback.
+		const shouldIncludeTools = allTools.length > 0 && this.nativeToolCallsDetected !== false
 
 		// Create an AbortController to allow cancelling the request mid-stream
 		this.currentRequestAbortController = new AbortController()

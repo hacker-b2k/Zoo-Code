@@ -99,7 +99,7 @@ const LOOKS_LIKE_TEXT_TOOL_RE =
 	/<\s*(?:tool_call|function_call|toolcall|invoke)\b|<\s*function\s*=|<\s*function\b[^>]*\bname\s*=|<\s*tool\b[^>]*\bname\s*=|```(?:json|JSON)?\s*\r?\n?\s*\{\s*"(?:name|tool|function|tool_name)"\s*:[\s\S]{0,4000}?"(?:arguments|parameters|input|args)"\s*:/i
 
 /** Text-form interaction protocol emitted by non-conforming models. */
-const ELICITATION_MARKUP_RE = /<\s*\/?\s*ElicitationsGroup\b|<\s*Elicitation\b/i
+const ELICITATION_MARKUP_RE = /<\s*\/?\s*ElicitationsGroup\b|<\s*Elicitation\b|<\s*FollowUp\b/i
 
 let textToolCallSeq = 0
 
@@ -782,6 +782,9 @@ export function stripMalformedToolCallMarkup(text: string): string {
 		.replace(/<\s*ElicitationsGroup\b[^>]*>[\s\S]*?<\s*\/\s*ElicitationsGroup\s*>/gi, "")
 		.replace(/<\s*\/?\s*ElicitationsGroup\b[^>]*>/gi, "")
 		.replace(/<\s*Elicitation\b[^>]*\/?>/gi, "")
+		.replace(/<\s*FollowUp\b[^>]*>[\s\S]*?<\s*\/\s*FollowUp\s*>/gi, "")
+		.replace(/<\s*\/?\s*FollowUp\b[^>]*>/gi, "")
+		.replace(/<\s*\/?\s*Suggestion\b[^>]*>/gi, "")
 		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
 
 	// Strip stray/unclosed structural tag fragments that are clearly tool-call

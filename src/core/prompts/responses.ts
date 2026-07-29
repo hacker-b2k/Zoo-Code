@@ -90,6 +90,41 @@ Otherwise, if you have not completed the task and do not need additional informa
 (This is an automated message, so do not respond to it conversationally.)`
 	},
 
+	/**
+	 * Prompt injected once when a provider is detected as text-only (no native
+	 * tool-calling support). Tells the model how to write tool calls in a
+	 * text format the TextToolCallParser can recover.
+	 */
+	textOnlyMode: () =>
+		`[SYSTEM NOTE] Your provider does not support native tool calling. To use tools, you MUST write them as structured text in your response using this EXACT format:
+
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+</tool_call>
+
+Example — writing a file:
+<tool_call>
+{"name": "write_to_file", "arguments": {"path": "src/index.ts", "content": "console.log('hello');"}}
+</tool_call>
+
+Example — reading a file:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/index.ts"}}
+</tool_call>
+
+Example — executing a command:
+<tool_call>
+{"name": "execute_command", "arguments": {"command": "npm install"}}
+</tool_call>
+
+Rules:
+- Each tool call MUST be wrapped in <tool_call>...</tool_call> tags.
+- The JSON inside MUST have "name" and "arguments" keys.
+- You can include multiple tool calls in a single response.
+- Do NOT write code blocks as plain text when you intend to create a file — use write_to_file instead.
+- If you have completed the task, use attempt_completion with a summary of what was done.
+(This is an automated message, so do not respond to it conversationally.)`,
+
 	tooManyMistakes: (feedback?: string) =>
 		JSON.stringify({
 			status: "guidance",
