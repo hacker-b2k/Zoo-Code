@@ -329,10 +329,13 @@ describe("writeToFileTool", () => {
 			expect(mockCline.diffViewProvider.update).toHaveBeenCalledWith("Line 1\nLine 2", true)
 		})
 
-		it("passes through empty content unchanged", async () => {
+		it("returns error when content is empty (guard treats empty as missing)", async () => {
 			await executeWriteFileTool({ content: "" })
 
-			expect(mockCline.diffViewProvider.update).toHaveBeenCalledWith("", true)
+			// ToolCallGuard treats empty content as missing parameter
+			expect(mockCline.consecutiveMistakeCount).toBe(1)
+			expect(mockCline.recordToolError).toHaveBeenCalledWith("write_to_file")
+			expect(mockCline.diffViewProvider.update).not.toHaveBeenCalled()
 		})
 
 		it("unescapes HTML entities for non-Claude models", async () => {

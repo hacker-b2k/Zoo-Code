@@ -75,8 +75,8 @@ describe("FireworksHandler", () => {
 		expect(OpenAI).toHaveBeenCalledWith(expect.objectContaining({ apiKey: fireworksApiKey }))
 	})
 
-	it("should throw error when API key is not provided", () => {
-		expect(() => new FireworksHandler({})).toThrow("API key is required")
+	it("should not throw error when API key is not provided", () => {
+		expect(() => new FireworksHandler({})).not.toThrow()
 	})
 
 	it("should return default model when no model is specified", () => {

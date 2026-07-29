@@ -173,10 +173,10 @@ describe("DeepSeekHandler", () => {
 				deepSeekBaseUrl: undefined,
 			})
 			expect(handlerWithoutBaseUrl).toBeInstanceOf(DeepSeekHandler)
-			// The base URL is passed to OpenAI client internally
+			// The base URL is passed to OpenAI client internally (normalized to include /v1)
 			expect(OpenAI).toHaveBeenCalledWith(
 				expect.objectContaining({
-					baseURL: "https://api.deepseek.com",
+					baseURL: "https://api.deepseek.com/v1",
 				}),
 			)
 		})

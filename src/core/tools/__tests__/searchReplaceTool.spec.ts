@@ -228,15 +228,17 @@ describe("searchReplaceTool", () => {
 			expect(mockCline.consecutiveMistakeCount).toBe(1)
 		})
 
-		it("allows empty new_string for deletion", async () => {
-			// Empty new_string is valid - it means delete the old_string
-			await executeSearchReplaceTool(
+		it("returns error when new_string is empty (guard treats empty as missing)", async () => {
+			// ToolCallGuard treats empty new_string as missing parameter
+			const result = await executeSearchReplaceTool(
 				{ old_string: "Line 2", new_string: "" },
 				{ fileContent: "Line 1\nLine 2\nLine 3" },
 			)
 
-			// Should proceed to approval (not error out)
-			expect(mockAskApproval).toHaveBeenCalled()
+			// Guard intercepts before execute() - empty string is treated as missing
+			expect(mockCline.consecutiveMistakeCount).toBe(1)
+			expect(mockCline.recordToolError).toHaveBeenCalledWith("search_replace")
+			expect(mockAskApproval).not.toHaveBeenCalled()
 		})
 
 		it("returns error when old_string equals new_string", async () => {

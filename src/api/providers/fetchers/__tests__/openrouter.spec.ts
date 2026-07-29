@@ -28,7 +28,14 @@ describe("OpenRouter API", () => {
 				description: expect.any(String),
 				supportsReasoningBudget: false,
 				supportsReasoningEffort: false,
-				supportedParameters: ["max_tokens", "temperature", "reasoning", "include_reasoning"],
+				supportedParameters: [
+					"tools",
+					"tool_choice",
+					"max_tokens",
+					"temperature",
+					"reasoning",
+					"include_reasoning",
+				],
 			})
 
 			expect(models["anthropic/claude-3.7-sonnet:thinking"]).toEqual({
@@ -44,7 +51,14 @@ describe("OpenRouter API", () => {
 				supportsReasoningBudget: true,
 				requiredReasoningBudget: true,
 				supportsReasoningEffort: true,
-				supportedParameters: ["max_tokens", "temperature", "reasoning", "include_reasoning"],
+				supportedParameters: [
+					"tools",
+					"tool_choice",
+					"max_tokens",
+					"temperature",
+					"reasoning",
+					"include_reasoning",
+				],
 			})
 
 			expect(models["google/gemini-2.5-flash-preview-05-20"].maxTokens).toEqual(65535)

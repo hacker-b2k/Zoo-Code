@@ -287,6 +287,7 @@ describe("Cline", () => {
 		mockProvider.postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		mockProvider.postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		mockProvider.postStateToWebviewWithoutTaskHistory = vi.fn().mockResolvedValue(undefined)
+		mockProvider.getCurrentTask = vi.fn().mockReturnValue(null)
 		mockProvider.getTaskWithId = vi.fn().mockImplementation(async (id) => ({
 			historyItem: {
 				id,
@@ -939,6 +940,7 @@ describe("Cline", () => {
 					}),
 					getMcpHub: vi.fn().mockReturnValue(undefined),
 					getSkillsManager: vi.fn().mockReturnValue(undefined),
+					getCurrentTask: vi.fn().mockReturnValue(null),
 					say: vi.fn(),
 					postStateToWebview: vi.fn().mockResolvedValue(undefined),
 					postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
@@ -2431,6 +2433,9 @@ describe("Cline", () => {
 				task: "test task",
 				startTask: false,
 			})
+
+			// Make getCurrentTask return this task so the handler calls postStateToWebviewWithoutTaskHistory
+			mockProvider.getCurrentTask = vi.fn().mockReturnValue(task)
 
 			// Triggers messageQueueStateChangedHandler -> void postStateToWebviewWithoutTaskHistory()
 			task.messageQueueService.addMessage("queued text")

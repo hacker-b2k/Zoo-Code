@@ -1,4 +1,4 @@
-import * as path from "path"
+﻿import * as path from "path"
 import * as vscode from "vscode"
 import os from "os"
 import crypto from "crypto"
@@ -107,7 +107,8 @@ import { RooProtectedController } from "../protect/RooProtectedController"
 import { type AssistantMessageContent, presentAssistantMessage } from "../assistant-message"
 import { NativeToolCallParser } from "../assistant-message/NativeToolCallParser"
 import { looksLikeTextToolCall, textEndsWithIncompleteMarkup } from "../assistant-message/TextToolCallParser"
-import { applyTextualToolCallRecovery, type RecoverableAssistantBlock } from "../assistant-message/textToolCallRecovery"
+import type { RecoverableAssistantBlock } from "../assistant-message/textToolCallRecovery"
+import { ToolCallPipeline } from "../assistant-message/ToolCallPipeline"
 import { RuntimeContextManager } from "../model-capabilities/RuntimeContextManager"
 import { ClineProvider } from "../webview/ClineProvider"
 import { MultiSearchReplaceDiffStrategy } from "../diff/strategies/multi-search-replace"
@@ -171,14 +172,14 @@ export interface TaskOptions extends CreateTaskOptions {
 	diffFuzzyThreshold?: number
 	/**
 	 * Background multi-agent worker: not pushed to UI stack as sole open task.
-	 * Failover is owned by ProviderManager via OrchestrationRuntime — not this flag alone.
+	 * Failover is owned by ProviderManager via OrchestrationRuntime â€” not this flag alone.
 	 */
 	isBackgroundWorker?: boolean
 	/** Orchestration registry id (often same as taskId for workers). */
 	workerId?: string
 	/** Sticky API config name when creating a worker with a resolved profile. */
 	initialApiConfigName?: string
-	/** Optional sticky mode slug (e.g. worker mode) — skips clobber from global state. */
+	/** Optional sticky mode slug (e.g. worker mode) â€” skips clobber from global state. */
 	initialMode?: string
 	/** Orchestration role: implementer worker vs always-on reviewer (watch+report). */
 	workerRole?: "worker" | "reviewer"
@@ -359,24 +360,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	consecutiveMistakeLimit: number
 	consecutiveMistakeCountForApplyDiff: Map<string, number> = new Map()
 	consecutiveMistakeCountForEditFile: Map<string, number> = new Map()
-	consecutiveNoToolUseCount: number = 0
 	consecutiveNoAssistantMessagesCount: number = 0
 	/**
-	 * Tracks whether the current provider has emitted at least one native
-	 * tool_call in this task session. When a provider never returns native
-	 * tool calls (despite tools being sent), the task can switch to
-	 * text-based intent extraction and stop wasting tokens on tool schemas.
-	 *
-	 * - undefined = no decision yet (first request or unknown)
-	 * - true      = native tool calls observed
-	 * - false     = native tool calls never observed after enough attempts
+	 * Unified tool-call pipeline â€” replaces the three bare fields above once
+	 * Phase 2 integration is complete. Coexists during migration.
 	 */
-	nativeToolCallsDetected?: boolean
-	/**
-	 * Counts text-only API responses observed while tools were sent. Used to
-	 * decide when to switch the provider to text-only mode.
-	 */
-	textOnlyResponseCount: number = 0
+	pipeline: ToolCallPipeline = new ToolCallPipeline()
 	/**
 	 * Intent detected from the most recent genuine user request, used to give a
 	 * no-tool-call retry concrete context (what was asked, which tool category
@@ -611,7 +600,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	// IDs of tool calls that were (or are being) assembled from streamed
 	// tool_call_start/delta/end chunks. Providers built on the AI SDK
 	// (openai-compatible.ts, poe.ts) emit BOTH incremental events AND a final
-	// complete `tool_call` chunk for the same call — the complete chunk must
+	// complete `tool_call` chunk for the same call â€” the complete chunk must
 	// be skipped for these ids or the tool would execute twice.
 	private handledStreamedToolCallIds: Set<string> = new Set()
 
@@ -746,7 +735,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			this.taskApiConfigReady = Promise.resolve()
 			TelemetryService.instance.captureTaskRestarted(this.taskId)
 		} else if (initialApiConfigName !== undefined || initialMode !== undefined) {
-			// Worker (or caller) already resolved sticky mode/profile — skip global clobber.
+			// Worker (or caller) already resolved sticky mode/profile â€” skip global clobber.
 			this._taskMode = initialMode
 			this._taskApiConfigName = initialApiConfigName
 			this.taskModeReady = initialMode !== undefined ? Promise.resolve() : this.initializeTaskMode(provider)
@@ -783,7 +772,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 		this.messageQueueService.on("stateChanged", this.messageQueueStateChangedHandler)
 
-		// Background workers own sticky profiles via ProviderManager — never follow global UI switches.
+		// Background workers own sticky profiles via ProviderManager â€” never follow global UI switches.
 		if (!this.isBackgroundWorker) {
 			this.setupProviderProfileChangeListener(provider)
 		}
@@ -1417,11 +1406,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	/**
 	 * Contract enforcement for `clineMessages.text` (`string | undefined`).
 	 * The webview renders message.text directly as a React child (Markdown
-	 * rows, tool cards) — a non-string object reaching the webview crashes it
+	 * rows, tool cards) â€” a non-string object reaching the webview crashes it
 	 * with React error #31 ("Objects are not valid as a React child"). The
 	 * TypeScript type says string, but runtime JS callers can violate that;
 	 * serialize any unexpected value at this single emission chokepoint so no
-	 * tool/code path can ever break the extension→webview contract.
+	 * tool/code path can ever break the extensionâ†’webview contract.
 	 */
 	private coerceMessageText(text: unknown, channel: string): string | undefined {
 		if (text === undefined || text === null) {
@@ -1472,7 +1461,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		const provider = this.providerRef.deref()
 		const state = provider ? await provider.getState() : undefined
 		let approval = await checkAutoApproval({ state, ask: type, text, isProtected })
-		// Background workers run off the UI stack — the user cannot click Continue on them.
+		// Background workers run off the UI stack â€” the user cannot click Continue on them.
 		// When master auto-approval is enabled, force-approve blocking asks so workers keep
 		// executing without sitting idle until the user finds them in All Chats.
 		if (
@@ -1485,7 +1474,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 
 		// Notify orchestrator immediately when a worker needs a human/main answer (followup).
-		// Do not force-approve followups — main must see the question; user can answer via
+		// Do not force-approve followups â€” main must see the question; user can answer via
 		// WorkerSwitcher focus or by messaging the worker. Still push to ResultInbox + wake main.
 		if (
 			!partial &&
@@ -2052,7 +2041,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					console.error("[Task#finalizePendingPartialMessages] updateClineMessage failed:", error)
 				})
 			} else if (msg.type === "say") {
-				// Stop at the first non-partial say message — only trailing
+				// Stop at the first non-partial say message â€” only trailing
 				// partials need finalization.
 				break
 			}
@@ -2200,7 +2189,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	async sayAndCreateMissingParamError(toolName: ToolName, paramName: string, relPath?: string) {
 		const attemptCount = this.consecutiveMistakeCount
 		const escalationNote =
-			attemptCount > 1 ? ` (attempt ${attemptCount + 1} — provide ALL required parameters this time)` : ""
+			attemptCount > 1 ? ` (attempt ${attemptCount + 1} â€” provide ALL required parameters this time)` : ""
 		await this.say(
 			"error",
 			`Roo tried to use ${toolName}${
@@ -2447,7 +2436,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					// intact. The summary message carries critical metadata (isSummary, condenseId)
 					// that getEffectiveApiHistory() uses to filter out condensed messages.
 					// Removing or merging it would destroy this metadata, causing all condensed
-					// messages to become "orphaned" and restored to active status — effectively
+					// messages to become "orphaned" and restored to active status â€” effectively
 					// undoing the condensation and sending the full history to the API.
 					// See: https://github.com/RooCodeInc/Roo-Code/issues/11487
 					modifiedApiConversationHistory = [...existingApiConversationHistory]
@@ -2614,11 +2603,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.abort = true
 
 		// Reset consecutive error counters on abort (manual intervention)
-		this.consecutiveNoToolUseCount = 0
+		this.pipeline.reset()
+		// Clear NativeToolCallParser static state so an interrupted mid-stream tool call
+		// can't poison the next turn's tool registry. Without this, leftover entries in
+		// streamingToolCalls/rawChunkTracker (static Maps that persist across turns) cause
+		// the next stream to dispatch against stale ids, which the model reports as
+		// "Tool not found" for the entire session.
+		NativeToolCallParser.clearAllStreamingToolCalls()
+		NativeToolCallParser.clearRawChunkState()
 		this.consecutiveNoAssistantMessagesCount = 0
-		// Re-detect provider capability after abort — user may change config.
-		this.nativeToolCallsDetected = undefined
-		this.textOnlyResponseCount = 0
 
 		// Force final token usage update before abort event
 		this.emitFinalTokenUsageUpdate()
@@ -2825,7 +2818,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Kicks off the checkpoints initialization process in the background.
 		// `getCheckpointService` wraps its full body in a try/catch and returns
 		// `undefined` on failure (see src/core/checkpoints/index.ts), so the
-		// returned promise cannot reject. `void` is sufficient — no `.catch`
+		// returned promise cannot reject. `void` is sufficient â€” no `.catch`
 		// arm needed.
 		void getCheckpointService(this)
 
@@ -2863,7 +2856,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				nextUserContent = [
 					{
 						type: "text",
-						text: formatResponse.noToolsUsed(this.lastActionIntent, this.consecutiveNoToolUseCount),
+						text: formatResponse.noToolsUsed(
+							this.lastActionIntent,
+							this.pipeline.state.consecutiveNoToolCountValue,
+						),
 					},
 				]
 			}
@@ -2894,7 +2890,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			if (
 				(this.consecutiveMistakeLimit > 0 && this.consecutiveMistakeCount >= this.consecutiveMistakeLimit) ||
-				this.consecutiveNoToolUseCount >= MAX_CONSECUTIVE_NO_TOOL_RESPONSES
+				this.pipeline.state.consecutiveNoToolCountValue >= MAX_CONSECUTIVE_NO_TOOL_RESPONSES
 			) {
 				// Track consecutive mistake errors in telemetry via event and PostHog exception tracking.
 				// The reason is "no_tools_used" because this limit is reached via initiateTaskLoop
@@ -2931,11 +2927,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				this.consecutiveMistakeCount = 0
 				// User guidance begins a fresh recovery cycle. Without this reset an
 				// unlimited-mistake profile would immediately reopen the same prompt.
-				this.consecutiveNoToolUseCount = 0
-				// Re-detect provider capability after user intervention — they may
-				// have changed the provider/model or fixed the proxy configuration.
-				this.nativeToolCallsDetected = undefined
-				this.textOnlyResponseCount = 0
+				this.pipeline.reset()
 			}
 
 			// Getting verbose details is an expensive operation, it uses ripgrep to
@@ -3170,6 +3162,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				this.didRejectTool = false
 				this.didAlreadyUseTool = false
 				this.assistantMessageSavedToHistory = false
+				this.pipeline.beginTurn()
 				// Reset tool failure flag for each new assistant turn - this ensures that tool failures
 				// only prevent attempt_completion within the same assistant message, not across turns
 				// (e.g., if a tool fails, then user sends a message saying "just complete anyway")
@@ -3322,7 +3315,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							case "tool_call": {
 								// Skip complete tool_call chunks for calls already assembled
 								// from streamed start/delta/end events (AI SDK providers emit
-								// both — processing both would execute the tool twice).
+								// both â€” processing both would execute the tool twice).
 								if (this.handledStreamedToolCallIds.has(chunk.id)) {
 									break
 								}
@@ -3376,9 +3369,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								// Defer UI presentation when the assistant is emitting
 								// textual tool markup (MiniMax/Hermes/JSON-in-tags). Presenting
 								// mid-stream shows raw <tool_call> XML and advances the
-								// presenter; post-stream recovery converts markup → tool_use.
+								// presenter; post-stream recovery converts markup â†’ tool_use.
 								// ALSO defer when the text ends with an incomplete tag/fence
-								// fragment ("…<to", "…```j") so partial markup never flashes
+								// fragment ("â€¦<to", "â€¦```j") so partial markup never flashes
 								// in chat while the model is still typing the tag.
 								if (
 									!looksLikeTextToolCall(assistantMessage) &&
@@ -3637,7 +3630,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							)
 
 							// Background workers: mid-stream failures also go through ProviderManager
-							// (retry_same / switch / fail) — never UI ask, never global profile switch.
+							// (retry_same / switch / fail) â€” never UI ask, never global profile switch.
 							if (this.isBackgroundWorker && this.workerId) {
 								const { getOrchestrationRuntime } =
 									await import("../orchestration/OrchestrationRuntime")
@@ -3751,110 +3744,64 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					}
 				}
 
-				// Recover textual tool markup that models emit as plain assistant text
-				// instead of native stream tool_calls (across providers/gateways):
-				// - JSON: <tool_call>{"name":…,"arguments":{…}}</tool_call>
-				// - MiniMax/Hermes: <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
-				// Without this, didToolUse stays false → "Model Response Incomplete" /
-				// "Zoo is having trouble...".
-				//
-				// Native stream tool_calls remain the preferred path. Recovery runs only
-				// when no *executable* native/MCP tool exists (id-only shells without
-				// nativeArgs do not block). Logic lives in applyTextualToolCallRecovery
-				// so presenter-index / strip / partial=true are unit-testable.
-				//
-				// Recovered tools are partial=true → partialBlocks path presents them
-				// AFTER assistant history save (same ordering as finalizeRawChunks —
-				// critical for new_task).
-				let recoveredTextToolCount = 0
-				{
-					const recovery = applyTextualToolCallRecovery({
-						assistantMessage,
-						assistantMessageContent: this.assistantMessageContent as RecoverableAssistantBlock[],
-						currentStreamingContentIndex: this.currentStreamingContentIndex,
-					})
-					if (recovery.applied) {
-						recoveredTextToolCount = recovery.recoveredCount
-						console.warn(
-							`[Task#${this.taskId}] Recovered ${recovery.recoveredCount} textual tool call(s) from assistant text (native tool_calls missing)`,
-						)
-						assistantMessage = recovery.assistantMessage
-						this.assistantMessageContent =
-							recovery.assistantMessageContent as typeof this.assistantMessageContent
-						this.currentStreamingContentIndex = recovery.currentStreamingContentIndex
-						this.userMessageContentReady = false
-						// One-time model-facing correction: recovery is a safety net, not a
-						// license to keep emitting markup. Without this note the model never
-						// learns its text/XML tool calls were non-standard and repeats them.
-						this.userMessageContent.push({
-							type: "text",
-							text:
-								`[SYSTEM NOTE] ${recovery.recoveredCount} tool call(s) in your previous response were written ` +
-								`as text/XML/JSON markup inside the message body instead of structured tool_calls. They were ` +
-								`recovered and executed this time, but that format is unreliable and may fail silently. ` +
-								`From now on, ALWAYS invoke tools via the platform's native structured tool-calling mechanism ` +
-								`— never write tool calls as text, XML tags, or JSON blocks in your message content.`,
-						})
-						// Do NOT present here — wait for history save + partialBlocks present.
+				// Unified pipeline: native detection + text recovery + no-tool reporting.
+				// Replaces the three bare fields (nativeToolCallsDetected, textOnlyResponseCount,
+				// consecutiveNoToolUseCount) with structured ToolCallDetectionState.
+				const pipelineResult = this.pipeline.finalize({
+					assistantMessage,
+					assistantMessageContent: this.assistantMessageContent as RecoverableAssistantBlock[],
+					currentStreamingContentIndex: this.currentStreamingContentIndex,
+				})
+				const recoveredTextToolCount = pipelineResult.recoveredTextToolCount
 
-						// Scrub stale partial "text" chat messages that were emitted during
-						// this turn before the deferral gate engaged, or that still contain
-						// raw tool-call markup fragments. The user must never see raw markup
-						// — recovered calls render as native tool cards exactly like JSON
-						// tool_calls.
-						//
-						// Duplicate-message bug fix: we must find ANY partial text message
-						// from this turn, not only ones that still contain markup. When the
-						// model says clean prose first and then emits XML markup, the prose
-						// message is already in clineMessages as partial=true but WITHOUT
-						// markup text (because the markup was deferred). The old guard only
-						// matched messages with markup → fell into the `say()` else-if branch
-						// → emitted the same text a second time → duplicate "Zoo said" blocks.
-						let stalePartialTextIndex = -1
-						for (let i = this.clineMessages.length - 1; i >= 0; i--) {
-							const m = this.clineMessages[i]
-							if (
-								m.type === "say" &&
-								m.say === "text" &&
-								m.partial === true &&
-								typeof m.text === "string"
-							) {
-								stalePartialTextIndex = i
-								break
-							}
-							// Stop scanning when we hit a non-text, non-partial assistant message
-							// (reasoning block, tool, etc.) that belongs to this same turn —
-							// we only want the latest text message from this streaming round.
-							if (m.type === "say" && m.say !== "text") {
-								break
-							}
+				if (recoveredTextToolCount > 0) {
+					console.warn(
+						`[Task#${this.taskId}] Pipeline recovered ${recoveredTextToolCount} textual tool call(s) from assistant text (native tool_calls missing)`,
+					)
+					assistantMessage = pipelineResult.assistantMessage
+					this.assistantMessageContent =
+						pipelineResult.assistantMessageContent as typeof this.assistantMessageContent
+					this.currentStreamingContentIndex = pipelineResult.currentStreamingContentIndex
+					this.userMessageContentReady = false
+					this.userMessageContent.push({
+						type: "text",
+						text:
+							`[SYSTEM NOTE] ${recoveredTextToolCount} tool call(s) in your previous response were written ` +
+							`as text/XML/JSON markup inside the message body instead of structured tool_calls. They were ` +
+							`recovered and executed this time, but that format is unreliable and may fail silently. ` +
+							`From now on, ALWAYS invoke tools via the platform's native structured tool-calling mechanism ` +
+							`— never write tool calls as text, XML tags, or JSON blocks in your message content.`,
+					})
+
+					// Stale partial text cleanup.
+					let stalePartialTextIndex = -1
+					for (let i = this.clineMessages.length - 1; i >= 0; i--) {
+						const m = this.clineMessages[i]
+						if (m.type === "say" && m.say === "text" && m.partial === true && typeof m.text === "string") {
+							stalePartialTextIndex = i
+							break
 						}
-						if (stalePartialTextIndex !== -1) {
-							const cleanedText = recovery.assistantMessage.trim()
-							if (cleanedText) {
-								// Replace the stale message with the cleaned prose.
-								const stale = this.clineMessages[stalePartialTextIndex]
-								stale.text = recovery.assistantMessage
-								stale.partial = false
-								this.updateClineMessage(stale).catch((error) => {
-									console.error("[Task#textRecovery] updateClineMessage failed:", error)
-								})
-							} else {
-								// Pure-markup message: remove it entirely — the recovered tool
-								// card is the only thing the user should see.
-								const remaining = this.clineMessages.filter((_, i) => i !== stalePartialTextIndex)
-								await this.overwriteClineMessages(remaining)
-							}
-						} else if (recovery.assistantMessage.trim()) {
-							// Markup was deferred from the very first chunk, so no partial text
-							// message exists — and recovery finalizes text blocks as partial=false,
-							// which excludes them from the partialBlocks presentation. Say the
-							// cleaned prose here or it would never be displayed.
-							await this.say("text", recovery.assistantMessage, undefined, false)
+						if (m.type === "say" && m.say !== "text") {
+							break
 						}
 					}
+					if (stalePartialTextIndex !== -1) {
+						const cleanedText = pipelineResult.assistantMessage.trim()
+						if (cleanedText) {
+							const stale = this.clineMessages[stalePartialTextIndex]
+							stale.text = pipelineResult.assistantMessage
+							stale.partial = false
+							this.updateClineMessage(stale).catch((error) => {
+								console.error(`[Task#textRecovery] updateClineMessage failed:`, error)
+							})
+						} else {
+							const remaining = this.clineMessages.filter((_, i) => i !== stalePartialTextIndex)
+							await this.overwriteClineMessages(remaining)
+						}
+					} else if (pipelineResult.assistantMessage.trim()) {
+						await this.say("text", pipelineResult.assistantMessage, undefined, false)
+					}
 				}
-
 				// IMPORTANT: Capture partialBlocks AFTER finalizeRawChunks() / text recovery
 				// to avoid double-presentation. Native tools finalized mid-stream are already
 				// presented (partial=false). Recovered text tools are partial=true until here.
@@ -4085,68 +4032,55 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						)
 					}
 
-					// If the model did not tool use, then we need to tell it to
-					// either use a tool or attempt_completion.
-					const didToolUse = this.assistantMessageContent.some(
-						(block) => block.type === "tool_use" || block.type === "mcp_tool_use",
-					)
+					// Pipeline-driven didToolUse: the pipeline.finalize() call above
+					// already updated detection state (reportNativeTool / reportNoTool /
+					// reportTextRecovery). Use pipeline queries for all decisions.
+					const didToolUse = this.pipeline.didToolUse
 
 					if (!didToolUse) {
-						// Increment consecutive no-tool-use counter
-						this.consecutiveNoToolUseCount++
-						this.textOnlyResponseCount++
-
-						// After enough text-only responses, mark the provider as
-						// lacking native tool support. Subsequent requests will
-						// stop sending tool schemas (saving tokens and avoiding
-						// proxy errors) and use text-based intent extraction.
-						if (this.nativeToolCallsDetected === undefined && this.textOnlyResponseCount >= 2) {
-							this.nativeToolCallsDetected = false
+						// Inject text-mode instructions on first failure (pipeline
+						// triggers at textOnlyResponseCount >= 1 â€” was >= 2 before;
+						// that delay was a root cause of the late/false banner UX).
+						if (
+							this.pipeline.shouldInjectTextMode &&
+							this.pipeline.state.textOnlyResponseCountValue === 1
+						) {
 							console.warn(
 								`[Task#${this.taskId}] Provider appears to lack native tool calling ` +
-									`(${this.textOnlyResponseCount} text-only responses). ` +
+									`(${this.pipeline.state.textOnlyResponseCountValue} text-only response). ` +
 									`Switching to text-based intent extraction mode.`,
 							)
-							// Inject text-format instructions so the model knows
-							// how to write tool calls as structured text.
 							this.userMessageContent.push({
 								type: "text",
 								text: formatResponse.textOnlyMode(),
 							})
 						}
 
-						// The first retry is silent. Later failures become visible and feed
-						// the shared mistake guard; the independent cap above also applies
-						// when a profile configured an unlimited mistake limit.
-						if (this.consecutiveNoToolUseCount >= 2) {
+						// Banner: pipeline suppresses on first failure (consecutiveNoToolCount < 2).
+						if (this.pipeline.shouldShowNoToolsBanner) {
 							await this.say("error", "MODEL_NO_TOOLS_USED")
-							// Only count toward mistake limit after second consecutive failure
 							this.consecutiveMistakeCount++
 						}
 
-						// Use the task's locked protocol for consistent behavior.
-						// The detected intent turns a context-free nudge into an
-						// actionable one: what was asked for, and which tools
-						// satisfy it. Undefined for conversational turns.
+						// No-tool nudge: uses pipeline's consecutive count.
 						this.userMessageContent.push({
 							type: "text",
-							text: formatResponse.noToolsUsed(this.lastActionIntent, this.consecutiveNoToolUseCount),
+							text: formatResponse.noToolsUsed(
+								this.lastActionIntent,
+								this.pipeline.state.consecutiveNoToolCountValue,
+							),
 						})
-						// When in text-only mode, remind the model about the text
-						// tool-call format since it cannot use native tool_calls.
-						if (this.nativeToolCallsDetected === false) {
+						// When in text-only mode, remind the model about text tool-call format.
+						if (this.pipeline.shouldInjectTextMode) {
 							this.userMessageContent.push({
 								type: "text",
 								text: formatResponse.textOnlyMode(),
 							})
 						}
-					} else {
-						// Reset counter when tools are used successfully
-						this.consecutiveNoToolUseCount = 0
-						// Mark that native tool calls work for this provider.
-						this.nativeToolCallsDetected = true
-						this.textOnlyResponseCount = 0
 					}
+					// Note: pipeline.finalize() already handles the "did use tools"
+					// state transition (reportNativeTool / reportTextRecovery) â€”
+					// no explicit counter resets needed here.
 
 					// Push to stack if there's content OR if we're paused waiting for a subtask.
 					// When paused, we push an empty item so the loop continues to the pause check.
@@ -4351,7 +4285,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				undefined, // todoList
 				this.api.getModel().id,
 				provider.getSkillsManager(),
-				this.nativeToolCallsDetected === false, // textOnly
+				this.pipeline.systemPromptVariant === "text", // textOnly
 			)
 		})()
 	}
@@ -4497,7 +4431,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	/**
 	 * Report live activity into OrchestrationRuntime.WorkerStateService (evidence SSOT).
-	 * No-op for main tasks. Never invents status — only pushes observed events.
+	 * No-op for main tasks. Never invents status â€” only pushes observed events.
 	 */
 	private reportWorkerLiveActivity(
 		kind:
@@ -4600,7 +4534,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			profileThresholds = {},
 		} = state ?? {}
 
-		// Sticky mode for tools/metadata — workers keep spawn mode, not global UI mode.
+		// Sticky mode for tools/metadata â€” workers keep spawn mode, not global UI mode.
 		const effectiveMode = this.getEffectiveModeSync(mode ?? defaultModeSlug)
 
 		// Get condensing configuration for automatic triggers.
@@ -4611,7 +4545,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 
 		// Update last request time right before making the request so that subsequent
-		// requests — even from new subtasks — will honour the provider's rate-limit.
+		// requests â€” even from new subtasks â€” will honour the provider's rate-limit.
 		//
 		// NOTE: When recursivelyMakeClineRequests handles rate limiting, it sets the
 		// timestamp earlier to include the environment details build. We still set it
@@ -4853,7 +4787,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// calls despite tools being sent), stop sending tool schemas. This saves
 		// tokens, avoids proxy errors, and lets the model focus on text output
 		// which we parse via the intent-extraction fallback.
-		const shouldIncludeTools = allTools.length > 0 && this.nativeToolCallsDetected !== false
+		const shouldIncludeTools = allTools.length > 0 && this.pipeline.shouldSendTools
 
 		// Create an AbortController to allow cancelling the request mid-stream
 		this.currentRequestAbortController = new AbortController()
@@ -4932,7 +4866,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const { classifyApiError } = await import("../../api/providers/utils/error-handler")
 			const modelId = this.api?.getModel?.()?.id
 			// `providerName` is an optional, provider-specific annotation that is not
-			// part of the shared ModelInfo contract — read it defensively.
+			// part of the shared ModelInfo contract â€” read it defensively.
 			const modelInfo = this.api?.getModel?.()?.info as { providerName?: string } | undefined
 			const providerName = modelInfo?.providerName || this.apiConfiguration?.apiProvider || "unknown"
 			const classified = classifyApiError(error, providerName, modelId)
@@ -4958,7 +4892,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				return
 			}
 
-			// Enforce classified retry limits — stop retrying when the error category
+			// Enforce classified retry limits â€” stop retrying when the error category
 			// is not retriable or max retries for that category have been exceeded.
 			if (!classified.isRetriable) {
 				const { formatClassifiedError } = await import("../../api/providers/utils/error-handler")

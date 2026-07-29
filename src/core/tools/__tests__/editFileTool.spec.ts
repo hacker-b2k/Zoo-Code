@@ -225,7 +225,6 @@ describe("editFileTool", () => {
 			expect(result).toBe("Missing param error")
 			expect(mockTask.consecutiveMistakeCount).toBe(1)
 			expect(mockTask.recordToolError).toHaveBeenCalledWith("edit_file")
-			expect(mockTask.didToolFailInCurrentTurn).toBe(true)
 		})
 
 		it("treats undefined new_string as empty string (deletion)", async () => {

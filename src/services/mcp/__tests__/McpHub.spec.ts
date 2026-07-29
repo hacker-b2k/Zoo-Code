@@ -79,6 +79,13 @@ vi.mock("vscode", () => ({
 	Disposable: {
 		from: vi.fn(),
 	},
+	Uri: {
+		file: vi.fn((filePath: string) => ({ fsPath: filePath, scheme: "file", toString: () => `file://${filePath}` })),
+	},
+	RelativePattern: vi.fn((base: string, pattern: string) => ({
+		base,
+		pattern,
+	})),
 }))
 vi.mock("../../../core/webview/ClineProvider")
 
@@ -128,6 +135,7 @@ describe("McpHub", () => {
 		}
 
 		mockProvider = {
+			cwd: "/mock/workspace",
 			ensureSettingsDirectoryExists: vi.fn().mockResolvedValue("/mock/settings/path"),
 			ensureMcpServersDirectoryExists: vi.fn().mockResolvedValue("/mock/settings/path"),
 			postMessageToWebview: vi.fn(),
@@ -136,7 +144,7 @@ describe("McpHub", () => {
 				subscriptions: [],
 				workspaceState: {} as any,
 				globalState: {} as any,
-				secrets: {} as any,
+				secrets: undefined as any,
 				extensionUri: mockUri,
 				extensionPath: "/test/path",
 				storagePath: "/test/storage",

@@ -21,13 +21,13 @@ describe("Google Express image generation", () => {
 
 	it("builds the Generative Language predict endpoint", () => {
 		expect(buildGoogleExpressImageEndpoint("imagen-4.0-ultra-generate-001")).toBe(
-			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict",
+			"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/imagen-4.0-ultra-generate-001:predict",
 		)
 	})
 
 	it("strips an optional models/ prefix from model IDs", () => {
 		expect(buildGoogleExpressImageEndpoint("models/imagen-4.0-ultra-generate-001")).toBe(
-			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict",
+			"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/imagen-4.0-ultra-generate-001:predict",
 		)
 	})
 
@@ -48,10 +48,10 @@ describe("Google Express image generation", () => {
 		})
 
 		expect(mocks.mockFetch).toHaveBeenCalledWith(
-			"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-ultra-generate-001:predict?key=test-key",
+			"https://aiplatform.googleapis.com/v1beta1/publishers/google/models/imagen-4.0-ultra-generate-001:predict",
 			expect.objectContaining({
 				method: "POST",
-				headers: expect.objectContaining({ "Content-Type": "application/json" }),
+				headers: expect.objectContaining({ "Content-Type": "application/json", "x-goog-api-key": "test-key" }),
 			}),
 		)
 		expect(result).toEqual({

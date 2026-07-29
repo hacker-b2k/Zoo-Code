@@ -8,6 +8,7 @@ import { Task } from "../Task"
 type ProviderStub = {
 	getState: () => Promise<any>
 	postMessageToWebview: ReturnType<typeof vi.fn>
+	postStateToWebviewWithoutTaskHistory: ReturnType<typeof vi.fn>
 }
 
 function buildTask(provider: ProviderStub | undefined) {
@@ -39,6 +40,7 @@ describe("Task.ask auto-approval stamping", () => {
 		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		const provider: ProviderStub = {
 			postMessageToWebview,
+			postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
 			getState: async () => ({
 				autoApprovalEnabled: true,
 				alwaysAllowExecute: true,
@@ -64,6 +66,7 @@ describe("Task.ask auto-approval stamping", () => {
 		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		const provider: ProviderStub = {
 			postMessageToWebview,
+			postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
 			getState: async () => ({
 				autoApprovalEnabled: true,
 				alwaysAllowExecute: true,
@@ -87,6 +90,7 @@ describe("Task.ask auto-approval stamping", () => {
 		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		const provider: ProviderStub = {
 			postMessageToWebview,
+			postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
 			getState: async () => ({
 				autoApprovalEnabled: false,
 				alwaysAllowExecute: false,
@@ -116,6 +120,7 @@ describe("Task.ask auto-approval stamping", () => {
 		const postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		const provider: ProviderStub = {
 			postMessageToWebview,
+			postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
 			getState: async () => ({
 				autoApprovalEnabled: true,
 				alwaysAllowFollowupQuestions: true,
