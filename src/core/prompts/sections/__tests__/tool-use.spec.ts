@@ -37,4 +37,39 @@ describe("getSharedToolUseSection", () => {
 		expect(section).not.toContain("<actual_tool_name>")
 		expect(section).not.toContain("</actual_tool_name>")
 	})
+
+	// --- Dual mode (identity-confusion prevention) ---
+
+	it("dual mode includes both native and text-based instructions", () => {
+		const section = getSharedToolUseSection("dual")
+
+		expect(section).toContain("provider-native structured tool-calling mechanism")
+		expect(section).toContain("Structured text")
+		expect(section).toContain(`{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}`)
+	})
+
+	it("dual mode does NOT reveal provider architecture (no identity confusion)", () => {
+		const section = getSharedToolUseSection("dual")
+
+		// Critical: saying "your provider does not support X" causes identity confusion
+		expect(section).not.toContain("does not support")
+		expect(section).not.toContain("may not support")
+		expect(section).not.toContain("not fully support")
+		expect(section).not.toContain("lacks")
+	})
+
+	it("text mode does NOT reveal provider architecture", () => {
+		const section = getSharedToolUseSection("text")
+
+		expect(section).not.toContain("Your provider does not support")
+		expect(section).not.toContain("provider may not")
+		expect(section).toContain("To invoke a tool, write it as structured text")
+	})
+
+	it("dual mode is the default for unknown providers", () => {
+		// Default param (no arg) should be "native" for proven-native providers
+		const nativeSection = getSharedToolUseSection()
+		expect(nativeSection).toContain("provider-native structured tool-calling mechanism")
+		expect(nativeSection).not.toContain("Structured text")
+	})
 })

@@ -16,7 +16,10 @@ describe("ToolCallDetectionState", () => {
 			expect(state.didToolUse).toBe(false)
 			expect(state.shouldSendTools).toBe(true)
 			expect(state.shouldInjectTextMode).toBe(false)
-			expect(state.systemPromptVariant).toBe("native")
+			// Unknown provider defaults to "dual" mode — both native and text
+			// instructions so the model is prepared for either path without
+			// being told "your provider doesn't support tools" (identity confusion).
+			expect(state.systemPromptVariant).toBe("dual")
 			expect(state.shouldShowNoToolsBanner).toBe(false)
 			expect(state.consecutiveNoToolCountValue).toBe(0)
 			expect(state.textOnlyResponseCountValue).toBe(0)
@@ -155,6 +158,59 @@ describe("ToolCallDetectionState", () => {
 		})
 	})
 
+	describe("reportNoTool with conversational flag", () => {
+		it("conversational no-tool does NOT count toward text-mode injection", () => {
+			// Greetings/questions correctly don't use tools — not a provider issue.
+			state.reportNoTool(true)
+
+			expect(state.providerModeValue).toBe("unknown")
+			expect(state.didToolUse).toBe(false)
+			// textOnlyResponseCount stays 0 — no text-mode injection
+			expect(state.textOnlyResponseCountValue).toBe(0)
+			expect(state.shouldInjectTextMode).toBe(false)
+			// System prompt stays "dual" (unknown default), not "text"
+			expect(state.systemPromptVariant).toBe("dual")
+			expect(state.shouldSendTools).toBe(true)
+		})
+
+		it("conversational no-tool DOES increment banner counter", () => {
+			state.reportNoTool(true)
+			expect(state.consecutiveNoToolCountValue).toBe(1)
+			expect(state.shouldShowNoToolsBanner).toBe(false)
+		})
+
+		it("conversational greeting then action request: only action counts", () => {
+			// First turn: "hi" (conversational) — no injection
+			state.reportNoTool(true)
+			expect(state.textOnlyResponseCountValue).toBe(0)
+			expect(state.shouldInjectTextMode).toBe(false)
+			expect(state.systemPromptVariant).toBe("dual")
+
+			// Second turn: action request fails — counts toward text-mode injection
+			state.beginTurn()
+			state.reportNoTool(false)
+			expect(state.textOnlyResponseCountValue).toBe(1)
+			expect(state.shouldInjectTextMode).toBe(true)
+			expect(state.systemPromptVariant).toBe("text")
+		})
+	})
+
+	describe("systemPromptVariant modes", () => {
+		it("unknown provider defaults to dual mode", () => {
+			expect(state.systemPromptVariant).toBe("dual")
+		})
+
+		it("native provider stays native", () => {
+			state.reportNativeTool()
+			expect(state.systemPromptVariant).toBe("native")
+		})
+
+		it("text_recovered provider uses text mode", () => {
+			state.reportTextRecovery()
+			expect(state.systemPromptVariant).toBe("text")
+		})
+	})
+
 	describe("beginTurn", () => {
 		it("clears didToolUse for the new turn without resetting provider mode", () => {
 			state.reportNativeTool()
@@ -179,7 +235,8 @@ describe("ToolCallDetectionState", () => {
 			expect(state.didToolUse).toBe(false)
 			expect(state.shouldSendTools).toBe(true)
 			expect(state.shouldInjectTextMode).toBe(false)
-			expect(state.systemPromptVariant).toBe("native")
+			// Reset returns to "dual" mode (unknown provider default).
+			expect(state.systemPromptVariant).toBe("dual")
 			expect(state.shouldShowNoToolsBanner).toBe(false)
 			expect(state.consecutiveNoToolCountValue).toBe(0)
 			expect(state.textOnlyResponseCountValue).toBe(0)

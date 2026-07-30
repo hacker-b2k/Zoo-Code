@@ -580,6 +580,42 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 export const TOOL_ALIASES: Record<string, ToolName> = {
 	write_file: "write_to_file",
 	search_and_replace: "edit",
+
+	// Resilience aliases: several models overfit on other agents' tool-name
+	// conventions and hallucinate `bash_tool` / `bash` / `shell` /
+	// `run_command` instead of the registered `execute_command`. Left
+	// unmappable, these calls fall through to the unknown-tool error, which
+	// manifests mid-session as a string of "Tool not found" failures and then
+	// forced model retries against the same invalid name. Map them to the
+	// real tool so the call still lands in the right place.
+	bash_tool: "execute_command",
+	bash: "execute_command",
+	shell_command: "execute_command",
+	run_command: "execute_command",
+
+	// Web research aliases (user.txt Round 3): models hallucinated
+	// `web_fetch` / `fetch_url` / `read_url` / `browse_url` / `open_url` /
+	// `search_web` instead of the registered `web_research` tool. The model
+	// was trained on other assistants where `web_fetch` is the canonical name
+	// for reading a URL. Map them so the call resolves to `web_research` with
+	// action "read_url" (handled downstream in the parser/tool layer).
+	web_fetch: "web_research",
+	fetch_url: "web_research",
+	read_url: "web_research",
+	browse_url: "web_research",
+	open_url: "web_research",
+	search_web: "web_research",
+	browse: "web_research",
+
+	// Common tool-name variations from other AI coding assistants.
+	read_file_content: "read_file",
+	load_file: "read_file",
+	list_files_recursive: "list_files",
+	list_files_tree: "list_files",
+	search_code: "search_files",
+	grep_code: "search_files",
+	find_in_codebase: "search_files",
+	create_file: "write_to_file",
 } as const
 
 export type DiffResult =

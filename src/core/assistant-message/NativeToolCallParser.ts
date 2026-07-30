@@ -212,6 +212,46 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * Provider-agnostic coercion for the `ask_followup_question` `follow_up`
+	 * parameter (tool-issues Issue 1 + user.txt bug).
+	 *
+	 * Some providers/models that receive strict-mode `["array","null"]` schemas
+	 * over-encode `follow_up` as a JSON STRING containing the array (e.g.
+	 * `"[{\"text\":\"Yes\",\"mode\":null}]"`) instead of a native JSON array.
+	 * Without this layer, the tool's validator rejects the string with "must be
+	 * an array" and the model retries with the identical (wrong) payload —
+	 * surfacing as the same tool failing repeatedly mid-session.
+	 *
+	 * Policy:
+	 *   - Real array passes through unchanged.
+	 *   - String that looks like a JSON array (`[...]`) is parsed; if it yields a
+	 *     real array, that array is returned (the schema↔validator mismatch is
+	 *     resolved at the bridge).
+	 *   - Everything else (objects/numbers/non-JSON strings) is returned as-is so
+	 *     the tool's precise "must be an array" error path still fires for
+	 *     genuinely malformed shapes (preserving the keyed-object regression test).
+	 */
+	private static coerceFollowUpArray(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value
+		}
+		if (typeof value === "string") {
+			const trimmed = value.trim()
+			if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+				try {
+					const parsed = JSON.parse(trimmed)
+					if (Array.isArray(parsed)) {
+						return parsed
+					}
+				} catch {
+					// Not valid JSON — leave as-is so the tool's type error fires.
+				}
+			}
+		}
+		return value
+	}
+
+	/**
 	 * Process a raw tool call chunk from the API stream.
 	 * Handles tracking, buffering, and emits start/delta/end events.
 	 *
@@ -242,6 +282,29 @@ export class NativeToolCallParser {
 
 		let tracked = this.rawChunkTracker.get(index)
 
+		// Root-cause hardening for the mid-session "Tool not found" drop
+		// (user.txt): rawChunkTracker is process-static and keyed ONLY by the
+		// provider's stream `index` (0, 1, 2...), which restarts at 0 on every
+		// new API response. If a previous turn was interrupted without clearing
+		// this map (dispose/reload/non-abort stream error), a stale entry can
+		// survive at index N. When the new turn emits its next chunk for index N:
+		//   * if the chunk carries an `id` that DIFFERS from the stale entry's id,
+		//     the old code ignored it and kept streaming into the stale
+		//     id/name — the new tool call was silently appended to a dead tool_use,
+		//     and the fresh id never got a start event, so the block fell through
+		//     to the "unavailable/unknown tool" branch ("Tool not found").
+		//   * if the chunk is args-only (index only — how OpenAI-compatible
+		//     providers emit argument deltas after the first chunk), the old code
+		//     reused the stale id for accumulation, cross-linking two turns.
+		// Fix: treat an incoming `id` as the authoritative identity. When it does
+		// not match the tracked entry at this index, end/reap the stale entry and
+		// start fresh tracking for the new id.
+		if (id && tracked && tracked.id !== id) {
+			events.push({ type: "tool_call_end", id: tracked.id })
+			this.rawChunkTracker.delete(index)
+			tracked = undefined
+		}
+
 		// Initialize new tool call tracking when we receive an id
 		if (id && !tracked) {
 			tracked = {
@@ -253,6 +316,11 @@ export class NativeToolCallParser {
 			this.rawChunkTracker.set(index, tracked)
 		}
 
+		// Args-only chunk (no id) landing on an index with no live entry: this is
+		// the leftover-stale-continuity case (a prior turn left this index in the
+		// tracker and it was re-keyed above, OR the start chunk never delivered an
+		// id). We cannot safely attribute these arguments to any tool call, so
+		// drop them rather than corrupt a stale/other id's accumulator.
 		if (!tracked) {
 			return events
 		}
@@ -301,6 +369,15 @@ export class NativeToolCallParser {
 	/**
 	 * Process stream finish reason.
 	 * Emits end events when finish_reason is 'tool_calls'.
+	 *
+	 * Root-cause hardening (user.txt): previously this left rawChunkTracker
+	 * populated; only finalizeRawChunks() cleared it. Any finish_reason OTHER
+	 * than 'tool_calls' (e.g. 'stop' emitted after tool call chunks by some
+	 * providers / proxies, or an early terminate) left stale ids behind to be
+	 * picked up by the NEXT turn's index-reuse — the session-level "Tool not
+	 * found" drop. Clearing here as well makes the raw-chunk state self-healing:
+	 * once a finish_reason is observed, the tracker no longer hands stale ids
+	 * to subsequent turns regardless of provider behavior.
 	 */
 	public static processFinishReason(finishReason: string | null | undefined): ToolCallStreamEvent[] {
 		const events: ToolCallStreamEvent[] = []
@@ -312,6 +389,11 @@ export class NativeToolCallParser {
 					id: tracked.id,
 				})
 			}
+			// Consume-and-clear: the entries we just ended must not survive to
+			// collide with a future turn that reuses index 0..N. Safe to clear
+			// because the end events above are what drive
+			// Task.handleToolCallEndEvent -> finalizeStreamingToolCall.
+			this.rawChunkTracker.clear()
 		}
 
 		return events
@@ -1479,10 +1561,20 @@ export class NativeToolCallParser {
 					// the raw value so the tool can emit a precise "must be an array" error
 					// instead of the generic parser failure, which would surface as a
 					// misleading "Missing value for required parameter 'follow_up'" error.
+					//
+					// Provider-agnostic follow_up array coercion (tool-issues Issue 1 +
+					// user.txt bug): some providers/models that receive strict-mode
+					// `["array","null"]` schemas over-encode `follow_up` as a JSON STRING
+					// containing the array (e.g. `"[{\"text\":\"Yes\"}]"`). Decode that
+					// stringified array into a real array here at the parser layer so the
+					// tool-bridge schema and the validator stay aligned — the model never
+					// sees a "must be an array" loop for a payload it believed was valid.
+					// Non-array objects/numbers are forwarded as-is so the tool still emits
+					// the precise type error for genuinely malformed shapes.
 					if (args.question !== undefined && args.follow_up !== undefined) {
 						nativeArgs = {
 							question: args.question,
-							follow_up: args.follow_up,
+							follow_up: this.coerceFollowUpArray(args.follow_up),
 						} as NativeArgsFor<TName>
 					}
 					break

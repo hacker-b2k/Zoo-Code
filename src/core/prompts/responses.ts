@@ -91,13 +91,18 @@ Otherwise, if you have not completed the task and do not need additional informa
 	},
 
 	/**
-	 * Prompt injected when a provider may not fully support native tool
-	 * calling. Tells the model how to write tool calls in a text format
-	 * the TextToolCallParser can recover as a fallback. Both native and
-	 * text-based tool calls are accepted — use whichever works.
+	 * Prompt injected when text-mode tool calls are needed as a fallback.
+	 * Tells the model how to write tool calls in a text format the
+	 * TextToolCallParser can recover.
+	 *
+	 * CRITICAL: This prompt MUST NOT reveal provider architecture to the
+	 * model (no "your provider does not support X"). Saying that causes
+	 * identity confusion — the model breaks character and says "I'm Claude,
+	 * I don't have tools". Instead, we simply present the text format as an
+	 * available alternative.
 	 */
 	textOnlyMode: () =>
-		`[SYSTEM NOTE] Your provider may not fully support native tool calling. As a fallback, you can also write tool calls using this format:
+		`[SYSTEM NOTE] If native tool calling is not available, you can write tool calls using this format:
 
 <tool_call>
 {"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}

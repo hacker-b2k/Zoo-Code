@@ -55,7 +55,7 @@ async function generatePrompt(
 	todoList?: TodoItem[],
 	modelId?: string,
 	skillsManager?: SkillsManager,
-	textOnly = false,
+	textOnly: boolean | "native" | "dual" | "text" = false,
 ): Promise<string> {
 	if (!context) {
 		throw new Error("Extension context is required for generating system prompt")
@@ -93,11 +93,15 @@ async function generatePrompt(
 	// Tools catalog is not included in the system prompt.
 	const toolsCatalog = ""
 
+	// Resolve the tool-use section mode. Accepts boolean (legacy) or 3-mode string.
+	const toolUseMode: "native" | "dual" | "text" =
+		typeof textOnly === "string" ? textOnly : textOnly ? "text" : "native"
+
 	const basePrompt = `${roleDefinition}
 
 ${markdownFormattingSection()}
 
-${getSharedToolUseSection(textOnly)}${toolsCatalog}
+${getSharedToolUseSection(toolUseMode)}${toolsCatalog}
 
 	${getToolUseGuidelinesSection()}
 
@@ -145,7 +149,7 @@ export const SYSTEM_PROMPT = async (
 	todoList?: TodoItem[],
 	modelId?: string,
 	skillsManager?: SkillsManager,
-	textOnly = false,
+	textOnly: boolean | "native" | "dual" | "text" = false,
 ): Promise<string> => {
 	if (!context) {
 		throw new Error("Extension context is required for generating system prompt")

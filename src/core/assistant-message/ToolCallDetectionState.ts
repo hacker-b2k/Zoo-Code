@@ -67,17 +67,32 @@ export class ToolCallDetectionState {
 		this.reportTextRecovery()
 	}
 
-	/** No stage produced an executable tool this turn. */
-	reportNoTool(): void {
+	/**
+	 * No stage produced an executable tool this turn.
+	 *
+	 * @param conversational When true, the user's message was a greeting or
+	 *   question with no action intent (e.g. "hi", "what is X?"). In that case
+	 *   the model correctly responded without tools — it's NOT a provider
+	 *   capability issue. We still count for banner display but do NOT count
+	 *   toward textOnlyResponseCount or textModeInjected. This prevents
+	 *   identity confusion: flipping to "text" system prompt on a greeting
+	 *   tells the model "your provider doesn't support tools" which causes
+	 *   it to break character and say "I'm Claude, I don't have tools".
+	 */
+	reportNoTool(conversational = false): void {
 		this.toolsThisTurn = false
 		this.consecutiveNoToolCount++
-		this.textOnlyResponseCount++
 
-		// First pure-text failure: start injecting text-mode instructions
-		// (threshold 1 — was 2 before; that delay was a root cause of the
-		// late/false "Model Response Incomplete" UX).
-		if (this.providerMode !== "native" && this.textOnlyResponseCount >= 1) {
-			this.textModeInjected = true
+		// Conversational turns (greetings, questions) don't count toward
+		// text-mode injection — the model correctly chose not to use tools.
+		if (!conversational) {
+			this.textOnlyResponseCount++
+
+			// First pure-text failure on an ACTION request: start injecting
+			// text-mode instructions (threshold 1).
+			if (this.providerMode !== "native" && this.textOnlyResponseCount >= 1) {
+				this.textModeInjected = true
+			}
 		}
 
 		// No lock-in: text_only mode removed. Always send native tools.
@@ -115,16 +130,26 @@ export class ToolCallDetectionState {
 
 	/**
 	 * System prompt tool-use section variant.
-	 * "text" once we're in text_recovered or text-mode-injected.
+	 *
+	 * - "native": provider has proven native tool-calling support.
+	 * - "dual": default for unknown providers (first turn). Includes both
+	 *   native and text-based tool instructions so the model is prepared for
+	 *   either path. This prevents identity-confusion: if we tell the model
+	 *   "use native tools only" but the provider strips tool schemas, the model
+	 *   says "I'm Claude, I don't have tools" — breaking character.
+	 * - "text": provider proven text-only (text_recovered) or text-mode
+	 *   instructions were injected after a no-tool failure.
 	 */
-	get systemPromptVariant(): "native" | "text" {
+	get systemPromptVariant(): "native" | "dual" | "text" {
 		if (this.providerMode === "native") {
 			return "native"
 		}
 		if (this.providerMode === "text_recovered" || this.textModeInjected) {
 			return "text"
 		}
-		return "native"
+		// Unknown provider (first turn) — use dual mode so the model knows
+		// both formats without being told "your provider doesn't support X".
+		return "dual"
 	}
 
 	/**

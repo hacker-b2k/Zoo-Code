@@ -2869,6 +2869,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// the user hits max requests and denies resetting the count.
 				break
 			} else {
+				// Guard: for conversational turns (no action intent), don't
+				// push a tool-nudge — it would cause identity confusion.
+				// Instead, just end the loop (the model correctly answered).
+				if (!this.lastActionIntent) {
+					break
+				}
 				nextUserContent = [
 					{
 						type: "text",
@@ -3786,6 +3792,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					assistantMessage,
 					assistantMessageContent: this.assistantMessageContent as RecoverableAssistantBlock[],
 					currentStreamingContentIndex: this.currentStreamingContentIndex,
+					conversational: !this.lastActionIntent, // Conversational turns don't count toward text-mode injection
 				})
 				const recoveredTextToolCount = pipelineResult.recoveredTextToolCount
 
@@ -4073,44 +4080,52 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					const didToolUse = this.pipeline.didToolUse
 
 					if (!didToolUse) {
-						// Inject text-mode instructions on first failure (pipeline
-						// triggers at textOnlyResponseCount >= 1 â€” was >= 2 before;
-						// that delay was a root cause of the late/false banner UX).
-						if (
-							this.pipeline.shouldInjectTextMode &&
-							this.pipeline.state.textOnlyResponseCountValue === 1
-						) {
-							console.warn(
-								`[Task#${this.taskId}] Provider appears to lack native tool calling ` +
-									`(${this.pipeline.state.textOnlyResponseCountValue} text-only response). ` +
-									`Switching to text-based intent extraction mode.`,
-							)
+						// Guard: conversational turns (greetings, questions) correctly
+						// don't use tools. Skip all tool-nudging injections for them.
+						// This prevents identity confusion: telling a model "you didn't
+						// use tools" after "hi" causes it to break character.
+						const isConversational = !this.lastActionIntent
+
+						if (!isConversational) {
+							// Inject text-mode instructions on first failure (pipeline
+							// triggers at textOnlyResponseCount >= 1 — was >= 2 before;
+							// that delay was a root cause of the late/false banner UX).
+							if (
+								this.pipeline.shouldInjectTextMode &&
+								this.pipeline.state.textOnlyResponseCountValue === 1
+							) {
+								console.warn(
+									`[Task#${this.taskId}] Provider appears to lack native tool calling ` +
+										`(${this.pipeline.state.textOnlyResponseCountValue} text-only response). ` +
+										`Switching to text-based intent extraction mode.`,
+								)
+								this.userMessageContent.push({
+									type: "text",
+									text: formatResponse.textOnlyMode(),
+								})
+							}
+
+							// Banner: pipeline suppresses on first failure (consecutiveNoToolCount < 3).
+							if (this.pipeline.shouldShowNoToolsBanner) {
+								await this.say("error", "MODEL_NO_TOOLS_USED")
+								this.consecutiveMistakeCount++
+							}
+
+							// No-tool nudge: uses pipeline's consecutive count.
 							this.userMessageContent.push({
 								type: "text",
-								text: formatResponse.textOnlyMode(),
+								text: formatResponse.noToolsUsed(
+									this.lastActionIntent,
+									this.pipeline.state.consecutiveNoToolCountValue,
+								),
 							})
-						}
-
-						// Banner: pipeline suppresses on first failure (consecutiveNoToolCount < 2).
-						if (this.pipeline.shouldShowNoToolsBanner) {
-							await this.say("error", "MODEL_NO_TOOLS_USED")
-							this.consecutiveMistakeCount++
-						}
-
-						// No-tool nudge: uses pipeline's consecutive count.
-						this.userMessageContent.push({
-							type: "text",
-							text: formatResponse.noToolsUsed(
-								this.lastActionIntent,
-								this.pipeline.state.consecutiveNoToolCountValue,
-							),
-						})
-						// When in text-only mode, remind the model about text tool-call format.
-						if (this.pipeline.shouldInjectTextMode) {
-							this.userMessageContent.push({
-								type: "text",
-								text: formatResponse.textOnlyMode(),
-							})
+							// When in text-only mode, remind the model about text tool-call format.
+							if (this.pipeline.shouldInjectTextMode) {
+								this.userMessageContent.push({
+									type: "text",
+									text: formatResponse.textOnlyMode(),
+								})
+							}
 						}
 					}
 					// Note: pipeline.finalize() already handles the "did use tools"
@@ -4320,7 +4335,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				undefined, // todoList
 				this.api.getModel().id,
 				provider.getSkillsManager(),
-				this.pipeline.systemPromptVariant === "text", // textOnly
+				this.pipeline.systemPromptVariant, // "native" | "dual" | "text"
 			)
 		})()
 	}

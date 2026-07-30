@@ -32,6 +32,8 @@ export type PipelineFinalizeInput = {
 	assistantMessage: string
 	assistantMessageContent: RecoverableAssistantBlock[]
 	currentStreamingContentIndex: number
+	/** When true, the user's message was conversational (no action intent). */
+	conversational?: boolean
 }
 
 /**
@@ -112,7 +114,7 @@ export class ToolCallPipeline {
 	 * No-tool: if no stage produced tools, reportNoTool.
 	 */
 	finalize(input: PipelineFinalizeInput): PipelineResult {
-		const { assistantMessage, assistantMessageContent, currentStreamingContentIndex } = input
+		const { assistantMessage, assistantMessageContent, currentStreamingContentIndex, conversational } = input
 
 		// Flush any remaining raw partial tool calls (same as Task.finalizeRawChunks).
 		const flushEvents = NativeToolCallParser.finalizeRawChunks()
@@ -180,7 +182,7 @@ export class ToolCallPipeline {
 		}
 
 		// No stage produced tools — report and pass content through unchanged.
-		this.state.reportNoTool()
+		this.state.reportNoTool(conversational ?? false)
 
 		return {
 			assistantMessageContent: recovery.applied ? recovery.assistantMessageContent : [...assistantMessageContent],
@@ -202,7 +204,7 @@ export class ToolCallPipeline {
 		return this.state.shouldInjectTextMode
 	}
 
-	get systemPromptVariant(): "native" | "text" {
+	get systemPromptVariant(): "native" | "dual" | "text" {
 		return this.state.systemPromptVariant
 	}
 
