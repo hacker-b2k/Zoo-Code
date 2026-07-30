@@ -105,7 +105,7 @@ describe("ToolCallPipeline — integration scenarios", () => {
 		expect(pipeline.shouldSendTools).toBe(true)
 	})
 
-	it("(e) no-tool: second consecutive turn locks text_only, shows banner", () => {
+	it("(e) no-tool: second consecutive turn stays unknown (no lock-in), still sends tools", () => {
 		// First turn
 		pipeline.finalize({
 			assistantMessage: "Still thinking...",
@@ -122,15 +122,16 @@ describe("ToolCallPipeline — integration scenarios", () => {
 			assistantMessageContent: [{ type: "text", content: "No tools needed.", partial: false }],
 			currentStreamingContentIndex: 0,
 		})
-		expect(pipeline.state.providerModeValue).toBe("text_only")
-		expect(pipeline.shouldSendTools).toBe(false)
-		expect(pipeline.shouldShowNoToolsBanner).toBe(true)
+		// No-lock: never becomes text_only, always sends tools
+		expect(pipeline.state.providerModeValue).toBe("unknown")
+		expect(pipeline.shouldSendTools).toBe(true)
+		expect(pipeline.shouldShowNoToolsBanner).toBe(false)
 		expect(pipeline.systemPromptVariant).toBe("text")
 		expect(pipeline.shouldInjectTextMode).toBe(true)
 	})
 
 	it("(f) reset on provider change restores unknown state", () => {
-		// Drive to text_only
+		// Drive to text_recovered (no lock-in)
 		pipeline.finalize({
 			assistantMessage: "no tool",
 			assistantMessageContent: [{ type: "text", content: "no tool", partial: false }],
@@ -142,7 +143,8 @@ describe("ToolCallPipeline — integration scenarios", () => {
 			assistantMessageContent: [{ type: "text", content: "still no tool", partial: false }],
 			currentStreamingContentIndex: 0,
 		})
-		expect(pipeline.state.providerModeValue).toBe("text_only")
+		// No-lock: stays unknown, never text_only
+		expect(pipeline.state.providerModeValue).toBe("unknown")
 
 		// Reset (simulates abort/provider change)
 		pipeline.reset()

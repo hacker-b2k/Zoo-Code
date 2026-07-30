@@ -2717,6 +2717,22 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		} catch (error) {
 			console.error("Error reverting diff changes:", error)
 		}
+
+		// Tool-bridge state hardening (user.txt bug — session-resilient teardown):
+		// Dispose can run on normal completion, extension reload, or task switch
+		// without going through abortTask. NativeToolCallParser's Maps are process-
+		// static, so any leftover streaming state from THIS task instance would
+		// poison the NEXT task instance created in the same extension host
+		// (matching the report of the tool-bridge "dropping" across a session).
+		// Clear all tool-bridge state defensively so the next session starts clean.
+		try {
+			this.streamingToolCallIndices.clear()
+			this.handledStreamedToolCallIds.clear()
+			NativeToolCallParser.clearAllStreamingToolCalls()
+			NativeToolCallParser.clearRawChunkState()
+		} catch (error) {
+			console.error("Error clearing tool-bridge state on dispose:", error)
+		}
 	}
 
 	// Subtasks
@@ -3617,6 +3633,25 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 						// Clean up partial state
 						await abortStream(cancelReason, streamingFailedMessage)
+
+						// Tool-bridge state hardening (user.txt bug — provider-agnostic,
+						// session-resilient): a stream that throws mid-tool-call leaves
+						// stale ids/indexes in NativeToolCallParser's static Maps
+						// (streamingToolCalls, rawChunkTracker) and in Task's per-instance
+						// streamingToolCallIndices / handledStreamedToolCallIds. Previously
+						// only the abort path cleared the parser Maps; the non-abort retry
+						// path relied solely on the next turn's begin-of-iteration clear
+						// (line ~3176). That left a window where the error-recovery flow
+						// could re-enter presentAssistantMessage against poisoned state,
+						// causing the same tool (and unrelated basic tools like
+						// list_specs / ask_followup_question) to report "Tool not found"
+						// for the rest of the session. Clear ALL tool-bridge state here so
+						// every error exit path leaves a clean slate, regardless of
+						// whether the recovery is an abort or a silent retry.
+						this.streamingToolCallIndices.clear()
+						this.handledStreamedToolCallIds.clear()
+						NativeToolCallParser.clearAllStreamingToolCalls()
+						NativeToolCallParser.clearRawChunkState()
 
 						if (this.abort) {
 							// User cancelled - abort the entire task
@@ -4783,10 +4818,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			allowedFunctionNames = toolsResult.allowedFunctionNames
 		}
 
-		// When the provider is detected as text-only (never returned native tool
-		// calls despite tools being sent), stop sending tool schemas. This saves
-		// tokens, avoids proxy errors, and lets the model focus on text output
-		// which we parse via the intent-extraction fallback.
+		// No-Lock Dual Parser: always send tool schemas (shouldSendTools is
+		// always true). Both native and text-based tool calls are accepted.
+		// This ensures providers that upgrade to native support mid-conversation
+		// are detected immediately.
 		const shouldIncludeTools = allTools.length > 0 && this.pipeline.shouldSendTools
 
 		// Create an AbortController to allow cancelling the request mid-stream

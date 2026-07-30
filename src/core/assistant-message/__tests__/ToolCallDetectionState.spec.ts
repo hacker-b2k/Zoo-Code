@@ -27,7 +27,8 @@ describe("ToolCallDetectionState", () => {
 		it("marks provider native and resets counters", () => {
 			state.reportNoTool()
 			state.reportNoTool()
-			expect(state.providerModeValue).toBe("text_only")
+			// No-lock: never becomes text_only
+			expect(state.providerModeValue).toBe("unknown")
 
 			state.reportNativeTool()
 
@@ -107,15 +108,16 @@ describe("ToolCallDetectionState", () => {
 			expect(state.shouldSendTools).toBe(true)
 		})
 
-		it("second no-tool locks text_only and shows banner", () => {
+		it("second no-tool stays unknown (no lock-in) and still sends tools", () => {
 			state.reportNoTool()
 			state.reportNoTool()
 
-			expect(state.providerModeValue).toBe("text_only")
-			expect(state.shouldSendTools).toBe(false)
+			// No-lock: never becomes text_only, always sends tools
+			expect(state.providerModeValue).toBe("unknown")
+			expect(state.shouldSendTools).toBe(true)
 			expect(state.shouldInjectTextMode).toBe(true)
 			expect(state.systemPromptVariant).toBe("text")
-			expect(state.shouldShowNoToolsBanner).toBe(true)
+			expect(state.shouldShowNoToolsBanner).toBe(false)
 			expect(state.consecutiveNoToolCountValue).toBe(2)
 		})
 
@@ -129,12 +131,12 @@ describe("ToolCallDetectionState", () => {
 			expect(state.shouldSendTools).toBe(true)
 			expect(state.shouldInjectTextMode).toBe(false)
 			expect(state.systemPromptVariant).toBe("native")
-			// Banner still allowed for native models that skip tools
-			expect(state.shouldShowNoToolsBanner).toBe(true)
+			// Banner threshold is now 3 — 2 no-tools won't show it
+			expect(state.shouldShowNoToolsBanner).toBe(false)
 			expect(state.consecutiveNoToolCountValue).toBe(2)
 		})
 
-		it("after text_recovered then two no-tool turns becomes text_only", () => {
+		it("after text_recovered then no-tool turns stays text_recovered (no lock-in)", () => {
 			state.reportTextRecovery()
 			expect(state.providerModeValue).toBe("text_recovered")
 			expect(state.shouldSendTools).toBe(true)
@@ -146,9 +148,10 @@ describe("ToolCallDetectionState", () => {
 
 			state.beginTurn()
 			state.reportNoTool()
-			expect(state.providerModeValue).toBe("text_only")
-			expect(state.shouldSendTools).toBe(false)
-			expect(state.shouldShowNoToolsBanner).toBe(true)
+			// No-lock: stays text_recovered, never becomes text_only
+			expect(state.providerModeValue).toBe("text_recovered")
+			expect(state.shouldSendTools).toBe(true)
+			expect(state.shouldShowNoToolsBanner).toBe(false)
 		})
 	})
 
@@ -167,7 +170,8 @@ describe("ToolCallDetectionState", () => {
 		it("returns to initial unknown state", () => {
 			state.reportNoTool()
 			state.reportNoTool()
-			expect(state.providerModeValue).toBe("text_only")
+			// No-lock: never becomes text_only
+			expect(state.providerModeValue).toBe("unknown")
 
 			state.reset()
 
@@ -193,7 +197,7 @@ describe("ToolCallDetectionState", () => {
 			state.reportNoTool()
 
 			expect(state.providerModeValue).not.toBe("native")
-			expect(["text_recovered", "text_only"]).toContain(state.providerModeValue)
+			expect(state.providerModeValue).toBe("text_recovered")
 		})
 	})
 })

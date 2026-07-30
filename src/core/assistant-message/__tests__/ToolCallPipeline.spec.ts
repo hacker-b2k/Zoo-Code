@@ -167,9 +167,10 @@ describe("ToolCallPipeline — Stage 1 (native)", () => {
 				assistantMessageContent: [{ type: "text", content: "No tools needed.", partial: false }],
 				currentStreamingContentIndex: 0,
 			})
-			expect(pipeline.state.providerModeValue).toBe("text_only")
-			expect(pipeline.shouldSendTools).toBe(false)
-			expect(pipeline.shouldShowNoToolsBanner).toBe(true)
+			// No-lock: never becomes text_only, always sends tools
+			expect(pipeline.state.providerModeValue).toBe("unknown")
+			expect(pipeline.shouldSendTools).toBe(true)
+			expect(pipeline.shouldShowNoToolsBanner).toBe(false)
 		})
 
 		it("prose intent: text that looks like tool markup with code block triggers recovery", () => {

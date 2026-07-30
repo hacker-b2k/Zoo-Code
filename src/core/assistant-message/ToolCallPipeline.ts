@@ -104,7 +104,9 @@ export class ToolCallPipeline {
 	 * Finalize after the stream ends.
 	 *
 	 * Stage 1: if executable native tools exist (or native activity was seen),
-	 * reportNativeTool and return content unchanged.
+	 * reportNativeTool. Text recovery still runs as a silent fallback —
+	 * applyTextualToolCallRecovery's internal guard skips when native tools
+	 * are present, making this a no-op safety net.
 	 * Stage 2: XML/JSON text recovery via applyTextualToolCallRecovery.
 	 * Stage 3: prose file-write intent (already inside applyTextualToolCallRecovery).
 	 * No-tool: if no stage produced tools, reportNoTool.
@@ -118,12 +120,33 @@ export class ToolCallPipeline {
 			this.nativeActivityThisTurn = true
 		}
 
-		// Stage 1: native tools already in content win — skip recovery.
+		// Stage 1: native tools detected — report and run silent fallback.
 		if (hasExecutableNativeToolUse(assistantMessageContent) || this.nativeActivityThisTurn) {
 			if (hasExecutableNativeToolUse(assistantMessageContent)) {
 				this.state.reportNativeTool()
 			} else if (this.nativeActivityThisTurn) {
 				this.state.reportNativeTool()
+			}
+
+			// Always run text recovery as silent fallback — even when native
+			// tools exist. The recovery function's internal guard
+			// (hasExecutableNativeToolUse check) skips when native tools are
+			// present, making this a no-op safety net. This catches edge
+			// cases where a model emits BOTH native tool_calls AND text-based
+			// tool calls in the same response.
+			const recovery = applyTextualToolCallRecovery({
+				assistantMessage,
+				assistantMessageContent,
+				currentStreamingContentIndex,
+			})
+
+			if (recovery.applied && recovery.recoveredCount > 0) {
+				return {
+					assistantMessageContent: recovery.assistantMessageContent,
+					assistantMessage: recovery.assistantMessage,
+					currentStreamingContentIndex: recovery.currentStreamingContentIndex,
+					recoveredTextToolCount: recovery.recoveredCount,
+				}
 			}
 
 			return {

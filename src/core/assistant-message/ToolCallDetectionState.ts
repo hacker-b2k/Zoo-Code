@@ -1,5 +1,5 @@
 /**
- * Shared detection state for the unified tool-call pipeline.
+ * Shared detection state for the unified tool-call pipeline (No-Lock edition).
  *
  * Replaces the three bare Task fields:
  * - nativeToolCallsDetected
@@ -8,9 +8,14 @@
  *
  * Critical invariant: text recovery (XML/JSON/prose) must NEVER mark the
  * provider as "native". That was the provider-state corruption bug.
+ *
+ * No-Lock invariant: shouldSendTools ALWAYS returns true. The providerMode
+ * never enters a permanent "text_only" lock. Both native and text parsers
+ * remain available at all times — the provider can switch freely between
+ * native and text_recovered modes across turns.
  */
 
-export type ProviderMode = "unknown" | "native" | "text_only" | "text_recovered"
+export type ProviderMode = "unknown" | "native" | "text_recovered"
 
 export class ToolCallDetectionState {
 	/** Provider capability as observed so far. */
@@ -19,7 +24,8 @@ export class ToolCallDetectionState {
 	private consecutiveNoToolCount = 0
 	/**
 	 * Consecutive text-only turns while provider capability is still unknown
-	 * (or not proven native). Used to decide when to enter text_only mode.
+	 * (or not proven native). Used to decide when to inject text-mode
+	 * instructions. No longer locks into text_only mode.
 	 */
 	private textOnlyResponseCount = 0
 	/** Whether any stage produced tools on the current turn. */
@@ -74,11 +80,8 @@ export class ToolCallDetectionState {
 			this.textModeInjected = true
 		}
 
-		// Second consecutive pure-text failure while not proven native:
-		// lock into text_only (drop native tool schemas on subsequent API calls).
-		if (this.providerMode !== "native" && this.textOnlyResponseCount >= 2) {
-			this.providerMode = "text_only"
-		}
+		// No lock-in: text_only mode removed. Always send native tools.
+		// If provider later proves native, reportNativeTool() switches back.
 	}
 
 	/**
@@ -93,11 +96,12 @@ export class ToolCallDetectionState {
 
 	/**
 	 * Whether to attach native tool schemas to the next API request.
-	 * Only false when locked into text_only (schemas waste tokens / confuse
-	 * text-only gateways).
+	 * Always true — no lock-in. Native schemas are sent even for text-only
+	 * providers so that if they upgrade to native support, the system
+	 * adapts immediately.
 	 */
 	get shouldSendTools(): boolean {
-		return this.providerMode !== "text_only"
+		return true // Always send native tools — no lock-in
 	}
 
 	/**
@@ -111,13 +115,13 @@ export class ToolCallDetectionState {
 
 	/**
 	 * System prompt tool-use section variant.
-	 * "text" once we're in text_only / text_recovered / text-mode-injected.
+	 * "text" once we're in text_recovered or text-mode-injected.
 	 */
 	get systemPromptVariant(): "native" | "text" {
 		if (this.providerMode === "native") {
 			return "native"
 		}
-		if (this.providerMode === "text_only" || this.providerMode === "text_recovered" || this.textModeInjected) {
+		if (this.providerMode === "text_recovered" || this.textModeInjected) {
 			return "text"
 		}
 		return "native"
@@ -125,13 +129,13 @@ export class ToolCallDetectionState {
 
 	/**
 	 * Whether to surface the user-visible MODEL_NO_TOOLS_USED banner.
-	 * Suppressed on the first failure (transition into text-mode inject) so
-	 * the user does not see a scary incomplete error while fallback engages.
-	 * Shown from the second consecutive no-tool turn onward (matches prior
-	 * consecutiveNoToolUseCount >= 2 behavior once fallback is active).
+	 * Suppressed for the first 2 failures (threshold 3) so the user does
+	 * not see a scary incomplete error while the dual-parser fallback
+	 * engages. First turn uses dual mode (native + text instructions),
+	 * giving the system two chances before surfacing an error.
 	 */
 	get shouldShowNoToolsBanner(): boolean {
-		return this.consecutiveNoToolCount >= 2
+		return this.consecutiveNoToolCount >= 3
 	}
 
 	/** True when any stage produced tools on the current turn. */
