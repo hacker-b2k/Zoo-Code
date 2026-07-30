@@ -409,7 +409,11 @@ export class MultiSearchReplaceDiffStrategy implements DiffStrategy {
 		// Detect line ending from original content
 		const lineEnding = originalContent.includes("\r\n") ? "\r\n" : "\n"
 		let resultLines = originalContent.split(/\r?\n/)
-		let delta = 0
+		// No delta needed: blocks are processed bottom-to-top (descending
+		// startLine), so earlier (lower line) blocks don't affect the line
+		// numbers of later (higher line) blocks. This eliminates the
+		// line-number shift bug where the 2nd SEARCH/REPLACE block fails
+		// because the 1st block changed line positions.
 		const diffResults: DiffResult[] = []
 		let appliedCount = 0
 		const replacements = matches
@@ -418,11 +422,14 @@ export class MultiSearchReplaceDiffStrategy implements DiffStrategy {
 				searchContent: match[6],
 				replaceContent: match[7],
 			}))
-			.sort((a, b) => a.startLine - b.startLine)
+			.sort((a, b) => b.startLine - a.startLine) // DESCENDING: bottom-to-top
 
 		for (const replacement of replacements) {
 			let { searchContent, replaceContent } = replacement
-			let startLine = replacement.startLine + (replacement.startLine === 0 ? 0 : delta)
+			// No delta adjustment needed — reverse-order processing ensures
+			// each block's :start_line: refers to the original file's line
+			// numbers, and blocks below haven't been modified yet.
+			let startLine = replacement.startLine
 
 			// First unescape any escaped markers in the content
 			searchContent = this.unescapeMarkers(searchContent)
@@ -627,7 +634,8 @@ export class MultiSearchReplaceDiffStrategy implements DiffStrategy {
 			const beforeMatch = resultLines.slice(0, matchIndex)
 			const afterMatch = resultLines.slice(matchIndex + searchLines.length)
 			resultLines = [...beforeMatch, ...indentedReplaceLines, ...afterMatch]
-			delta = delta - matchedLines.length + replaceLines.length
+			// No delta update needed — reverse-order processing means
+			// blocks below this one haven't been modified yet.
 			appliedCount++
 		}
 		const finalContent = resultLines.join(lineEnding)
