@@ -440,13 +440,21 @@ export class BrowserEngineManager {
 	/**
 	 * Take a screenshot of a page.
 	 */
-	async screenshotPage(taskId: string, pageId: string): Promise<{ mimeType: string; data: Buffer }> {
+	async screenshotPage(
+		taskId: string,
+		pageId: string,
+		options: { fullPage?: boolean } = {},
+	): Promise<{ mimeType: string; data: Buffer }> {
 		const page = this.getPage(taskId, pageId)
 		if (!page) {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		const buffer = await page.screenshot({ type: "jpeg", quality: 80 })
+		const buffer = await page.screenshot({
+			type: "jpeg",
+			quality: 80,
+			fullPage: options.fullPage ?? false,
+		})
 		return { mimeType: "image/jpeg", data: buffer }
 	}
 

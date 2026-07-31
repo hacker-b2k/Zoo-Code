@@ -32,6 +32,7 @@ import {
 	evaluateBrowserJsTool,
 	readAllBrowserTabsTool,
 	batchBrowserActionsTool,
+	browserScreenshotTool,
 } from "../tools/BrowserTools"
 import { readFileTool } from "../tools/ReadFileTool"
 import { readCommandOutputTool } from "../tools/ReadCommandOutputTool"
@@ -1044,6 +1045,13 @@ export async function presentAssistantMessage(cline: Task) {
 					break
 				case "batch_browser_actions":
 					await batchBrowserActionsTool.handle(cline, block as ToolUse<"batch_browser_actions">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "browser_screenshot":
+					await browserScreenshotTool.handle(cline, block as ToolUse<"browser_screenshot">, {
 						askApproval,
 						handleError,
 						pushToolResult,

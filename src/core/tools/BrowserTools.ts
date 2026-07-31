@@ -410,7 +410,57 @@ export class BatchBrowserActionsTool extends BaseTool<"batch_browser_actions"> {
 	}
 }
 
+// ============================================================
+// browser_screenshot
+// ============================================================
+export class BrowserScreenshotTool extends BaseTool<"browser_screenshot"> {
+	readonly name = "browser_screenshot" as const
+
+	async execute(
+		params: { pageId: string; fullPage?: boolean | null },
+		task: Task,
+		callbacks: ToolCallbacks,
+	): Promise<void> {
+		const { pageId, fullPage } = params
+		const { handleError, pushToolResult } = callbacks
+
+		try {
+			if (!pageId) {
+				task.consecutiveMistakeCount++
+				task.recordToolError("browser_screenshot")
+				task.didToolFailInCurrentTurn = true
+				pushToolResult(await task.sayAndCreateMissingParamError("browser_screenshot" as any, "pageId" as any))
+				return
+			}
+
+			task.consecutiveMistakeCount = 0
+			const engine = BrowserEngineManager.getInstance()
+
+			// Use the engine's screenshotPage method, passing fullPage option.
+			const { mimeType, data } = await engine.screenshotPage(task.taskId, pageId, {
+				fullPage: fullPage ?? false,
+			})
+
+			// Convert buffer to data URL for the model to see as an image.
+			const dataUrl = `data:${mimeType};base64,${data.toString("base64")}`
+
+			// Return both a text confirmation and the image.
+			// formatResponse.toolResult(text, images) — images is an array of data URLs.
+			const { formatResponse } = await import("../prompts/responses")
+			pushToolResult(
+				formatResponse.toolResult(
+					`Screenshot captured from page ${pageId}${fullPage ? " (full page)" : " (viewport)"}.`,
+					[dataUrl],
+				),
+			)
+		} catch (error) {
+			await handleError("taking browser screenshot", error as Error)
+		}
+	}
+}
+
 export const clickBrowserByTextTool = new ClickBrowserByTextTool()
 export const evaluateBrowserJsTool = new EvaluateBrowserJsTool()
 export const readAllBrowserTabsTool = new ReadAllBrowserTabsTool()
 export const batchBrowserActionsTool = new BatchBrowserActionsTool()
+export const browserScreenshotTool = new BrowserScreenshotTool()

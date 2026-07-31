@@ -1529,6 +1529,15 @@ export class NativeToolCallParser {
 					}
 					break
 
+				case "browser_screenshot":
+					if (args.pageId !== undefined) {
+						nativeArgs = {
+							pageId: args.pageId,
+							fullPage: args.fullPage ?? undefined,
+						} as NativeArgsFor<TName>
+					}
+					break
+
 				case "apply_diff":
 					if (args.path !== undefined && args.diff !== undefined) {
 						nativeArgs = {

@@ -156,6 +156,7 @@ export type NativeToolArgs = {
 		pageId: string
 		actions: Array<{ type: string; selector?: string; text?: string; url?: string; script?: string }>
 	}
+	browser_screenshot: { pageId: string; fullPage?: boolean | null }
 	apply_diff: { path: string; diff: string }
 	edit: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
 	search_and_replace: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
@@ -416,6 +417,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	evaluate_browser_js: "evaluate browser JS",
 	read_all_browser_tabs: "read all browser tabs",
 	batch_browser_actions: "batch browser actions",
+	browser_screenshot: "browser screenshot",
 	read_file: "read files",
 	read_command_output: "read command output",
 	write_to_file: "write files",
@@ -491,6 +493,7 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 			"evaluate_browser_js",
 			"read_all_browser_tabs",
 			"batch_browser_actions",
+			"browser_screenshot",
 		],
 		alwaysAvailable: true,
 	},
@@ -565,6 +568,7 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"evaluate_browser_js",
 	"read_all_browser_tabs",
 	"batch_browser_actions",
+	"browser_screenshot",
 ] as const
 
 /**
