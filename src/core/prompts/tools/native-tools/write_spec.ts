@@ -45,6 +45,21 @@ Server loads current doc and appends. Use for multi-turn large designs.
 }
 Replaces that section if present, else appends it. title optional.
 
+## Rename a Spec Workspace
+{
+  "title": "New Feature Name",
+  "spec_id": "<id-from-list_specs>",
+  "doc": "requirements",
+  "mode": "search_replace",
+  "old_string": "- [ ] Task",
+  "new_string": "- [x] Task",
+  "replace_all": false
+}
+- title: pass a new name to rename the pack. Works with any doc/mode.
+- When spec_id is set: renames that specific pack.
+- When spec_id is null and only ONE pack exists: renames the sole pack automatically.
+- Multiple packs + null spec_id + distinct title: creates a new pack (import behavior).
+
 ## Surgical edit (checkbox / one line / ONE broken diagram) — DO NOT rewrite the whole doc
 {
   "spec_id": "<id>",
@@ -78,7 +93,7 @@ export default {
 				title: {
 					type: ["string", "null"],
 					description:
-						"Pack title. REQUIRED non-empty when creating (spec_id null). On update may be null/empty — not used for rename unless you pass a new title intentionally.",
+						"Pack title. REQUIRED non-empty when creating (spec_id null). On update: pass existing name, omit (null/empty), or pass a NEW name to rename the pack. Renames happen alongside any document write.",
 				},
 				spec_id: {
 					type: ["string", "null"],

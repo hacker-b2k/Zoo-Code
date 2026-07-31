@@ -532,6 +532,90 @@ export class SpecService {
 		})
 	}
 
+	/**
+	 * Rename a virtual spec pack — updates title in meta.json, index.json,
+	 * and auto-syncs first heading in each document if it matches the old title.
+	 */
+	async renameWorkspace(workspaceRoot: string, specId: string, newTitle: string): Promise<SpecWorkspace> {
+		assertSafeId(specId, "specId")
+		const title = newTitle.trim()
+		if (!title) {
+			throw new Error("title is required")
+		}
+
+		const root = normalizeWorkspaceRoot(workspaceRoot)
+		const workspaceRootHash = hashWorkspaceRoot(root)
+		const lockKey = `${workspaceRootHash}:${specId}`
+
+		return specMutationLock.runExclusive(lockKey, async () => {
+			const workspace = await this.store.readMeta(workspaceRootHash, specId)
+			if (!workspace) {
+				throw new Error(`Spec workspace not found: ${specId}`)
+			}
+
+			if (workspace.title === title) {
+				return { ...workspace } // no-op, title already matches
+			}
+
+			const oldTitle = workspace.title
+			const now = Date.now()
+
+			// Auto-sync first heading in each document if it contains the old title
+			for (const doc of workspace.docs) {
+				try {
+					const content = await this.store.readDocBody(workspaceRootHash, specId, doc.fileName)
+					if (!content) continue
+
+					const lines = content.split("\n")
+					let updated = false
+					for (let i = 0; i < lines.length; i++) {
+						const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
+						if (match) {
+							const headingText = match[2].trim()
+							// Update if heading exactly matches old title, or starts with old title
+							if (
+								headingText === oldTitle ||
+								headingText.startsWith(`${oldTitle} -`) ||
+								headingText.startsWith(`${oldTitle} —`)
+							) {
+								const prefix = match[1]
+								const suffix = headingText === oldTitle ? "" : headingText.slice(oldTitle.length)
+								lines[i] = `${prefix} ${title}${suffix}`
+								updated = true
+								break // Only update first heading
+							}
+							break // Stop at first heading regardless
+						}
+					}
+
+					if (updated) {
+						const newContent = lines.join("\n")
+						await this.store.writeDocBody(workspaceRootHash, specId, doc.fileName, newContent)
+						doc.revision += 1
+						doc.updatedAt = now
+						console.info(`[SpecService] Auto-synced heading in ${doc.fileName} for rename`)
+					}
+				} catch (docErr) {
+					// Non-fatal: heading sync failure should not block the rename
+					console.warn(`[SpecService] Failed to sync heading in ${doc.fileName}:`, docErr)
+				}
+			}
+
+			workspace.title = title
+			workspace.updatedAt = now
+			await this.store.writeMeta(workspace)
+			await this.upsertIndexEntry(workspaceRootHash, {
+				id: workspace.id,
+				title: workspace.title,
+				stage: workspace.stage,
+				updatedAt: workspace.updatedAt,
+			})
+
+			console.info(`[SpecService] Renamed spec ${specId}: "${oldTitle}" → "${title}"`)
+			return { ...workspace }
+		})
+	}
+
 	private async upsertIndexEntry(workspaceRootHash: string, entry: SpecWorkspaceIndexEntry): Promise<void> {
 		const existing = await this.store.readIndex(workspaceRootHash)
 		const index: SpecWorkspaceIndex = existing ?? {

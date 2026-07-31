@@ -297,16 +297,28 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 						useExisting = true
 						specId = existingId
 					} else if (distinctTitleReplace) {
-						// Explicit create path: non-empty distinct title + replace, even when
-						// multiple packs exist and last-opened would otherwise force an update.
-						useExisting = false
-						logWriteSpec("info", "create path chosen (distinct title + replace)", {
-							titleForCreate,
-							resolvedExistingId: existingId,
-							resolvedExistingTitle: meta?.title ?? null,
-							packCount: list.length,
-							writeMode,
-						})
+						if (list.length === 1) {
+							// Sole pack + distinct title: rename the existing pack instead of
+							// creating a new one. The user intends to rename, not duplicate.
+							useExisting = true
+							specId = existingId
+							logWriteSpec("info", "rename path chosen (sole pack + distinct title)", {
+								titleForCreate,
+								resolvedExistingId: existingId,
+								resolvedExistingTitle: meta?.title ?? null,
+							})
+						} else {
+							// Multiple packs + distinct title + replace → create new pack
+							// (import existing markdown as a new Spec Workspace).
+							useExisting = false
+							logWriteSpec("info", "create path chosen (distinct title + replace)", {
+								titleForCreate,
+								resolvedExistingId: existingId,
+								resolvedExistingTitle: meta?.title ?? null,
+								packCount: list.length,
+								writeMode,
+							})
+						}
 					} else {
 						// Fallback: partial-ish or ambiguous → prefer update
 						useExisting = true
@@ -460,6 +472,46 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				writeMode,
 				contentLength: finalContent.length,
 			})
+
+			// Rename workspace title AFTER document write so search_replace/merge
+			// operates on pre-rename content (old headings still present for matching).
+			// The rename then auto-syncs document headings to the new title.
+			if (titleForCreate && !created) {
+				try {
+					const currentMeta = await service.getWorkspace(workspaceRoot, specId)
+					if (currentMeta && titleForCreate !== currentMeta.title) {
+						const approvalRename = await askApproval(
+							"tool",
+							JSON.stringify({
+								tool: "write_spec",
+								action: "rename",
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							}),
+						)
+						if (approvalRename) {
+							await service.renameWorkspace(workspaceRoot, specId, titleForCreate)
+							logWriteSpec("info", "workspace renamed", {
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							})
+						} else {
+							logWriteSpec("warn", "user denied rename", {
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							})
+						}
+					}
+				} catch (renameErr) {
+					// Non-fatal: rename failure should not block the write result
+					logWriteSpec("warn", "rename failed (continuing with write)", {
+						message: renameErr instanceof Error ? renameErr.message : String(renameErr),
+					})
+				}
+			}
 
 			// F-020: the finalize notification is the ONLY signal that releases the
 			// webview from streaming mode. If it is lost, the panel wedges with
