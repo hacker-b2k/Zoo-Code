@@ -192,7 +192,12 @@ export type NativeToolArgs = {
 	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
 	write_to_file: { path: string; content: string }
 	list_specs: Record<string, never>
-	read_spec: { spec_id?: string | null; doc: string }
+	read_spec: {
+		spec_id?: string | null
+		doc: string
+		mode?: "full" | "headings" | "history" | string | null
+		revision?: number | null
+	}
 	/**
 	 * title: required for create (spec_id null); optional on update.
 	 * mode: replace (default) | append | upsert_section | search_replace (F-021).
@@ -207,6 +212,8 @@ export type NativeToolArgs = {
 		old_string?: string | null
 		new_string?: string | null
 		replace_all?: boolean | null
+		dry_run?: boolean | null
+		replacements?: Array<{ old_string: string; new_string: string; replace_all?: boolean }> | null
 	}
 	/** F-022 / F-022b: delete one or many virtual packs. */
 	delete_spec: {

@@ -676,6 +676,72 @@ describe("NativeToolCallParser", () => {
 			}) as any
 			expect(read?.nativeArgs?.spec_id).toBe("abc-123-real")
 		})
+
+		it("parseToolCall forwards read_spec mode and revision through nativeArgs", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_mode",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: null, doc: "design", mode: "headings" }),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.doc).toBe("design")
+			expect(result?.nativeArgs?.spec_id).toBeNull()
+			expect(result?.nativeArgs?.mode).toBe("headings")
+
+			const history = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_history",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: "abc-123", doc: "tasks", mode: "history", revision: 3 }),
+			}) as any
+			expect(history?.nativeArgs?.mode).toBe("history")
+			expect(history?.nativeArgs?.revision).toBe(3)
+		})
+
+		it("parseToolCall omits mode/revision from read_spec nativeArgs when not provided", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_basic",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: null, doc: "requirements" }),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.doc).toBe("requirements")
+			expect(result?.nativeArgs?.mode).toBeUndefined()
+			expect(result?.nativeArgs?.revision).toBeUndefined()
+		})
+
+		it("parseToolCall forwards write_spec dry_run and replacements through nativeArgs", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_dry",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Test",
+					spec_id: "abc",
+					doc: "design",
+					mode: "search_replace",
+					old_string: "old",
+					new_string: "new",
+					dry_run: true,
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.dry_run).toBe(true)
+
+			const batch = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_batch",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Test",
+					spec_id: "abc",
+					doc: "tasks",
+					replacements: [
+						{ old_string: "- [ ] A", new_string: "- [x] A" },
+						{ old_string: "- [ ] B", new_string: "- [x] B" },
+					],
+				}),
+			}) as any
+			expect(batch?.nativeArgs?.replacements).toHaveLength(2)
+			expect(batch?.nativeArgs?.replacements[0].old_string).toBe("- [ ] A")
+		})
 	})
 
 	describe("parseToolCall orchestration", () => {

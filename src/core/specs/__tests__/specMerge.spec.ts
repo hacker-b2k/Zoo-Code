@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest"
 
 import {
 	applyAppend,
+	applyBatchSearchReplace,
 	applySearchReplace,
 	applyUpsertSection,
+	extractHeadings,
 	normalizeWriteSpecMode,
 	resolveWriteBody,
 } from "../specMerge"
@@ -98,5 +100,42 @@ describe("specMerge (F-021)", () => {
 		expect(out).toContain("keep this api")
 		expect(out).toContain("erDiagram")
 		expect(out).not.toContain("old broken body")
+	})
+
+	it("extractHeadings returns heading lines with line numbers", () => {
+		const doc = "# Title\n\nSome text\n\n## Section\n\nMore text\n\n### Sub\n\nEnd\n"
+		const result = extractHeadings(doc)
+		expect(result).toContain("L1: # Title")
+		expect(result).toContain("L5: ## Section")
+		expect(result).toContain("L9: ### Sub")
+		expect(result).not.toContain("Some text")
+	})
+
+	it("extractHeadings returns empty message for empty doc", () => {
+		expect(extractHeadings("")).toBe("(empty document)")
+		expect(extractHeadings("   ")).toBe("(empty document)")
+	})
+
+	it("extractHeadings returns no-headings message for doc without headings", () => {
+		expect(extractHeadings("just plain text\nno headings here\n")).toBe("(no headings found)")
+	})
+
+	it("applyBatchSearchReplace applies multiple replacements", () => {
+		const doc = "# Tasks\n\n- [ ] Alpha\n- [ ] Beta\n- [ ] Gamma\n"
+		const out = applyBatchSearchReplace(doc, [
+			{ old_string: "- [ ] Alpha", new_string: "- [x] Alpha" },
+			{ old_string: "- [ ] Gamma", new_string: "- [x] Gamma" },
+		])
+		expect(out).toContain("- [x] Alpha")
+		expect(out).toContain("- [ ] Beta")
+		expect(out).toContain("- [x] Gamma")
+	})
+
+	it("applyBatchSearchReplace rejects empty replacements array", () => {
+		expect(() => applyBatchSearchReplace("text", [])).toThrow(/non-empty/)
+	})
+
+	it("applyBatchSearchReplace rejects missing old_string in replacement", () => {
+		expect(() => applyBatchSearchReplace("text", [{ old_string: "", new_string: "x" }])).toThrow(/old_string/)
 	})
 })

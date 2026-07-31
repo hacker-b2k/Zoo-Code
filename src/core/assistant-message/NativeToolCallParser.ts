@@ -870,11 +870,25 @@ export class NativeToolCallParser {
 				break
 
 			case "read_spec":
-				if (partialArgs.doc !== undefined || partialArgs.spec_id !== undefined) {
-					nativeArgs = {
+				if (
+					partialArgs.doc !== undefined ||
+					partialArgs.spec_id !== undefined ||
+					partialArgs.mode !== undefined ||
+					partialArgs.revision !== undefined
+				) {
+					const readArgs: Record<string, unknown> = {
 						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
 						doc: this.coerceOptionalStringParam(partialArgs.doc),
 					}
+					// Forward mode (headings/history) and revision when provided
+					const readMode = this.coerceOptionalStringField(partialArgs.mode)
+					if (readMode !== undefined) {
+						readArgs.mode = readMode
+					}
+					if (typeof partialArgs.revision === "number" && partialArgs.revision > 0) {
+						readArgs.revision = partialArgs.revision
+					}
+					nativeArgs = readArgs
 				}
 				break
 
@@ -885,7 +899,9 @@ export class NativeToolCallParser {
 					partialArgs.doc !== undefined ||
 					partialArgs.content !== undefined ||
 					partialArgs.mode !== undefined ||
-					partialArgs.old_string !== undefined
+					partialArgs.old_string !== undefined ||
+					partialArgs.dry_run !== undefined ||
+					partialArgs.replacements !== undefined
 				) {
 					nativeArgs = {
 						title: partialArgs.title,
@@ -897,6 +913,8 @@ export class NativeToolCallParser {
 						old_string: partialArgs.old_string,
 						new_string: partialArgs.new_string,
 						replace_all: partialArgs.replace_all,
+						dry_run: partialArgs.dry_run,
+						replacements: partialArgs.replacements,
 					}
 				}
 				break
@@ -1669,10 +1687,19 @@ export class NativeToolCallParser {
 					// tool's "doc is required" path via undefined, rather than
 					// crashing on `params.doc?.trim()` later.
 					if (args.doc !== undefined) {
-						nativeArgs = {
+						const readArgs: Record<string, unknown> = {
 							spec_id: this.coerceOptionalSpecId(args.spec_id),
 							doc: this.coerceOptionalStringParam(args.doc),
-						} as NativeArgsFor<TName>
+						}
+						// Forward mode (headings/history) and revision when provided
+						const readMode = this.coerceOptionalStringField(args.mode)
+						if (readMode !== undefined) {
+							readArgs.mode = readMode
+						}
+						if (typeof args.revision === "number" && args.revision > 0) {
+							readArgs.revision = args.revision
+						}
+						nativeArgs = readArgs as NativeArgsFor<TName>
 					}
 					break
 
@@ -1768,6 +1795,13 @@ export class NativeToolCallParser {
 						}
 						if (replaceAll !== undefined) {
 							writeArgs.replace_all = replaceAll
+						}
+						// Forward dry_run and replacements when provided
+						if (args.dry_run === true || args.dry_run === "true") {
+							writeArgs.dry_run = true
+						}
+						if (Array.isArray(args.replacements) && args.replacements.length > 0) {
+							writeArgs.replacements = args.replacements
 						}
 						nativeArgs = writeArgs as NativeArgsFor<TName>
 					}
