@@ -375,8 +375,18 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			switch (message.type) {
 				case "state": {
 					const newState = message.state ?? {}
-					setState((prevState) => mergeExtensionState(prevState, newState))
-					setShowWelcome(!checkExistKey(newState.apiConfiguration))
+					setState((prevState) => {
+						const mergedState = mergeExtensionState(prevState, newState)
+						// A live worker already has an executable provider handler assigned by the
+						// extension host. Do not route its chat through first-run provider setup,
+						// even when the worker and parent intentionally share the same profile.
+						setShowWelcome(
+							mergedState.currentTaskIsBackgroundWorker === true
+								? false
+								: !checkExistKey(mergedState.apiConfiguration),
+						)
+						return mergedState
+					})
 					setDidHydrateState(true)
 					// Update alwaysAllowFollowupQuestions if present in state message
 					if ((newState as any).alwaysAllowFollowupQuestions !== undefined) {

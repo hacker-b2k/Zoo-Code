@@ -1,6 +1,14 @@
 import { memo, useRef, useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { ChevronUp, ChevronDown, HardDriveDownload, HardDriveUpload, FoldVertical, ArrowLeft } from "lucide-react"
+import {
+	ChevronUp,
+	ChevronDown,
+	HardDriveDownload,
+	HardDriveUpload,
+	FoldVertical,
+	ArrowLeft,
+	BookOpen,
+} from "lucide-react"
 import prettyBytes from "pretty-bytes"
 
 import type { ClineMessage } from "@roo-code/types"
@@ -169,6 +177,15 @@ const TaskHeader = ({
 							)}
 						</div>
 						<div className="flex items-center shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
+							<StandardTooltip content="Open Spec Workspace">
+								<button
+									type="button"
+									aria-label="Open Spec Workspace"
+									onClick={() => vscode.postMessage({ type: "openSpecWorkspace" })}
+									className="shrink-0 min-h-[20px] min-w-[20px] p-[2px] cursor-pointer text-vscode-foreground opacity-85 hover:opacity-100 bg-transparent border-none rounded-md focus-visible:outline focus-visible:outline-1 focus-visible:outline-vscode-focusBorder">
+									<BookOpen size={16} aria-hidden="true" />
+								</button>
+							</StandardTooltip>
 							<StandardTooltip content={isTaskExpanded ? t("chat:task.collapse") : t("chat:task.expand")}>
 								<button
 									onClick={() => setIsTaskExpanded(!isTaskExpanded)}

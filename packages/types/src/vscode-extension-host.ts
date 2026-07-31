@@ -352,6 +352,8 @@ export type ExtensionState = Pick<
 	version: string
 	clineMessages: ClineMessage[]
 	currentTaskId?: string
+	/** True when the currently focused chat is a live background worker. */
+	currentTaskIsBackgroundWorker?: boolean
 	/** Identifies the currently hydrated task generation for incremental event validation. */
 	currentTaskInstanceId?: string
 	currentTaskItem?: HistoryItem
@@ -541,6 +543,7 @@ export interface WebviewMessage {
 		| "ttsEnabled"
 		| "ttsSpeed"
 		| "openKeyboardShortcuts"
+		| "openSpecWorkspace"
 		| "openMcpSettings"
 		| "openProjectMcpSettings"
 		| "restartMcpServer"

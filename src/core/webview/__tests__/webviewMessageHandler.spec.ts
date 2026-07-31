@@ -193,6 +193,18 @@ import { resolveImageMentions } from "../../mentions/resolveImageMentions"
 import { Terminal } from "../../../integrations/terminal/Terminal"
 import { TerminalRegistry } from "../../../integrations/terminal/TerminalRegistry"
 
+describe("webviewMessageHandler - openSpecWorkspace", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("delegates to the registered Spec Workspace command", async () => {
+		await webviewMessageHandler(mockClineProvider, { type: "openSpecWorkspace" })
+
+		expect(vscode.commands.executeCommand).toHaveBeenCalledWith("zoo-code.openSpecWorkspace")
+	})
+})
+
 describe("webviewMessageHandler - requestLmStudioModels", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

@@ -138,6 +138,18 @@ describe("TaskHeader", () => {
 		expect(screen.queryByText(/\$/)).not.toBeInTheDocument()
 	})
 
+	it("should open the Spec Workspace from the accessible toolbar button", () => {
+		mockPostMessage.mockClear()
+		renderTaskHeader()
+
+		const button = screen.getByRole("button", { name: "Open Spec Workspace" })
+		expect(button.querySelector("svg.lucide-book-open")).toBeInTheDocument()
+
+		fireEvent.click(button)
+
+		expect(mockPostMessage).toHaveBeenCalledWith({ type: "openSpecWorkspace" })
+	})
+
 	it("should render the condense context button when expanded", () => {
 		renderTaskHeader()
 		// First click to expand the task header

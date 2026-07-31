@@ -1772,6 +1772,10 @@ export const webviewMessageHandler = async (
 			}
 			break
 		}
+		case "openSpecWorkspace": {
+			await vscode.commands.executeCommand("zoo-code.openSpecWorkspace")
+			break
+		}
 		case "openMcpSettings": {
 			const mcpSettingsFilePath = await provider.getMcpHub()?.getMcpSettingsFilePath()
 

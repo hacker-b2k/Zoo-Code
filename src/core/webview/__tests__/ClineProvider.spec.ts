@@ -915,6 +915,30 @@ describe("ClineProvider", () => {
 		expect(state).toHaveProperty("writeDelayMs")
 	})
 
+	test("getStateToPostToWebview identifies whether the focused task is a background worker", async () => {
+		const mainTask = new Task(defaultTaskOptions)
+		Object.defineProperties(mainTask, {
+			taskId: { value: "parent-1", writable: true },
+			isBackgroundWorker: { value: false, writable: true },
+		})
+		await provider.addClineToStack(mainTask)
+
+		let state = await provider.getStateToPostToWebview()
+		expect(state.currentTaskId).toBe("parent-1")
+		expect(state.currentTaskIsBackgroundWorker).toBe(false)
+
+		const workerTask = new Task(defaultTaskOptions)
+		Object.defineProperties(workerTask, {
+			taskId: { value: "worker-1", writable: true },
+			isBackgroundWorker: { value: true, writable: true },
+		})
+		await provider.addClineToStack(workerTask)
+
+		state = await provider.getStateToPostToWebview()
+		expect(state.currentTaskId).toBe("worker-1")
+		expect(state.currentTaskIsBackgroundWorker).toBe(true)
+	})
+
 	test("language is set to VSCode language", async () => {
 		// Mock VSCode language as Spanish
 		;(vscode.env as any).language = "pt-BR"
