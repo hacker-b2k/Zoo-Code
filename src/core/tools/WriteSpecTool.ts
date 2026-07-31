@@ -11,7 +11,7 @@ import {
 import { getSpecServiceForTask, getSpecWorkspaceRoot, resolveExistingSpecIdSoft } from "../specs/getSpecServiceForTask"
 import { SpecWorkspacePanel, type AgentWriteStreamPayload } from "../specs/ui/SpecWorkspacePanel"
 import { saveLastOpened } from "../specs/ui/specUiState"
-import { normalizeWriteSpecMode, resolveWriteBody } from "../specs/specMerge"
+import { normalizeWriteSpecMode, resolveWriteBody, applyBatchSearchReplace } from "../specs/specMerge"
 import { invalidateSpecContextCache } from "../specs/specContext"
 
 const LOG_PREFIX = "[write_spec]"
@@ -41,6 +41,10 @@ interface WriteSpecParams {
 	old_string?: string | null
 	new_string?: string | null
 	replace_all?: boolean | null
+	/** Preview changes without applying (Issue #5). */
+	dry_run?: boolean | null
+	/** Batch of search_replace operations (Issue #6). */
+	replacements?: Array<{ old_string: string; new_string: string; replace_all?: boolean }> | null
 }
 
 /** F-020b Phase A: ~1–2 frames; time-only throttle (no large char gate). */
@@ -417,15 +421,21 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 
 			let finalContent: string
 			try {
-				finalContent = resolveWriteBody({
-					mode: writeMode,
-					existingContent: created && writeMode === "replace" ? "" : existingContent,
-					content: typeof params.content === "string" ? params.content : undefined,
-					sectionHeading: params.section_heading ?? undefined,
-					oldString: params.old_string ?? undefined,
-					newString: params.new_string ?? undefined,
-					replaceAll: params.replace_all === true,
-				})
+				// Issue #6: batch replacements take priority over single search_replace
+				if (Array.isArray(params.replacements) && params.replacements.length > 0) {
+					const contentBase = created && writeMode === "replace" ? "" : existingContent
+					finalContent = applyBatchSearchReplace(contentBase, params.replacements)
+				} else {
+					finalContent = resolveWriteBody({
+						mode: writeMode,
+						existingContent: created && writeMode === "replace" ? "" : existingContent,
+						content: typeof params.content === "string" ? params.content : undefined,
+						sectionHeading: params.section_heading ?? undefined,
+						oldString: params.old_string ?? undefined,
+						newString: params.new_string ?? undefined,
+						replaceAll: params.replace_all === true,
+					})
+				}
 			} catch (mergeErr) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
@@ -433,6 +443,32 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				logWriteSpec("error", "final failure", { reason: "merge failed", message: msg, writeMode, specId })
 				this.abortStream(task, streamId, specId, doc, msg)
 				pushToolResult(formatResponse.toolError(msg))
+				this.resetStreamState()
+				return
+			}
+
+			// Issue #5: dry_run — preview changes without applying
+			if (params.dry_run === true) {
+				const preview =
+					finalContent.length > 2000 ? finalContent.slice(0, 2000) + "\n...(truncated)" : finalContent
+				task.consecutiveMistakeCount = 0
+				pushToolResult(
+					JSON.stringify(
+						{
+							ok: true,
+							dry_run: true,
+							specId,
+							doc,
+							mode: writeMode,
+							existingLength: existingContent.length,
+							resultLength: finalContent.length,
+							wouldChange: finalContent !== existingContent,
+							preview,
+						},
+						null,
+						2,
+					),
+				)
 				this.resetStreamState()
 				return
 			}

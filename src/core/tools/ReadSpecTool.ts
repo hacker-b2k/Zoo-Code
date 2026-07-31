@@ -3,10 +3,15 @@ import { formatResponse } from "../prompts/responses"
 import { BaseTool, ToolCallbacks } from "./BaseTool"
 import { getSpecServiceForTask, getSpecWorkspaceRoot, resolveSpecId } from "../specs/getSpecServiceForTask"
 import { isTruncatedDisplaySpecId, truncatedSpecIdErrorMessage } from "../specs/paths"
+import { extractHeadings } from "../specs/specMerge"
 
 interface ReadSpecParams {
 	spec_id?: string | null
 	doc: string
+	/** "full" (default) | "headings" | "history" */
+	mode?: string | null
+	/** Specific revision number to read (mode must be "full" or omitted). */
+	revision?: number | null
 }
 
 /**
@@ -50,6 +55,61 @@ export class ReadSpecTool extends BaseTool<"read_spec"> {
 			}
 
 			const specId = await resolveSpecId(task, service, workspaceRoot, params.spec_id)
+			const readMode = typeof params.mode === "string" ? params.mode.trim().toLowerCase() : "full"
+
+			// History mode: return revision list without full content
+			if (readMode === "history") {
+				try {
+					const revisions = await service.listDocumentRevisions(workspaceRoot, specId, doc)
+					task.consecutiveMistakeCount = 0
+					pushToolResult(
+						JSON.stringify(
+							{
+								ok: true,
+								specId,
+								doc,
+								revisions: revisions.map((r) => ({
+									revision: r.revision,
+									createdAt: r.createdAt,
+									byteLength: r.byteLength,
+									reason: r.reason,
+								})),
+							},
+							null,
+							2,
+						),
+					)
+				} catch (histErr) {
+					const msg = histErr instanceof Error ? histErr.message : String(histErr)
+					pushToolResult(formatResponse.toolError(`Failed to list revisions: ${msg}`))
+				}
+				return
+			}
+
+			// Specific revision mode
+			if (typeof params.revision === "number" && params.revision > 0) {
+				try {
+					const revContent = await service.getDocumentRevision(workspaceRoot, specId, doc, params.revision)
+					task.consecutiveMistakeCount = 0
+					pushToolResult(
+						JSON.stringify(
+							{
+								ok: true,
+								specId,
+								doc,
+								revision: params.revision,
+								content: revContent,
+							},
+							null,
+							2,
+						),
+					)
+				} catch (revErr) {
+					const msg = revErr instanceof Error ? revErr.message : String(revErr)
+					pushToolResult(formatResponse.toolError(`Failed to read revision: ${msg}`))
+				}
+				return
+			}
 
 			const result = await service.getDocument(workspaceRoot, specId, doc)
 			if (!result) {
@@ -58,6 +118,30 @@ export class ReadSpecTool extends BaseTool<"read_spec"> {
 				pushToolResult(
 					formatResponse.toolError(
 						`Document not found: doc=${doc} spec_id=${specId}. Use list_specs or check doc kind (requirements|design|tasks).`,
+					),
+				)
+				return
+			}
+
+			// Headings-only mode
+			if (readMode === "headings") {
+				task.consecutiveMistakeCount = 0
+				pushToolResult(
+					JSON.stringify(
+						{
+							ok: true,
+							specId,
+							doc: {
+								id: result.meta.id,
+								kind: result.meta.kind,
+								title: result.meta.title,
+								revision: result.meta.revision,
+								updatedAt: result.meta.updatedAt,
+							},
+							headings: extractHeadings(result.content),
+						},
+						null,
+						2,
 					),
 				)
 				return

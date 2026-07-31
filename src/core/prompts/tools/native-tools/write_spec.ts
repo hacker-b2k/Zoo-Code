@@ -130,6 +130,15 @@ export default {
 					type: ["boolean", "null"],
 					description: "For search_replace: replace all matches (default false)",
 				},
+				dry_run: {
+					type: ["boolean", "null"],
+					description: "Preview changes without applying. Returns match info and preview. Default false.",
+				},
+				replacements: {
+					type: ["array", "null"],
+					description:
+						'Batch of search_replace ops. Each: {"old_string":"...","new_string":"...","replace_all":false}. Applied atomically.',
+				},
 			},
 			// Problem B root cause mitigation: marking all 9 keys as `required` with
 			// `strict: true` forces MiMo (and any non-OpenAI gateway that tries to

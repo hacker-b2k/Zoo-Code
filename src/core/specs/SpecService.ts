@@ -572,17 +572,40 @@ export class SpecService {
 						const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
 						if (match) {
 							const headingText = match[2].trim()
-							// Update if heading exactly matches old title, or starts with old title
-							if (
-								headingText === oldTitle ||
-								headingText.startsWith(`${oldTitle} -`) ||
-								headingText.startsWith(`${oldTitle} —`)
-							) {
-								const prefix = match[1]
-								const suffix = headingText === oldTitle ? "" : headingText.slice(oldTitle.length)
-								lines[i] = `${prefix} ${title}${suffix}`
+							const oldLower = oldTitle.toLowerCase()
+							const headingLower = headingText.toLowerCase()
+							// Pattern 1: Exact match — "Auth System"
+							// Pattern 2: Prefix with separator — "Auth System - Requirements"
+							// Pattern 3: Suffix with separator — "Requirements for Auth System"
+							// Pattern 4: Contains (whole words) — "Auth System Requirements"
+							const isExact = headingLower === oldLower
+							const isPrefix =
+								headingLower.startsWith(`${oldLower} -`) ||
+								headingLower.startsWith(`${oldLower} —`) ||
+								headingLower.startsWith(`${oldLower}:`)
+							const isSuffix =
+								headingLower.endsWith(` ${oldLower}`) || headingLower.endsWith(` for ${oldLower}`)
+							const isContains = !isExact && !isPrefix && !isSuffix && headingLower.includes(oldLower)
+
+							if (isExact) {
+								lines[i] = `${match[1]} ${title}`
 								updated = true
-								break // Only update first heading
+								break
+							} else if (isPrefix) {
+								const afterTitle = headingText.slice(oldTitle.length)
+								lines[i] = `${match[1]} ${title}${afterTitle}`
+								updated = true
+								break
+							} else if (isSuffix) {
+								const idx = headingLower.lastIndexOf(oldLower)
+								lines[i] = `${match[1]} ${headingText.slice(0, idx)}${title}`
+								updated = true
+								break
+							} else if (isContains) {
+								lines[i] =
+									`${match[1]} ${headingText.replace(new RegExp(oldTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), title)}`
+								updated = true
+								break
 							}
 							break // Stop at first heading regardless
 						}
