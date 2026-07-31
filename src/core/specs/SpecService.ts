@@ -606,6 +606,16 @@ export class SpecService {
 									`${match[1]} ${headingText.replace(new RegExp(oldTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), title)}`
 								updated = true
 								break
+							} else {
+								// Pattern 5: Default starter heading — prepend new title
+								// e.g. "# Design" → "# NewTitle — Design"
+								const defaultHeadings = doc.kind ? [doc.kind, doc.title] : [doc.title]
+								const isDefaultHeading = defaultHeadings.some((dh) => headingLower === dh.toLowerCase())
+								if (isDefaultHeading && !headingLower.startsWith(title.toLowerCase())) {
+									lines[i] = `${match[1]} ${title} — ${headingText}`
+									updated = true
+									break
+								}
 							}
 							break // Stop at first heading regardless
 						}
