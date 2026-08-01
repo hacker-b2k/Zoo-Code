@@ -384,6 +384,39 @@ describe("F-004 Spec agent tools", () => {
 		expect(doc?.content).toContain("- [ ] Ship logout")
 	})
 
+	it("Issue #6: batch search_replace works without top-level old_string/new_string", async () => {
+		const service = new SpecService(globalStorage)
+		const ws = await service.createWorkspace({ title: "Batch Tasks", workspaceRoot: projectRoot })
+		await service.writeDocument({
+			specId: ws.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "tasks",
+			content: "# Tasks\n\n- [ ] Task one\n- [ ] Task two\n- [ ] Task three\n",
+		})
+
+		await writeSpecTool.execute(
+			{
+				title: null,
+				spec_id: ws.id,
+				doc: "tasks",
+				mode: "search_replace",
+				replacements: [
+					{ old_string: "- [ ] Task two", new_string: "- [x] Task two" },
+					{ old_string: "- [ ] Task three", new_string: "- [x] Task three" },
+				],
+			},
+			task,
+			callbacks,
+		)
+
+		const payload = JSON.parse(pushToolResult.mock.calls.at(-1)![0])
+		expect(payload.ok).toBe(true)
+		expect(payload.mode).toBe("search_replace")
+		expect(task.didToolFailInCurrentTurn).toBe(false)
+		const doc = await service.getDocument(projectRoot, ws.id, "tasks")
+		expect(doc?.content).toBe("# Tasks\n\n- [ ] Task one\n- [x] Task two\n- [x] Task three\n")
+	})
+
 	it("F-021: append mode merges without losing prior body", async () => {
 		const service = new SpecService(globalStorage)
 		const ws = await service.createWorkspace({ title: "Design Pack", workspaceRoot: projectRoot })

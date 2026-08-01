@@ -235,6 +235,9 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 
 			const writeMode = normalizeWriteSpecMode(params.mode)
 			const isSearch = writeMode === "search_replace"
+			const batchReplacements =
+				Array.isArray(params.replacements) && params.replacements.length > 0 ? params.replacements : null
+			const hasBatchReplacements = batchReplacements !== null
 			if (!isSearch && typeof params.content !== "string") {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
@@ -245,7 +248,11 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				this.resetStreamState()
 				return
 			}
-			if (isSearch && (typeof params.old_string !== "string" || !params.old_string.length)) {
+			if (
+				isSearch &&
+				!hasBatchReplacements &&
+				(typeof params.old_string !== "string" || !params.old_string.length)
+			) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
 				const reason =
@@ -422,9 +429,9 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 			let finalContent: string
 			try {
 				// Issue #6: batch replacements take priority over single search_replace
-				if (Array.isArray(params.replacements) && params.replacements.length > 0) {
+				if (batchReplacements) {
 					const contentBase = created && writeMode === "replace" ? "" : existingContent
-					finalContent = applyBatchSearchReplace(contentBase, params.replacements)
+					finalContent = applyBatchSearchReplace(contentBase, batchReplacements)
 				} else {
 					finalContent = resolveWriteBody({
 						mode: writeMode,

@@ -32,7 +32,10 @@ describe("F-004 native tool registration", () => {
 	it("write_spec schema documents create vs update and required keys", () => {
 		const fn = writeSpec.function
 		expect(fn.name).toBe("write_spec")
-		const props = fn.parameters.properties as Record<string, { type?: unknown; description?: string }>
+		const props = fn.parameters.properties as Record<
+			string,
+			{ type?: unknown; description?: string; items?: Record<string, unknown> }
+		>
 		// title may be string or string|null depending on schema strictness
 		expect(props.title.type === "string" || Array.isArray(props.title.type)).toBe(true)
 		expect(props.spec_id.type).toEqual(["string", "null"])
@@ -43,6 +46,12 @@ describe("F-004 native tool registration", () => {
 		// The official OpenAI provider re-injects all-required via
 		// convertToolSchemaForOpenAI (enableStrict: true path).
 		expect(fn.parameters.required).toEqual(["doc"])
+		expect(props.replacements.type).toEqual(["array", "null"])
+		expect(props.replacements.items).toMatchObject({
+			type: "object",
+			required: ["old_string", "new_string"],
+			additionalProperties: false,
+		})
 		expect(fn.description).toContain("Create a new Spec Workspace")
 		expect(fn.description).toContain('"spec_id": null')
 	})

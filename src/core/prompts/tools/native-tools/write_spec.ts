@@ -138,6 +138,25 @@ export default {
 					type: ["array", "null"],
 					description:
 						'Batch of search_replace ops. Each: {"old_string":"...","new_string":"...","replace_all":false}. Applied atomically.',
+					items: {
+						type: "object",
+						properties: {
+							old_string: {
+								type: "string",
+								description: "Exact non-empty text to find",
+							},
+							new_string: {
+								type: "string",
+								description: "Replacement text (may be empty)",
+							},
+							replace_all: {
+								type: "boolean",
+								description: "Replace every match for this operation (default false)",
+							},
+						},
+						required: ["old_string", "new_string"],
+						additionalProperties: false,
+					},
 				},
 			},
 			// Problem B root cause mitigation: marking all 9 keys as `required` with
