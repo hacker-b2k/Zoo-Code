@@ -1,4 +1,4 @@
-import { type ToolName } from "@roo-code/types"
+import { toolNames, type ToolName } from "@roo-code/types"
 
 import type { ToolUse, McpToolUse } from "../../shared/tools"
 import { NativeToolCallParser } from "./NativeToolCallParser"
@@ -27,7 +27,8 @@ import { NativeToolCallParser } from "./NativeToolCallParser"
  *      </function>
  *    </tool_call>
  * 6. Bare <function=name>…</function> without outer tool_call
- * 7. Unclosed trailing </tool_call> / </function> (stream truncation)
+ * 7. Direct legacy tool tags: <attempt_completion>{"result":"done"}</attempt_completion>
+ * 8. Unclosed trailing </tool_call> / </function> (stream truncation)
  *
  * Values "None" / "null" / "undefined" / empty are normalized before native parse
  * so nullable tool fields (e.g. write_spec.spec_id) work after XML recovery.
@@ -84,6 +85,24 @@ const FUNCTION_NAME_ATTR_BLOCK_RE =
 	/<\s*(?:function|tool|invoke)\b([^>]*\bname\s*=\s*["']([^"']+)["'][^>]*)>([\s\S]*?)(?:<\s*\/\s*(?:function|tool|invoke)\s*>|(?=$))/gi
 
 const NAME_ATTR_RE = /\bname\s*=\s*["']([^"']+)["']/i
+
+// Some providers ignore native function calling and emit the old Roo/Cline shape
+// directly in assistant text: <attempt_completion>{"result":"done"}</attempt_completion>.
+// Build this surface from the authoritative tool registry so ordinary/custom HTML
+// tags are not mistaken for executable calls. Longer names go first for clarity.
+const DIRECT_TOOL_NAME_PATTERN = [...toolNames]
+	.sort((a, b) => b.length - a.length)
+	.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+	.join("|")
+const DIRECT_TOOL_BLOCK_RE = new RegExp(
+	`<\\s*(${DIRECT_TOOL_NAME_PATTERN})\\s*>\\s*([\\s\\S]*?)<\\s*\\/\\s*\\1\\s*>`,
+	"gi",
+)
+const DIRECT_TOOL_LOOSE_RE = new RegExp(
+	`<\\s*(${DIRECT_TOOL_NAME_PATTERN})\\s*>\\s*([\\s\\S]*?)(?:<\\s*\\/\\s*\\1\\s*>|(?=$))`,
+	"gi",
+)
+const DIRECT_TOOL_SURFACE_RE = new RegExp(`<\\s*\\/?\\s*(?:${DIRECT_TOOL_NAME_PATTERN})(?:\\s*>|\\s*$)`, "i")
 
 /** Inner-content detectors (any parameter style, any function-name style). */
 const HAS_FUNCTION_MARKUP_RE = /<\s*function\s*=|<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=/i
@@ -504,9 +523,63 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 		return any
 	}
 
+	// ── Pass 0: direct legacy <tool_name>{args}</tool_name> tags ─────────────
+	DIRECT_TOOL_BLOCK_RE.lastIndex = 0
+	let match: RegExpExecArray | null
+	while ((match = DIRECT_TOOL_BLOCK_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		const name = match[1]?.trim()
+		const inner = stripMarkdownFence(match[2] ?? "").trim()
+		if (!name || !inner) {
+			continue
+		}
+		try {
+			const parsed = JSON.parse(inner)
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				continue
+			}
+			const toolUse = toToolUse(name, JSON.stringify(parsed))
+			if (toolUse) {
+				toolUses.push(toolUse)
+				mark(start, end)
+			}
+		} catch {
+			// The loose pass below may recover a later complete occurrence. Invalid
+			// direct markup is sanitized before display rather than executed.
+		}
+	}
+
+	// Also recover a valid direct call whose closing tag was truncated at EOS.
+	DIRECT_TOOL_LOOSE_RE.lastIndex = 0
+	while ((match = DIRECT_TOOL_LOOSE_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		if (isSpanCovered(replacements, start, end)) {
+			continue
+		}
+		const name = match[1]?.trim()
+		const inner = stripMarkdownFence(match[2] ?? "").trim()
+		if (!name || !inner) {
+			continue
+		}
+		try {
+			const parsed = JSON.parse(inner)
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				continue
+			}
+			const toolUse = toToolUse(name, JSON.stringify(parsed))
+			if (toolUse) {
+				toolUses.push(toolUse)
+				mark(start, end)
+			}
+		} catch {
+			// Sanitization handles invalid/truncated JSON without leaking tags.
+		}
+	}
+
 	// ── Pass A: closed outer tags (JSON and/or nested MiniMax XML) ──────────
 	OUTER_CLOSED_BLOCK_RE.lastIndex = 0
-	let match: RegExpExecArray | null
 	while ((match = OUTER_CLOSED_BLOCK_RE.exec(text)) !== null) {
 		const start = match.index
 		const end = start + match[0].length
@@ -676,7 +749,7 @@ export function looksLikeTextToolCall(text: string): boolean {
 	if (!text) {
 		return false
 	}
-	return LOOKS_LIKE_TEXT_TOOL_RE.test(text) || ELICITATION_MARKUP_RE.test(text)
+	return LOOKS_LIKE_TEXT_TOOL_RE.test(text) || DIRECT_TOOL_SURFACE_RE.test(text) || ELICITATION_MARKUP_RE.test(text)
 }
 
 /**
@@ -757,6 +830,13 @@ export function stripMalformedToolCallMarkup(text: string): string {
 	}
 
 	let cleaned = text
+
+	// Strip complete or truncated direct legacy tool blocks. These names come
+	// from the registered tool list, so normal HTML/XML examples remain intact.
+	DIRECT_TOOL_BLOCK_RE.lastIndex = 0
+	cleaned = cleaned.replace(DIRECT_TOOL_BLOCK_RE, "")
+	DIRECT_TOOL_LOOSE_RE.lastIndex = 0
+	cleaned = cleaned.replace(DIRECT_TOOL_LOOSE_RE, "")
 
 	// Strip complete <tool_call>…</tool_call> blocks (even if inner is garbled)
 	// — these are unambiguous tool-call containers.
