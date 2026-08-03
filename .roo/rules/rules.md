@@ -1,5 +1,12 @@
 # Code Quality Rules
 
+## Governance Alignment
+
+- Use `integration` as the canonical working and PR target branch. Short-lived branches must branch from and merge back into `integration`; do not use `main` as the ordinary development base.
+- Scale planning to scope, risk, reversibility, and complexity. Trivial low-risk changes may use a brief checklist; substantial or high-risk work requires proportionate research, design, planning, and review.
+- Use the virtual Spec Workspace as the canonical home for agent-created requirements, designs, and implementation plans. Create repository planning documents only when the user, maintainer, or durable-record policy explicitly requires them.
+- Do not provide effort or elapsed-time estimates unless the user or maintainer explicitly requests them.
+
 1. Test Coverage:
 
     - Before attempting completion, always make sure that any code changes have test coverage

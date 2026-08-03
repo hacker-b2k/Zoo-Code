@@ -10,6 +10,7 @@ import { isEmpty } from "../../utils/object"
 import { McpHub } from "../../services/mcp/McpHub"
 import { CodeIndexManager } from "../../services/code-index/manager"
 import { SkillsManager } from "../../services/skills/SkillsManager"
+import { routeSkills } from "../../services/skills/SkillRouter"
 
 import type { SystemPromptSettings } from "./types"
 import {
@@ -56,6 +57,7 @@ async function generatePrompt(
 	modelId?: string,
 	skillsManager?: SkillsManager,
 	textOnly: boolean | "native" | "dual" | "text" = false,
+	skillQuery?: unknown,
 ): Promise<string> {
 	if (!context) {
 		throw new Error("Extension context is required for generating system prompt")
@@ -85,9 +87,11 @@ async function generatePrompt(
 	// Tool calling is native-only.
 	const effectiveProtocol = "native"
 
+	const availableSkills = skillsManager?.getSkillsForMode(mode as string) ?? []
+	const relevantSkills = routeSkills(skillQuery, availableSkills).candidates.map((candidate) => candidate.skill)
 	const [modesSection, skillsSection] = await Promise.all([
 		getModesSection(context),
-		getSkillsSection(skillsManager, mode as string),
+		getSkillsSection(skillsManager, mode as string, relevantSkills),
 	])
 
 	// Tools catalog is not included in the system prompt.
@@ -150,6 +154,7 @@ export const SYSTEM_PROMPT = async (
 	modelId?: string,
 	skillsManager?: SkillsManager,
 	textOnly: boolean | "native" | "dual" | "text" = false,
+	skillQuery?: unknown,
 ): Promise<string> => {
 	if (!context) {
 		throw new Error("Extension context is required for generating system prompt")
@@ -179,5 +184,6 @@ export const SYSTEM_PROMPT = async (
 		modelId,
 		skillsManager,
 		textOnly,
+		skillQuery,
 	)
 }

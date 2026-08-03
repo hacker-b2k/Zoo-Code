@@ -75,6 +75,36 @@ function isMissing(value: unknown): boolean {
 }
 
 /**
+ * Safe default values for common tools. These are applied BEFORE validation
+ * when the model omits a required parameter. Only parameters that are 100%
+ * safe to default are included — ambiguous or destructive params are not.
+ */
+const SAFE_PARAM_DEFAULTS: Record<string, Record<string, unknown>> = {
+	list_files: { path: ".", recursive: false },
+	collect_results: { unread_only: true },
+	list_workers: { include_completed: false },
+	get_worker_status: {},
+}
+
+/**
+ * Apply safe defaults for missing required parameters before validation.
+ * Mutates the params object in-place. Only fills values that are undefined,
+ * null, or empty string — explicit values are never overwritten.
+ *
+ * @param toolName - The tool name.
+ * @param params - The raw parameter object (mutated in-place).
+ */
+export function applySafeDefaults(toolName: string, params: Record<string, unknown>): void {
+	const defaults = SAFE_PARAM_DEFAULTS[toolName]
+	if (!defaults) return
+	for (const [key, value] of Object.entries(defaults)) {
+		if (params[key] === undefined || params[key] === null || params[key] === "") {
+			params[key] = value
+		}
+	}
+}
+
+/**
  * Validate that all required parameters for a tool are present and non-empty.
  *
  * Returns the first missing parameter in required array order, or null if all
@@ -234,6 +264,10 @@ export async function runToolCallGuard(
 	params: Record<string, unknown>,
 	ctx: GuardContext,
 ): Promise<GuardViolation | null> {
+	// Apply safe defaults before validation so the model doesn't fail on
+	// common omissions like missing path or unread_only.
+	applySafeDefaults(toolName, params)
+
 	const requiredViolation = validateRequiredParams(toolName, params)
 
 	if (requiredViolation) {

@@ -20,12 +20,14 @@ This is the foundation. Everything below serves this directive.
 - If it takes longer to do it right, take longer.
 - Polished, complete, tested, documented.
 
-### R2 — Mandatory Planning
-- Every change starts with research + design + plan (see `PLANNING_REQUIRED.md`).
-- No code before the plan is written and reviewed.
+### R2 — Risk-Proportionate Planning
+- Assess each change's scope, risk, reversibility, and complexity (see `PLANNING_REQUIRED.md`).
+- Trivial, low-risk changes may use a brief checklist; substantial or high-risk work requires written research, design, planning, and review proportionate to its impact.
+- The virtual Spec Workspace is canonical for agent-created plans. Repository planning documents are created only when explicitly requested or required as durable project records.
+- Do not provide effort or elapsed-time estimates unless the user or maintainer explicitly requests them.
 
 ### R3 — No Shortcuts That Create Limitations
-- No skipping files, tests, validation, or verification.
+- No skipping affected files or relevant validation and verification; select checks proportionate to scope and risk.
 - No `any` types, no suppressed errors, no disabled lint rules without justification.
 - No bypassing safety mechanisms (force push, no-verify, shallow clone) unless documented + approved.
 
@@ -41,7 +43,7 @@ This is the foundation. Everything below serves this directive.
 - Match existing patterns and conventions in the codebase.
 
 ### R6 — Complete Verification
-- After every change: type check + tests + lint must pass.
+- After every change, run the targeted type checks, tests, lint, and other validation applicable to the affected scope and risk.
 - Manual verification of functional/visual behavior where applicable.
 - Clean up any temporary files created during work.
 
@@ -81,18 +83,16 @@ This is the foundation. Everything below serves this directive.
 
 ## Definition of Done (Every Task)
 
-A task is DONE only when ALL of these are true:
+A task is DONE only when all applicable items are true:
 
-- [ ] Plan was written and followed
+- [ ] Planning matched the change's risk and complexity and was followed
 - [ ] Code is complete (no TODOs, no placeholders in final output)
-- [ ] All new logic has unit tests
-- [ ] `pnpm check-types` passes
-- [ ] `pnpm test` passes (relevant suites)
-- [ ] `pnpm lint` passes
-- [ ] Manual verification performed and documented
-- [ ] Docs updated if behavior/API changed
-- [ ] No temporary files left behind
-- [ ] Changes are committed on a proper branch with a clear message
+- [ ] New logic has appropriate tests
+- [ ] Targeted type checks, tests, and lint pass where applicable
+- [ ] Manual verification was performed and documented where applicable
+- [ ] Docs were updated if behavior/API changed
+- [ ] No temporary files were left behind
+- [ ] Changes target `integration`, directly or through a short-lived branch and PR, with a clear message
 
 ---
 
@@ -107,4 +107,4 @@ A task is DONE only when ALL of these are true:
 ---
 
 *Requirements set by: workspace owner (hacker-b2k)*
-*Last updated: 2026-06-24*
+*Last updated: 2026-08-02*

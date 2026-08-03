@@ -987,6 +987,7 @@ export interface ClineAskUseMcpServer {
 
 export interface ClineApiReqInfo {
 	request?: string
+	status?: "active" | "completed" | "failed" | "cancelled"
 	tokensIn?: number
 	tokensOut?: number
 	cacheWrites?: number

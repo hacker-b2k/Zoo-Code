@@ -3,5 +3,5 @@ export function markdownFormattingSection(): string {
 
 MARKDOWN RULES
 
-ALL responses MUST show ANY \`language construct\` OR filename reference as clickable, exactly as [\`filename OR language.declaration()\`](relative/file/path.ext:line); line is required for \`syntax\` and optional for filename links. This applies to ALL markdown responses and ALSO those in attempt_completion`
+When a response references a specific file, use a clickable link [\`path\`](path) so users can open it directly. When naming a function/class/method in an explanation, prefer a clickable link with a line number when known, e.g. [\`myFunction()\`](src/file.ts:42). Plain technical prose does not need artificial links; do not invent file locations.`
 }

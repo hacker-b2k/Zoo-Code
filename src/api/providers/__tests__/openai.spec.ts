@@ -280,7 +280,7 @@ describe("OpenAiHandler", () => {
 			expect(textChunks[0].text).toBe("Test response")
 		})
 
-		it("uses non-streaming fallback when streaming yields no assistant content", async () => {
+		it("does not replay a reasoning-only stream as a non-streaming request", async () => {
 			mockCreate.mockImplementationOnce(async () => ({
 				[Symbol.asyncIterator]: async function* () {
 					yield {
@@ -289,22 +289,55 @@ describe("OpenAiHandler", () => {
 					}
 				},
 			}))
-			mockCreate.mockResolvedValueOnce({
-				choices: [
-					{ message: { role: "assistant", content: "fallback answer" }, finish_reason: "stop", index: 0 },
-				],
-				usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-			})
 
 			const chunks: any[] = []
 			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
 				chunks.push(chunk)
 			}
 
-			expect(mockCreate).toHaveBeenCalledTimes(2)
-			expect(mockCreate).toHaveBeenNthCalledWith(2, expect.objectContaining({ stream: false }))
+			// Only the original streaming request must run — no hidden non-streaming replay.
+			expect(mockCreate).toHaveBeenCalledTimes(1)
 			expect(chunks).toContainEqual({ type: "reasoning", text: "thinking only" })
-			expect(chunks).toContainEqual({ type: "text", text: "fallback answer" })
+		})
+
+		it("throws when a stream yields no content at all (truly empty)", async () => {
+			mockCreate.mockImplementationOnce(async () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield {
+						choices: [{ delta: {}, index: 0 }],
+						usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+					}
+				},
+			}))
+
+			const chunks: any[] = []
+			let caughtError: Error | undefined
+			try {
+				for await (const chunk of handler.createMessage(systemPrompt, messages)) {
+					chunks.push(chunk)
+				}
+			} catch (error) {
+				caughtError = error as Error
+			}
+
+			expect(mockCreate).toHaveBeenCalledTimes(1)
+			expect(caughtError?.message).toContain("returned no assistant content")
+		})
+
+		it("forwards the request abort signal to the OpenAI SDK", async () => {
+			const abortController = new AbortController()
+
+			for await (const _chunk of handler.createMessage(systemPrompt, messages, {
+				taskId: "test-task",
+				abortSignal: abortController.signal,
+			})) {
+				// drain
+			}
+
+			expect(mockCreate).toHaveBeenCalledWith(
+				expect.objectContaining({ stream: true }),
+				expect.objectContaining({ signal: abortController.signal }),
+			)
 		})
 
 		it("accepts OpenAI-compatible output_text deltas as assistant text", async () => {

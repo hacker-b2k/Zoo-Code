@@ -22,11 +22,13 @@ function escapeXml(value: string): string {
 export async function getSkillsSection(
 	skillsManager: SkillsManagerLike | undefined,
 	currentMode: string | undefined,
+	relevantSkills?: ReturnType<SkillsManagerLike["getSkillsForMode"]>,
 ): Promise<string> {
 	if (!skillsManager || !currentMode) return ""
 
-	// Get skills filtered by current mode (with override resolution)
-	const skills = skillsManager.getSkillsForMode(currentMode)
+	// The caller supplies the bounded route for the current turn. Falling back
+	// to all mode skills is retained only for UI/snapshot compatibility callers.
+	const skills = relevantSkills ?? skillsManager.getSkillsForMode(currentMode)
 	if (skills.length === 0) return ""
 
 	const skillsXml = skills
@@ -49,11 +51,11 @@ ${skillsXml}
 <mandatory_skill_check>
 REQUIRED PRECONDITION
 
-Before producing ANY user-facing response, you MUST perform a skill applicability check.
+The metadata above contains only skills routed as relevant to the current turn.
 
 Step 1: Skill Evaluation
-- Evaluate the user's request against ALL available skill <description> entries in <available_skills>.
-- Determine whether at least one skill clearly and unambiguously applies.
+- Evaluate the bounded candidate list above.
+- Determine whether one candidate clearly applies.
 
 Step 2: Branching Decision
 

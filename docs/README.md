@@ -6,11 +6,11 @@
 
 ## 🔒 Governance (Read These First)
 
-| Document                                                   | Purpose                                                                   |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [`../WORKSPACE_GOVERNANCE.md`](../WORKSPACE_GOVERNANCE.md) | **The law.** No shortcuts, no cheating, plan first. Read before any work. |
-| [`../PLANNING_REQUIRED.md`](../PLANNING_REQUIRED.md)       | The mandatory 5-stage pipeline before every change.                       |
-| [`REQUIREMENTS.md`](REQUIREMENTS.md)                       | Standing requirements that apply to every task.                           |
+| Document                                                   | Purpose                                                                                 |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [`../WORKSPACE_GOVERNANCE.md`](../WORKSPACE_GOVERNANCE.md) | **The law.** No shortcuts, no cheating, and planning proportionate to risk.             |
+| [`../PLANNING_REQUIRED.md`](../PLANNING_REQUIRED.md)       | Risk/complexity planning levels and canonical virtual Spec Workspace policy.            |
+| [`REQUIREMENTS.md`](REQUIREMENTS.md)                       | Standing requirements that apply to every task.                                         |
 
 ---
 
@@ -40,29 +40,32 @@
 
 ---
 
-## 📋 Living Documents (Updated Per Task)
+## 📋 Planning and Durable Records
 
-| Folder                     | Purpose                               |
-| -------------------------- | ------------------------------------- |
-| [`research/`](research/)   | One research doc per investigation.   |
-| [`plans/`](plans/)         | One implementation plan per task.     |
-| [`decisions/`](decisions/) | Architecture Decision Records (ADRs). |
+The virtual Spec Workspace is canonical for agent-created requirements, designs, and implementation plans. Repository documents are conditional: create them only when a maintainer or task explicitly requests a versioned artifact, or when an ADR/durable project record is required.
+
+| Folder                     | Purpose                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| [`research/`](research/)   | Explicitly requested, repository-visible research records.                       |
+| [`plans/`](plans/)         | Explicitly requested, repository-visible implementation plans.                   |
+| [`decisions/`](decisions/) | Architecture Decision Records (ADRs) retained as durable project history.         |
 
 ---
 
 ## ⚡ The Golden Workflow
 
 ```
-For ANY task:
+For any task:
 
-1. Read WORKSPACE_GOVERNANCE.md + REQUIREMENTS.md
-2. RESEARCH  → write docs/research/<topic>.md
-3. DESIGN    → write docs/decisions/ADR-NNN if architectural
-4. PLAN      → write docs/plans/<task>.md
-5. REVIEW    → self-review the plan
-6. EXECUTE   → code, following the plan step by step
-7. VERIFY    → check-types + test + lint + manual
-8. DONE      → only when Definition of Done is fully met
+1. Read the relevant governance and requirements.
+2. ASSESS    → determine scope, risk, reversibility, and complexity.
+3. PLAN      → brief checklist for trivial work; concise plan for standard work;
+               full research/design/plan/review for high-risk or architectural work.
+4. RECORD    → use the virtual Spec Workspace by default; create repository docs only
+               when explicitly requested or required as durable project history.
+5. EXECUTE   → follow the selected plan and update it if scope materially changes.
+6. VERIFY    → run targeted checks that prove the change.
+7. DONE      → only when the applicable Definition of Done is met.
 ```
 
 ---
@@ -71,11 +74,13 @@ For ANY task:
 
 1. **No shortcuts** that create limitations.
 2. **No cheating** — every claim is verifiable.
-3. **Plan first** — zero code without a written plan.
-4. **No half-work** — done means verified end-to-end.
-5. **Industry standard** — production-grade only.
+3. **Plan proportionately** — rigor follows risk and complexity.
+4. **Canonical planning home** — agent-created plans live in the virtual Spec Workspace unless a repository artifact is explicitly required.
+5. **No unsolicited time estimates** — provide effort or elapsed-time estimates only when explicitly requested.
+6. **No half-work** — done means verified end-to-end.
+7. **Industry standard** — production-grade only.
 
 ---
 
 _This workspace is set up for high-quality, professional, limitation-free engineering._
-_Last updated: 2026-06-24_
+_Last updated: 2026-08-02_

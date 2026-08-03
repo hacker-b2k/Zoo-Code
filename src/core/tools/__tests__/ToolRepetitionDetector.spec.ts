@@ -16,11 +16,17 @@ vitest.mock("../../../i18n", () => ({
 	}),
 }))
 
-function createToolUse(name: string, displayName?: string, params: Record<string, string> = {}): ToolUse {
+function createToolUse(
+	name: string,
+	displayName?: string,
+	params: Record<string, string> = {},
+	nativeArgs?: Record<string, unknown>,
+): ToolUse {
 	return {
 		type: "tool_use",
 		name: (displayName || name) as ToolName,
 		params,
+		nativeArgs,
 		partial: false,
 	}
 }
@@ -289,6 +295,19 @@ describe("ToolRepetitionDetector", () => {
 		})
 	})
 
+	// Phase 0 regression: malformed retries must be bounded immediately. The
+	// first call is allowed so validation can return the missing-parameter error;
+	// replaying the exact same invalid payload must not enter another recovery
+	// cycle. This intentionally fails until ToolRetryGuard replaces the generic
+	// execution repetition policy.
+	it("blocks the second identical apply_diff call missing diff", () => {
+		const detector = new ToolRepetitionDetector()
+		const malformed = createToolUse("apply_diff", "apply_diff", {}, { path: "src/existing.ts" })
+
+		expect(detector.check(malformed).allowExecution).toBe(true)
+		expect(detector.check(malformed).allowExecution).toBe(false)
+	})
+
 	// ===== Explicit Nth Call Blocking tests =====
 	describe("explicit Nth call blocking behavior", () => {
 		it("should allow the 1st call but block on the 2nd call for limit 1", () => {
@@ -539,6 +558,62 @@ describe("ToolRepetitionDetector", () => {
 			const result = detector.check(legacyTool)
 			expect(result.allowExecution).toBe(false)
 			expect(result.askUser).toBeDefined()
+		})
+	})
+
+	describe("Polling tool exemption", () => {
+		it("should never block collect_results regardless of repetition count", () => {
+			const detector = new ToolRepetitionDetector(2)
+			const collectTool = createToolUse("collect_results", "collect_results", {}, { unread_only: true })
+
+			// Call 10 times — should never block
+			for (let i = 0; i < 10; i++) {
+				expect(detector.check(collectTool).allowExecution).toBe(true)
+			}
+		})
+
+		it("should never block list_workers regardless of repetition count", () => {
+			const detector = new ToolRepetitionDetector(2)
+			const listTool = createToolUse("list_workers", "list_workers", {}, { include_completed: false })
+
+			for (let i = 0; i < 10; i++) {
+				expect(detector.check(listTool).allowExecution).toBe(true)
+			}
+		})
+
+		it("should never block get_worker_status regardless of repetition count", () => {
+			const detector = new ToolRepetitionDetector(2)
+			const statusTool = createToolUse("get_worker_status", "get_worker_status", {}, { worker_id: "abc" })
+
+			for (let i = 0; i < 10; i++) {
+				expect(detector.check(statusTool).allowExecution).toBe(true)
+			}
+		})
+
+		it("should still block non-polling tools with same args", () => {
+			const detector = new ToolRepetitionDetector(2)
+			const readTool = createToolUse("read_file", "read_file", { path: "test.txt" })
+
+			// First 2 calls allowed, 3rd blocked
+			expect(detector.check(readTool).allowExecution).toBe(true)
+			expect(detector.check(readTool).allowExecution).toBe(true)
+			expect(detector.check(readTool).allowExecution).toBe(false)
+		})
+
+		it("should not reset the non-polling counter when a polling tool is used between", () => {
+			const detector = new ToolRepetitionDetector(2)
+			const readTool = createToolUse("read_file", "read_file", { path: "test.txt" })
+			const collectTool = createToolUse("collect_results", "collect_results", {}, { unread_only: true })
+
+			// Use read_file twice (at limit)
+			expect(detector.check(readTool).allowExecution).toBe(true)
+			expect(detector.check(readTool).allowExecution).toBe(true)
+
+			// Use collect_results in between — should not reset read_file counter
+			detector.check(collectTool)
+
+			// read_file should now be blocked (counter was at limit)
+			expect(detector.check(readTool).allowExecution).toBe(false)
 		})
 	})
 })

@@ -109,12 +109,12 @@ export class AttemptCompletionTool extends BaseTool<"attempt_completion"> {
 						const err =
 							`Cannot attempt_completion while ${running} worker(s) are still active.\n` +
 							`${lines}\n\n` +
-							`Wait for workers, use list_workers / get_worker_status / collect_results for evidence, ` +
-							`or call cancel_worker(worker_id) to stop a worker. ` +
-							`Worker completions are also pushed into this chat automatically. ` +
-							`Never guess worker status from silence.`
-						task.consecutiveMistakeCount++
-						task.recordToolError("attempt_completion")
+							`ACTION REQUIRED: Call collect_results(unread_only=true) now to check for completed workers. ` +
+							`If no results yet, call list_workers(include_completed=false) to see status. ` +
+							`Only attempt_completion after ALL workers are completed or cancelled.`
+						// Do NOT increment consecutiveMistakeCount — this is a policy block,
+						// not a model mistake. Incrementing it would trigger "Model Response
+						// Incomplete" after 3 blocked attempts, which is incorrect.
 						await task.say("error", err)
 						pushToolResult(formatResponse.toolError(err))
 						return

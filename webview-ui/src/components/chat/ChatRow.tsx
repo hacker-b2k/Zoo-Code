@@ -261,13 +261,13 @@ export const ChatRowContent = ({
 		vscode.postMessage({ type: "selectImages", context: "edit", messageTs: message.ts })
 	}, [message.ts])
 
-	const [cost, apiReqCancelReason, apiReqStreamingFailedMessage] = useMemo(() => {
+	const [cost, apiReqCancelReason, apiReqStreamingFailedMessage, apiReqStatus] = useMemo(() => {
 		if (message.text !== null && message.text !== undefined && message.say === "api_req_started") {
 			const info = safeJsonParse<ClineApiReqInfo>(message.text)
-			return [info?.cost, info?.cancelReason, info?.streamingFailedMessage]
+			return [info?.cost, info?.cancelReason, info?.streamingFailedMessage, info?.status]
 		}
 
-		return [undefined, undefined, undefined]
+		return [undefined, undefined, undefined, undefined]
 	}, [message.text, message.say])
 
 	// When resuming task, last won't be api_req_failed but a resume_task
@@ -383,7 +383,7 @@ export const ChatRowContent = ({
 						) : (
 							getIconSpan("error", errorColor)
 						)
-					) : cost !== null && cost !== undefined ? (
+					) : apiReqStatus === "completed" || (cost !== null && cost !== undefined) ? (
 						getIconSpan("arrow-swap", normalColor)
 					) : apiRequestFailedMessage ? (
 						getIconSpan("error", errorColor)
@@ -402,7 +402,7 @@ export const ChatRowContent = ({
 								{t("chat:apiRequest.streamingFailed")}
 							</span>
 						)
-					) : cost !== null && cost !== undefined ? (
+					) : apiReqStatus === "completed" || (cost !== null && cost !== undefined) ? (
 						<span style={{ color: normalColor }}>{t("chat:apiRequest.title")}</span>
 					) : apiRequestFailedMessage ? (
 						<span style={{ color: errorColor }}>{t("chat:apiRequest.failed")}</span>
@@ -424,6 +424,7 @@ export const ChatRowContent = ({
 		message,
 		isMcpServerResponding,
 		apiReqCancelReason,
+		apiReqStatus,
 		cost,
 		apiRequestFailedMessage,
 		t,
@@ -1690,6 +1691,16 @@ export const ChatRowContent = ({
 						/>
 					)
 				}
+				case "stream_stalled_warning":
+					return (
+						<WarningRow
+							title={t("chat:streamStalled.title", "Slow Response")}
+							message={
+								message.text ||
+								t("chat:streamStalled.message", "Provider is responding slowly, please wait...")
+							}
+						/>
+					)
 				default:
 					return (
 						<>

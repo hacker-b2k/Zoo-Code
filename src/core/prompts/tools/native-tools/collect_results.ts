@@ -3,7 +3,9 @@ import type OpenAI from "openai"
 const DESCRIPTION = `Drain the worker result inbox for the main orchestrator.
 
 Returns completed summaries, failures, provider switches, and cancellations.
-Call periodically after spawning workers, or when list_workers shows finished workers.`
+Call periodically after spawning workers, or when list_workers shows finished workers.
+
+NEVER use execute_command with sleep/timer when waiting for workers — this blocks the orchestrator and delays result delivery. collect_results returns immediately; if no results yet, do other work or call collect_results again in your next turn.`
 
 export default {
 	type: "function",

@@ -95,6 +95,7 @@ import { getTaskDirectoryPath } from "../../utils/storage"
 // prompts
 import { formatResponse } from "../prompts/responses"
 import { detectActionIntent, type ActionIntent } from "../prompts/detectActionIntent"
+import { shouldReplaceWithCanonicalCompletion } from "../agent-policy/ResponseReconciler"
 import { SYSTEM_PROMPT } from "../prompts/system"
 import { buildNativeToolsArrayWithRestrictions } from "./build-tools"
 
@@ -146,6 +147,7 @@ const MAX_CONSECUTIVE_NO_TOOL_RESPONSES = 3
 
 const MAX_EXPONENTIAL_BACKOFF_SECONDS = 600 // 10 minutes
 const DEFAULT_USAGE_COLLECTION_TIMEOUT_MS = 5000 // 5 seconds
+const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 120_000 // 2 minutes without any provider event
 const FORCED_CONTEXT_REDUCTION_PERCENT = 75 // Keep 75% of context (remove 25%) on context window errors
 const MAX_CONTEXT_WINDOW_RETRIES = 3 // Maximum retries for context window errors
 
@@ -352,6 +354,8 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private askResponse?: ClineAskResponse
 	private askResponseText?: string
 	private askResponseImages?: string[]
+	private pendingAskTs?: number
+	private taskLoopActive = false
 	public lastMessageTs?: number
 	private autoApprovalTimeoutRef?: NodeJS.Timeout
 
@@ -1621,6 +1625,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// The state is mutable if the message is complete and the task will
 		// block (via the `pWaitFor`).
 		const isBlocking = !(this.askResponse !== undefined || this.lastMessageTs !== askTs)
+		if (isBlocking) {
+			// Publish readiness only after this ask has initialized and cleared the
+			// previous response mailbox. User messages received before this point are
+			// durably queued by handleWebviewUserMessage() and drained below.
+			this.pendingAskTs = askTs
+		}
 		const isMessageQueued = !this.messageQueueService.isEmpty()
 		// Keep queued user messages intact during command_output asks. Those asks
 		// are terminal flow-control, not conversational turns.
@@ -1714,6 +1724,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		)
 
 		if (this.lastMessageTs !== askTs) {
+			if (this.pendingAskTs === askTs) {
+				this.pendingAskTs = undefined
+			}
 			// Could happen if we send multiple asks in a row i.e. with
 			// command_output. It's important that when we know an ask could
 			// fail, it is handled gracefully.
@@ -1721,6 +1734,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 
 		const result = { response: this.askResponse!, text: this.askResponseText, images: this.askResponseImages }
+		if (this.pendingAskTs === askTs) {
+			this.pendingAskTs = undefined
+		}
 		this.askResponse = undefined
 		this.askResponseText = undefined
 		this.askResponseImages = undefined
@@ -1815,6 +1831,40 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	}
 
 	/**
+	 * Deliver a conversational user message without assuming that transport
+	 * completion means Task.ask() is already waiting. A response that arrives in
+	 * the small request-completed -> completion-ask gap must be queued; writing it
+	 * into the shared askResponse fields would let the later ask initialization
+	 * erase it silently.
+	 */
+	public async handleWebviewUserMessage(
+		text?: string,
+		images?: string[],
+	): Promise<"responded" | "queued" | "started"> {
+		if (this.pendingAskTs !== undefined) {
+			this.handleWebviewAskResponse("messageResponse", text, images)
+			return "responded"
+		}
+
+		if (this.taskLoopActive) {
+			this.messageQueueService.addMessage(text ?? "", images)
+			return "queued"
+		}
+
+		const normalizedText = (text ?? "").trim()
+		if (!normalizedText && !images?.length) {
+			return "queued"
+		}
+
+		await this.say("user_feedback", normalizedText, images)
+		await this.initiateTaskLoop([
+			{ type: "text", text: `<user_message>\n${normalizedText}\n</user_message>` },
+			...formatResponse.imageBlocks(images),
+		])
+		return "started"
+	}
+
+	/**
 	 * Cancel any pending auto-approval timeout.
 	 * Called when user interacts (types, clicks buttons, etc.) to prevent the timeout from firing.
 	 */
@@ -1886,7 +1936,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// Handle the message directly instead of routing through the webview.
 				// This avoids a race condition where the webview's message state hasn't
 				// hydrated yet, causing it to interpret the message as a new task request.
-				this.handleWebviewAskResponse("messageResponse", text, images)
+				await this.handleWebviewUserMessage(text, images)
 			} else {
 				console.error("[Task#submitUserMessage] Provider reference lost")
 			}
@@ -2078,6 +2128,22 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Strip any internal-only tags that may have leaked from the system prompt
 		// into the assistant's visible response text.
 		text = this.sanitizeAssistantText(this.coerceMessageText(text, `say "${type}"`))
+
+		// attempt_completion owns the canonical actionable final. If the immediately
+		// preceding finalized assistant text is the same (ignoring surrounding
+		// whitespace), remove it before persisting/rendering completion_result.
+		if (type === "completion_result" && text) {
+			const lastMessage = this.clineMessages.at(-1)
+			if (
+				lastMessage?.type === "say" &&
+				lastMessage.say === "text" &&
+				lastMessage.partial !== true &&
+				shouldReplaceWithCanonicalCompletion(lastMessage, { text })
+			) {
+				this.clineMessages.pop()
+				await this.saveClineMessages()
+			}
+		}
 
 		if (partial !== undefined) {
 			const lastMessage = this.clineMessages.at(-1)
@@ -2831,6 +2897,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	// Task Loop
 
 	private async initiateTaskLoop(userContent: Anthropic.Messages.ContentBlockParam[]): Promise<void> {
+		if (this.taskLoopActive) {
+			throw new Error(`[Task#initiateTaskLoop] task ${this.taskId}.${this.instanceId} is already running`)
+		}
+		this.taskLoopActive = true
+
 		// Kicks off the checkpoints initialization process in the background.
 		// `getCheckpointService` wraps its full body in a try/catch and returns
 		// `undefined` on failure (see src/core/checkpoints/index.ts), so the
@@ -2849,42 +2920,50 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 		this.emit(RooCodeEventName.TaskStarted)
 
-		while (!this.abort) {
-			const didEndLoop = await this.recursivelyMakeClineRequests(nextUserContent, includeFileDetails)
-			includeFileDetails = false // We only need file details the first time.
+		try {
+			while (!this.abort) {
+				const didEndLoop = await this.recursivelyMakeClineRequests(nextUserContent, includeFileDetails)
+				includeFileDetails = false // We only need file details the first time.
 
-			// The way this agentic loop works is that cline will be given a
-			// task that he then calls tools to complete. Unless there's an
-			// attempt_completion call, we keep responding back to him with his
-			// tool's responses until he either attempt_completion or does not
-			// use anymore tools. If he does not use anymore tools, we ask him
-			// to consider if he's completed the task and then call
-			// attempt_completion, otherwise proceed with completing the task.
-			// There is a MAX_REQUESTS_PER_TASK limit to prevent infinite
-			// requests, but Cline is prompted to finish the task as efficiently
-			// as he can.
+				// The way this agentic loop works is that cline will be given a
+				// task that he then calls tools to complete. Unless there's an
+				// attempt_completion call, we keep responding back to him with his
+				// tool's responses until he either attempt_completion or does not
+				// use anymore tools. If he does not use anymore tools, we ask him
+				// to consider if he's completed the task and then call
+				// attempt_completion, otherwise proceed with completing the task.
+				// There is a MAX_REQUESTS_PER_TASK limit to prevent infinite
+				// requests, but Cline is prompted to finish the task as efficiently
+				// as he can.
 
-			if (didEndLoop) {
-				// For now a task never 'completes'. This will only happen if
-				// the user hits max requests and denies resetting the count.
-				break
-			} else {
-				// Guard: for conversational turns (no action intent), don't
-				// push a tool-nudge — it would cause identity confusion.
-				// Instead, just end the loop (the model correctly answered).
-				if (!this.lastActionIntent) {
+				if (didEndLoop) {
+					// For now a task never 'completes'. This will only happen if
+					// the user hits max requests and denies resetting the count.
 					break
+				} else {
+					// Guard: for conversational turns (no action intent), don't
+					// push a tool-nudge — it would cause identity confusion.
+					// Instead, just end the loop (the model correctly answered).
+					if (!this.lastActionIntent) {
+						break
+					}
+					nextUserContent = [
+						{
+							type: "text",
+							text: formatResponse.noToolsUsed(
+								this.lastActionIntent,
+								this.pipeline.state.consecutiveNoToolCountValue,
+							),
+						},
+					]
 				}
-				nextUserContent = [
-					{
-						type: "text",
-						text: formatResponse.noToolsUsed(
-							this.lastActionIntent,
-							this.pipeline.state.consecutiveNoToolCountValue,
-						),
-					},
-				]
 			}
+		} finally {
+			this.taskLoopActive = false
+			// A message may have arrived after transport completion but before tool
+			// presentation finished. Start it as the next turn once this loop owns no
+			// more work; processQueuedMessages() defers to avoid recursive loop entry.
+			this.processQueuedMessages()
 		}
 	}
 
@@ -2988,6 +3067,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				"api_req_started",
 				JSON.stringify({
 					apiProtocol,
+					status: "active",
 				}),
 			)
 
@@ -3082,6 +3162,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			this.clineMessages[lastApiReqIndex].text = JSON.stringify({
 				apiProtocol,
+				status: "active",
 			} satisfies ClineApiReqInfo)
 
 			await this.saveClineMessages()
@@ -3106,7 +3187,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// anyways, so it remains solely for legacy purposes to keep track
 				// of prices in tasks from history (it's worth removing a few months
 				// from now).
-				const updateApiReqMsg = (cancelReason?: ClineApiReqCancelReason, streamingFailedMessage?: string) => {
+				const updateApiReqMsg = (
+					cancelReason?: ClineApiReqCancelReason,
+					streamingFailedMessage?: string,
+					status?: ClineApiReqInfo["status"],
+				) => {
 					if (lastApiReqIndex < 0 || !this.clineMessages[lastApiReqIndex]) {
 						return
 					}
@@ -3140,6 +3225,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 					this.clineMessages[lastApiReqIndex].text = JSON.stringify({
 						...existingData,
+						status: status ?? existingData.status,
 						tokensIn: costResult.totalInputTokens,
 						tokensOut: costResult.totalOutputTokens,
 						cacheWrites: cacheWriteTokens,
@@ -3166,7 +3252,11 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 					// Update `api_req_started` to have cancelled and cost, so that
 					// we can display the cost of the partial stream and the cancellation reason
-					updateApiReqMsg(cancelReason, streamingFailedMessage)
+					updateApiReqMsg(
+						cancelReason,
+						streamingFailedMessage,
+						cancelReason === "user_cancelled" ? "cancelled" : "failed",
+					)
 					await this.saveClineMessages()
 
 					// Signals to provider that it can retrieve the saved messages
@@ -3212,51 +3302,112 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				const stream = this.attemptApiRequest(currentItem.retryAttempt ?? 0, { skipProviderRateLimit: true })
 				let assistantMessage = ""
 				let reasoningMessage = ""
+				let hasObservableStreamOutput = false
 				const pendingGroundingSources: GroundingSource[] = []
 				this.isStreaming = true
 
 				try {
 					const iterator = stream[Symbol.asyncIterator]()
 
-					// Helper to race iterator.next() with abort signal
-					const nextChunkWithAbort = async () => {
+					// Bound every provider read. A provider that neither emits nor closes must
+					// not leave the task and message queue permanently busy.
+					// Staged stream liveness: hard timeout and responsive abort remain as
+					// before; the controller additionally derives a soft "stalled"
+					// warning taken from observed activity across text/reasoning/tool
+					// chunks so a silent provider surfaces visible state before the
+					// final hard timeout.
+					const { StreamLivenessController } = await import("./StreamLivenessController")
+					const liveness = new StreamLivenessController()
+					let stallNudgeShown = false
+
+					const nextChunkWithAbort = async (timeoutMs = DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS) => {
 						const nextPromise = iterator.next()
-
-						// If we have an abort controller, race it with the next chunk
-						if (this.currentRequestAbortController) {
-							const abortPromise = new Promise<never>((_, reject) => {
-								const signal = this.currentRequestAbortController!.signal
-								if (signal.aborted) {
-									reject(new Error("Request cancelled by user"))
-								} else {
-									signal.addEventListener(
-										"abort",
-										() => {
-											reject(new Error("Request cancelled by user"))
-										},
-										{ once: true },
-									)
+						const controller = this.currentRequestAbortController
+						const signal = controller?.signal
+						let abortHandler: (() => void) | undefined
+						// Wall-clock hard timeout: starts from the last MEANINGFUL activity,
+						// not from the last iterator.next() resolution. Empty/internal stream
+						// events must not reset this timer.
+						const hardTimeoutPromise = new Promise<never>((_, reject) => {
+							const remaining = liveness.msUntil("expired")
+							const effectiveMs = remaining !== null && remaining < timeoutMs ? remaining : timeoutMs
+							setTimeout(() => {
+								reject(new Error(`Provider stream inactive for ${effectiveMs}ms`))
+								controller?.abort()
+							}, effectiveMs)
+						})
+						const abortPromise = new Promise<never>((_, reject) => {
+							abortHandler = () => reject(new Error("Request cancelled by user"))
+							if (signal?.aborted) abortHandler()
+							else signal?.addEventListener("abort", abortHandler, { once: true })
+						})
+						// Soft warning: when activity has been silent past the "stalled"
+						// threshold, emit a non-terminal status so the task and UI do not
+						// look frozen, and record no duplicate nudge across repeated checks.
+						const stallWarning = new Promise<{ livenessWarning: true }>((resolve) => {
+							const checkMs = liveness.msUntil("stalled")
+							if (checkMs === null || checkMs >= timeoutMs) return
+							setTimeout(() => {
+								if (liveness.stage === "stalled" && !stallNudgeShown) {
+									stallNudgeShown = true
+									resolve({ livenessWarning: true })
 								}
-							})
-							return await Promise.race([nextPromise, abortPromise])
-						}
+							}, checkMs)
+						})
 
-						// No abort controller, just return the next chunk normally
-						return await nextPromise
+						try {
+							const raced = await Promise.race([
+								nextPromise,
+								hardTimeoutPromise,
+								abortPromise,
+								stallWarning,
+							])
+							if (raced && typeof raced === "object" && "livenessWarning" in raced) {
+								await this.say(
+									"stream_stalled_warning",
+									"Provider is responding slowly, please wait...",
+									undefined,
+									true,
+									undefined,
+									undefined,
+									{
+										isNonInteractive: true,
+									},
+								).catch(() => {})
+								// After showing the warning, continue waiting for the actual chunk.
+								// The hard timeout and abort still apply via their own promises.
+								return nextPromise
+							}
+							return raced
+						} finally {
+							if (signal && abortHandler) signal.removeEventListener("abort", abortHandler)
+						}
 					}
 
 					let item = await nextChunkWithAbort()
 					while (!item.done) {
 						const chunk = item.value
-						item = await nextChunkWithAbort()
 						if (!chunk) {
 							// Sometimes chunk is undefined, no idea that can cause
 							// it, but this workaround seems to fix it.
+							// IMPORTANT: Do NOT call liveness.recordActivity() here —
+							// empty/undefined chunks are not meaningful provider output
+							// and must not reset the wall-clock inactivity timer.
+							item = await nextChunkWithAbort()
 							continue
 						}
 
+						// Record activity ONLY for meaningful content chunks.
+						// This ensures the wall-clock timeout tracks real provider
+						// inactivity, not empty/internal stream events.
+						liveness.recordActivity()
+						// New activity clears the one-shot soft warning so a later stall
+						// can signal again without spamming every reset.
+						stallNudgeShown = false
+
 						switch (chunk.type) {
 							case "reasoning": {
+								hasObservableStreamOutput = true
 								reasoningMessage += chunk.text
 								// Only apply formatting if the message contains sentence-ending punctuation followed by **
 								let formattedReasoning = reasoningMessage
@@ -3287,6 +3438,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								}
 								break
 							case "tool_call_partial": {
+								hasObservableStreamOutput = true
 								// Process raw tool call chunk through NativeToolCallParser
 								// which handles tracking, buffering, and emits events
 								const events = NativeToolCallParser.processRawChunk({
@@ -3313,11 +3465,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							// tool_call_partial chunks. Route them through the same
 							// handlers so their tools stream and finalize identically.
 							case "tool_call_start": {
+								hasObservableStreamOutput = true
 								this.handledStreamedToolCallIds.add(chunk.id)
 								this.handleToolCallStartEvent({ id: chunk.id, name: chunk.name })
 								break
 							}
 							case "tool_call_delta": {
+								hasObservableStreamOutput = true
 								// Deltas are only meaningful when a start established the
 								// call (name tracking lives in NativeToolCallParser);
 								// otherwise ignore and rely on the complete tool_call
@@ -3328,6 +3482,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								break
 							}
 							case "tool_call_end": {
+								hasObservableStreamOutput = true
 								if (this.streamingToolCallIndices.has(chunk.id)) {
 									this.handleToolCallEndEvent({ id: chunk.id })
 								}
@@ -3335,6 +3490,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							}
 
 							case "tool_call": {
+								hasObservableStreamOutput = true
 								// Skip complete tool_call chunks for calls already assembled
 								// from streamed start/delta/end events (AI SDK providers emit
 								// both â€” processing both would execute the tool twice).
@@ -3372,6 +3528,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								break
 							}
 							case "text": {
+								hasObservableStreamOutput = true
 								assistantMessage += chunk.text
 
 								// Native tool calling: text chunks are plain text.
@@ -3438,7 +3595,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								"\n\n[Response interrupted by a tool use result. Only one tool may be used at a time and should be placed at the end of the message.]"
 							break
 						}
+
+						// Present the current event before waiting for another. Previously the
+						// final visible chunk was withheld when a provider stalled before close.
+						item = await nextChunkWithAbort()
 					}
+
+					// Successful close is terminal even if the provider reports no usage.
+					updateApiReqMsg(undefined, undefined, "completed")
+					await this.saveClineMessages()
+					const completedApiReqMessage = this.clineMessages[lastApiReqIndex]
+					if (completedApiReqMessage) await this.updateClineMessage(completedApiReqMessage)
 
 					// Create a copy of current token values to avoid race conditions
 					const currentTokens = {
@@ -3539,6 +3706,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							// Continue processing the original stream from where the main loop left off
 							let usageFound = false
 							let chunkCount = 0
+							// The foreground loop has already consumed item.value. Fetch the
+							// subsequent event first so usage is never counted twice.
+							if (!item.done) item = await nextChunkWithAbort(timeoutMs)
 
 							// Use the same iterator that the main loop was using
 							while (!item.done) {
@@ -3555,7 +3725,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 								}
 
 								const chunk = item.value
-								item = await iterator.next()
+								item = await nextChunkWithAbort(
+									Math.max(1, timeoutMs - (performance.now() - startTime)),
+								)
 								chunkCount++
 
 								if (chunk && chunk.type === "usage") {
@@ -3664,6 +3836,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							this.abortReason = cancelReason
 							await this.abortTask()
 						} else {
+							// Reissuing a turn after text/reasoning/tool output has escaped
+							// repeats visible content and may execute the same tool twice.
+							if (hasObservableStreamOutput) {
+								console.error(
+									`[Task#${this.taskId}.${this.instanceId}] Stream failed after observable output; automatic replay suppressed`,
+								)
+								return true
+							}
+
 							// Stream failed - log the error and retry with the same content
 							// The existing rate limiting will prevent rapid retries
 							console.error(
@@ -4336,6 +4517,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				this.api.getModel().id,
 				provider.getSkillsManager(),
 				this.pipeline.systemPromptVariant, // "native" | "dual" | "text"
+				this.apiConversationHistory.filter((message: ApiMessage) => message.role === "user").at(-1)?.content,
 			)
 		})()
 	}
@@ -4572,7 +4754,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		retryAttempt: number = 0,
 		options: { skipProviderRateLimit?: boolean } = {},
 	): ApiStream {
+		const requestTimelineStartedAt = performance.now()
+		const logRequestTiming = (stage: string) => {
+			console.info(
+				`[API-TIMING] task=${this.taskId} stage=${stage} elapsedMs=${Math.round(performance.now() - requestTimelineStartedAt)}`,
+			)
+		}
+		logRequestTiming("attempt-start")
 		const state = await this.providerRef.deref()?.getState()
+		logRequestTiming("state-loaded")
 
 		const {
 			apiConfiguration,
@@ -4593,6 +4783,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		if (!options.skipProviderRateLimit) {
 			await this.maybeWaitForProviderRateLimit(retryAttempt)
 		}
+		logRequestTiming("rate-limit-check-complete")
 
 		// Update last request time right before making the request so that subsequent
 		// requests â€” even from new subtasks â€” will honour the provider's rate-limit.
@@ -4604,6 +4795,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.rateLimitClock.recordRequest()
 
 		const systemPrompt = await this.getSystemPrompt()
+		logRequestTiming("system-prompt-built")
 		const { contextTokens } = this.getTokenUsage()
 
 		if (contextTokens) {
@@ -4758,6 +4950,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				}
 			}
 		}
+		logRequestTiming("context-management-complete")
 
 		// Get the effective API history by filtering out condensed messages
 		// This allows non-destructive condensing where messages are tagged but not deleted,
@@ -4793,6 +4986,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			// User did not approve, task should be aborted
 			throw new Error("Auto-approval limit reached and user did not approve continuation")
 		}
+		logRequestTiming("auto-approval-complete")
 
 		// Whether we include tools is determined by whether we have any tools to send.
 		const modelInfo = this.api.getModel().info
@@ -4832,6 +5026,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			allTools = toolsResult.tools
 			allowedFunctionNames = toolsResult.allowedFunctionNames
 		}
+		logRequestTiming("tools-built")
 
 		// No-Lock Dual Parser: always send tool schemas (shouldSendTools is
 		// always true). Both native and text-based tool calls are accepted.
@@ -4864,6 +5059,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		this.skipPrevResponseIdOnce = false
 
 		// The provider accepts reasoning items alongside standard messages; cast to the expected parameter type.
+		logRequestTiming("provider-stream-created")
 		const stream = this.api.createMessage(
 			systemPrompt,
 			cleanConversationHistory as unknown as Anthropic.Messages.MessageParam[],
@@ -4902,6 +5098,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			})
 
 			const firstChunk = await Promise.race([firstChunkPromise, abortPromise])
+			logRequestTiming("first-provider-chunk")
 			yield firstChunk.value
 			this.isWaitingForFirstChunk = false
 		} catch (error) {

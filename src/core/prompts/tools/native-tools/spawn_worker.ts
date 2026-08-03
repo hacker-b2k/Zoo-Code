@@ -11,8 +11,10 @@ Unlike new_task (serial subtask that pauses the parent), spawn_worker:
 role="worker" (default): implementer — builds/edits per message.
 role="reviewer": LEGACY/optional only — do NOT spawn by default. Always-on watch+digest was removed as default multi-agent policy because it creates chat spam and duplicates monitoring. Prefer runtime ResultInbox events (provider_switched, completed, failed, retrying). Leave role null/"worker".
 
-When work can be parallelized, prefer multiple spawn_worker calls (up to the parallel worker limit) over serial new_task. Do NOT assign every worker the same api_config_name (that causes rate limits).
-Use list_workers to check status and collect_results to drain completed/failed outputs. Use new_task only for ordered serial subtasks that must pause the parent.`
+Use multiple workers when the task contains substantial independent work and parallel execution has a clear latency or specialization benefit. Keep tiny edits, tightly coupled changes, and sequential investigations in the main task. When workers are beneficial, prefer parallel spawn_worker calls (up to the limit) over serial new_task. Do NOT assign every worker the same api_config_name (that causes rate limits).
+Use list_workers to check status and collect_results to drain completed/failed outputs. Use new_task only for ordered serial subtasks that must pause the parent.
+
+CRITICAL: When waiting for workers, NEVER use execute_command with sleep/timer/wait commands. collect_results returns immediately with current results — use it directly. If no results yet, do other work or call collect_results again. Using sleep blocks the orchestrator and delays worker result delivery.`
 
 export default {
 	type: "function",

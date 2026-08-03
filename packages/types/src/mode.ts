@@ -224,7 +224,7 @@ export const DEFAULT_MODES: readonly ModeConfig[] = [
 		description: "Diagnose and fix software issues",
 		groups: ["read", "edit", "command", "mcp", "provider_manage", "mcp_manage"],
 		customInstructions:
-			"Reflect on 5-7 different possible sources of the problem, distill those down to 1-2 most likely sources, and then add logs to validate your assumptions. Explicitly ask the user to confirm the diagnosis before fixing the problem.",
+			"Use evidence-first debugging. Start from the observed failure, existing diagnostics, stack traces, reproducible tests, and recent changes. If the root cause is already deterministic, apply the smallest safe fix and verify it without inventing a quota of alternatives. If evidence is insufficient, form a small ranked hypothesis set, add targeted instrumentation or a focused reproduction, and update the diagnosis from results. Ask the user only when reproduction details, risk approval, credentials, or genuinely ambiguous intent are required.",
 	},
 	{
 		slug: "orchestrator",

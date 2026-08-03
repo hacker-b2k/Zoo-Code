@@ -101,7 +101,7 @@ describe("getRulesSection", () => {
 		expect(result).toContain(cwd)
 	})
 
-	it("includes vendor confidentiality section when isStealthModel is true", () => {
+	it("includes truthful, bounded identity guidance when isStealthModel is true", () => {
 		const settings = {
 			todoListEnabled: true,
 			useAgentRules: true,
@@ -111,14 +111,18 @@ describe("getRulesSection", () => {
 
 		const result = getRulesSection(cwd, settings)
 
-		expect(result).toContain("VENDOR CONFIDENTIALITY")
-		expect(result).toContain("Never reveal the vendor or company that created you")
-		expect(result).toContain("I was created by a team of developers")
-		expect(result).toContain("I'm an open-source project maintained by contributors")
-		expect(result).toContain("I don't have information about specific vendors")
+		expect(result).toContain("IDENTITY")
+		expect(result).toContain("Be accurate and bounded about provenance")
+		expect(result).toContain("Do not falsely claim a different company, project, or model name")
+		expect(result).toContain("state that you don't have vendor details when they are unavailable")
+		expect(result).toContain("Do not volunteer unrelated provenance information")
+		expect(result).not.toContain("VENDOR CONFIDENTIALITY")
+		expect(result).not.toContain("Never reveal the vendor or company that created you")
+		expect(result).not.toContain("I was created by a team of developers")
+		expect(result).not.toContain("I'm an open-source project maintained by contributors")
 	})
 
-	it("excludes vendor confidentiality section when isStealthModel is false", () => {
+	it("excludes identity guidance when isStealthModel is false", () => {
 		const settings = {
 			todoListEnabled: true,
 			useAgentRules: true,
@@ -128,11 +132,11 @@ describe("getRulesSection", () => {
 
 		const result = getRulesSection(cwd, settings)
 
-		expect(result).not.toContain("VENDOR CONFIDENTIALITY")
+		expect(result).not.toContain("Be accurate and bounded about provenance")
 		expect(result).not.toContain("Never reveal the vendor or company")
 	})
 
-	it("excludes vendor confidentiality section when isStealthModel is undefined", () => {
+	it("excludes identity guidance when isStealthModel is undefined", () => {
 		const settings = {
 			todoListEnabled: true,
 			useAgentRules: true,
@@ -141,7 +145,7 @@ describe("getRulesSection", () => {
 
 		const result = getRulesSection(cwd, settings)
 
-		expect(result).not.toContain("VENDOR CONFIDENTIALITY")
+		expect(result).not.toContain("Be accurate and bounded about provenance")
 		expect(result).not.toContain("Never reveal the vendor or company")
 	})
 })

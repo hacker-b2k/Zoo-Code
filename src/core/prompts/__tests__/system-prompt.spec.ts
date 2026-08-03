@@ -548,12 +548,12 @@ describe("SYSTEM_PROMPT", () => {
 			settings, // settings
 		)
 
-		// Should contain TOOL USE section with native note
+		// Should contain conditional native tool protocol and canonical turn policy
 		expect(prompt).toContain("TOOL USE")
 		expect(prompt).toContain("provider-native structured tool-calling mechanism")
-		expect(prompt).toContain("Do not include XML markup or examples")
-		// Forceful prohibition of textual/XML/JSON tool-call markup
-		expect(prompt).toContain("NEVER write a tool call as plain text, XML markup, or a JSON block")
+		expect(prompt).toContain("Do not include textual tool-call examples in native mode")
+		expect(prompt).toContain("Never write an intended tool call as plain text, XML markup, or a JSON code block")
+		expect(prompt).toContain("Conversational answers and explanations may be returned directly without tools")
 		expect(prompt).toContain("Tool calls must be structured, never textual")
 
 		// Should NOT contain XML-style tags or examples

@@ -989,7 +989,7 @@ describe("ChatView - Message Queueing Tests", () => {
 	})
 
 	it("queues messages when API request is in progress (spinner visible)", async () => {
-		const { getByTestId } = renderChatView()
+		const { getByTestId, getByRole, queryByRole } = renderChatView()
 
 		// First hydrate state with initial task
 		mockPostMessage({
@@ -1019,7 +1019,7 @@ describe("ChatView - Message Queueing Tests", () => {
 					type: "say",
 					say: "api_req_started",
 					ts: Date.now(),
-					text: JSON.stringify({ apiProtocol: "anthropic" }), // No cost = still streaming
+					text: JSON.stringify({ apiProtocol: "anthropic", status: "active" }),
 				},
 			],
 		})
@@ -1027,6 +1027,49 @@ describe("ChatView - Message Queueing Tests", () => {
 		// Wait for state to be updated
 		await waitFor(() => {
 			expect(getByTestId("chat-textarea")).toBeInTheDocument()
+			expect(getByRole("status")).toHaveTextContent("chat:apiRequest.processingResponse")
+		})
+
+		mockPostMessage({
+			clineMessages: [
+				{
+					type: "say",
+					say: "task",
+					ts: Date.now() - 2000,
+					text: "Initial task",
+				},
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: Date.now(),
+					text: JSON.stringify({ apiProtocol: "anthropic", status: "completed" }),
+				},
+			],
+		})
+
+		await waitFor(() => expect(queryByRole("status")).not.toBeInTheDocument())
+
+		// Restore an active request for the queue behavior assertion below.
+		mockPostMessage({
+			clineMessages: [
+				{
+					type: "say",
+					say: "task",
+					ts: Date.now() - 2000,
+					text: "Initial task",
+				},
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: Date.now(),
+					text: JSON.stringify({ apiProtocol: "anthropic", status: "active" }),
+				},
+			],
+		})
+		await waitFor(() => {
+			expect(getByRole("status")).toHaveTextContent("chat:apiRequest.processingResponse")
+			const activeInput = getByTestId("chat-textarea").querySelector("input")!
+			expect(activeInput.getAttribute("data-sending-disabled")).toBe("true")
 		})
 
 		// Clear message calls before simulating user input
@@ -1131,6 +1174,62 @@ describe("ChatView - Message Queueing Tests", () => {
 				type: "queueMessage",
 			}),
 		)
+	})
+
+	it("releases the sticky send gate as soon as an API request becomes completed", async () => {
+		const requestTs = Date.now()
+		const { getByTestId, getByRole, queryByRole } = renderChatView()
+
+		mockPostMessage({
+			clineMessages: [
+				{ type: "say", say: "task", ts: requestTs - 1000, text: "Initial task" },
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: requestTs,
+					text: JSON.stringify({ apiProtocol: "openai", status: "active" }),
+				},
+			],
+		})
+
+		const input = getByTestId("chat-textarea").querySelector("input")! as HTMLInputElement
+		await waitFor(() => {
+			expect(getByRole("status")).toHaveTextContent("chat:apiRequest.processingResponse")
+			expect(input.getAttribute("data-sending-disabled")).toBe("true")
+		})
+
+		// Update the existing request row in place. No later text/ask message arrives
+		// to incidentally reset local UI state.
+		mockPostMessage({
+			clineMessages: [
+				{ type: "say", say: "task", ts: requestTs - 1000, text: "Initial task" },
+				{
+					type: "say",
+					say: "api_req_started",
+					ts: requestTs,
+					text: JSON.stringify({ apiProtocol: "openai", status: "completed" }),
+				},
+			],
+		})
+
+		await waitFor(() => {
+			expect(queryByRole("status")).not.toBeInTheDocument()
+			expect(input.getAttribute("data-sending-disabled")).toBe("false")
+		})
+
+		vi.mocked(vscode.postMessage).mockClear()
+		fireEvent.change(input, { target: { value: "send immediately after completion" } })
+		fireEvent.keyDown(input, { key: "Enter", code: "Enter" })
+
+		await waitFor(() => {
+			expect(vscode.postMessage).toHaveBeenCalledWith({
+				type: "askResponse",
+				askResponse: "messageResponse",
+				text: "send immediately after completion",
+				images: [],
+			})
+		})
+		expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "queueMessage" }))
 	})
 
 	it("preserves message order when messages sent during queue drain", async () => {
