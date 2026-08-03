@@ -3103,7 +3103,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				}
 			}
 
-			const environmentDetails = await getEnvironmentDetails(this, currentIncludeFileDetails)
+			// Phase 2: Skip full file listing for conversational turns to reduce payload.
+			// Only include file details when the turn is actionable or it's the first request.
+			const isActionableTurn = !!this.lastActionIntent
+			const effectiveIncludeFileDetails = currentIncludeFileDetails && isActionableTurn
+
+			const environmentDetails = await getEnvironmentDetails(this, effectiveIncludeFileDetails)
 
 			// Remove any existing environment_details blocks before adding fresh ones.
 			// This prevents duplicate environment details when resuming tasks,
@@ -5011,6 +5016,12 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				throw new Error("Provider reference lost during tool building")
 			}
 
+			// Determine tool delivery level based on turn classification.
+			// Conversational turns get only core tools (~8) to reduce payload.
+			// Actionable turns get all mode-appropriate tools (~50+).
+			const isActionable = !!this.lastActionIntent
+			const deliveryLevel = isActionable ? "full" : "core"
+
 			const toolsResult = await buildNativeToolsArrayWithRestrictions({
 				provider,
 				cwd: this.cwd,
@@ -5022,6 +5033,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				modelInfo,
 				includeAllToolsWithRestrictions: supportsAllowedFunctionNames,
 				workerRole: this.workerRole,
+				deliveryLevel,
 			})
 			allTools = toolsResult.tools
 			allowedFunctionNames = toolsResult.allowedFunctionNames
