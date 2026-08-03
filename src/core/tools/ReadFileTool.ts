@@ -280,7 +280,11 @@ export class ReadFileTool extends BaseTool<"read_file"> {
 
 		if (mode === "indentation") {
 			// Indentation mode: semantic block extraction
-			// When anchor_line is not provided, default to offset (which defaults to 1)
+			// When neither anchor_line nor offset is provided, fall back to slice
+			// mode rather than defaulting to line 1 (which only returns imports).
+			if (entry.anchor_line === undefined && entry.offset === undefined) {
+				// Fall through to slice mode below
+			} else {
 			const anchorLine = entry.anchor_line ?? entry.offset ?? 1
 			const result = readWithIndentation(content, {
 				anchorLine,
@@ -309,6 +313,7 @@ export class ReadFileTool extends BaseTool<"read_file"> {
 			}
 
 			return output
+			}
 		}
 
 		// Slice mode (default): simple offset/limit reading

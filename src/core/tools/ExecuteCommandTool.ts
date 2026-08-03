@@ -87,6 +87,7 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 				task.didToolFailInCurrentTurn = true
 				pushToolResult(
 					formatResponse.toolError(
+						`[Detected shell: ${preflight.detectedShell}] ` +
 						preflight.issues
 							.map((issue) => `${issue.message}${issue.fix ? ` Suggested correction: ${issue.fix}` : ""}`)
 							.join("\n"),
@@ -245,6 +246,21 @@ export async function executeCommandInTerminal(
 ): Promise<[boolean, ToolResponse]> {
 	// Convert milliseconds back to seconds for display purposes.
 	const commandExecutionTimeoutSeconds = commandExecutionTimeout / 1000
+	// Capture shell type before `process` gets shadowed by terminal.runCommand()
+	// Check PowerShell first since ComSpec may still point to cmd.exe even when
+	// PowerShell is the active terminal shell
+	const detectedShellKind = (() => {
+		const shellPath = globalThis.process?.env?.SHELL ?? ""
+		const comspec = globalThis.process?.env?.ComSpec ?? ""
+		// Check SHELL env var first (set by some terminals)
+		if (shellPath.includes("powershell") || shellPath.includes("pwsh")) return "PowerShell"
+		// Check if PowerShell-specific env vars are present
+		if (globalThis.process?.env?.PSModulePath) return "PowerShell"
+		if (comspec.includes("powershell") || comspec.includes("pwsh")) return "PowerShell"
+		if (comspec.includes("cmd")) return "cmd.exe"
+		if (shellPath.includes("bash") || shellPath.includes("zsh")) return shellPath.includes("zsh") ? "zsh" : "bash"
+		return "unknown"
+	})()
 	let workingDir: string
 
 	if (!customCwd) {
@@ -593,9 +609,14 @@ export async function executeCommandInTerminal(
 
 		const exitStatus = formatExitStatus(exitDetails)
 
+		// Add shell type hint when command failed to help model use correct syntax
+		const shellPrefix = exitDetails?.exitCode !== undefined && exitDetails.exitCode !== 0
+			? `[Detected shell: ${detectedShellKind}] `
+			: ""
+
 		return [
 			false,
-			`Command executed in terminal within working directory '${currentWorkingDir}'. ${exitStatus}\nOutput:\n${result}`,
+			`${shellPrefix}Command executed in terminal within working directory '${currentWorkingDir}'. ${exitStatus}\nOutput:\n${result}`,
 		]
 	} else {
 		return [

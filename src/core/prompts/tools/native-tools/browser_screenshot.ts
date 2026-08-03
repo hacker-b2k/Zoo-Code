@@ -3,7 +3,7 @@ const DESCRIPTION = `Take a screenshot of an open browser page. Returns the scre
 Use this to visually verify UI, check layout, inspect rendered output, or confirm that a web app looks correct after making changes. The screenshot is returned as an image in the tool result — you can examine it with your vision capabilities.
 
 Parameters:
-- pageId: (required) The page ID from open_browser_page or list_browser_tabs
+- pageId: (required) The page ID from open_browser_page or list_browser_tabs. pageId is auto-detected if only one browser tab is open — you can omit it in that case.
 - fullPage: (optional) When true, captures the entire scrollable page. Default is false (viewport only).
 
 Example: { "pageId": "abc123", "fullPage": false }`
@@ -25,7 +25,7 @@ export const browser_screenshot = {
 					description: "When true, captures the entire scrollable page. Default is false (viewport only).",
 				},
 			},
-			required: ["pageId"],
+			required: [],
 		},
 	},
 }

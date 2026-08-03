@@ -428,7 +428,7 @@ describe("Problem A: tools defensively reject non-string params (defense-in-dept
 		readUrlSpy.mockRestore()
 	})
 
-	it("WebResearchTool action is object → 'action' missing-param", async () => {
+	it("WebResearchTool action is object but query present → uses query as input", async () => {
 		const searchWebSpy = vi.spyOn(webResearch, "searchWeb").mockResolvedValue({
 			provider: "duckduckgo",
 			results: [],
@@ -436,7 +436,8 @@ describe("Problem A: tools defensively reject non-string params (defense-in-dept
 		const task = makeFakeTask()
 		const callbacks = makeCallbacks()
 		await webResearchTool.execute({ action: {} as any, query: "test", url: null } as any, task, callbacks)
-		expect(searchWebSpy).not.toHaveBeenCalled()
+		// With auto-inference fix: query is used as input regardless of action
+		expect(searchWebSpy).toHaveBeenCalledWith("test", expect.any(Number))
 		searchWebSpy.mockRestore()
 	})
 })

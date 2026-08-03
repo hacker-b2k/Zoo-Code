@@ -84,7 +84,11 @@ describe("BrowserScreenshotTool", () => {
 		expect(mockScreenshotPage).toHaveBeenCalledWith("test-task", "test-page", { fullPage: true })
 	})
 
-	it("should report missing pageId parameter", async () => {
+	it("should report missing pageId when no tabs are open", async () => {
+		vi.mocked(BrowserEngineManager.getInstance).mockReturnValue({
+			listPages: vi.fn().mockReturnValue([]),
+		} as any)
+
 		const mockTask: any = {
 			taskId: "test-task",
 			consecutiveMistakeCount: 0,
@@ -103,7 +107,37 @@ describe("BrowserScreenshotTool", () => {
 
 		expect(mockTask.consecutiveMistakeCount).toBe(1)
 		expect(mockTask.recordToolError).toHaveBeenCalledWith("browser_screenshot")
-		expect(pushToolResult).toHaveBeenCalledWith("Missing pageId")
+		expect(pushToolResult).toHaveBeenCalledWith("No browser tabs open. Use open_browser_page first.")
+	})
+
+	it("should auto-detect pageId when only one tab is open", async () => {
+		const mockBuffer = Buffer.from("fake-image-data")
+		vi.mocked(BrowserEngineManager.getInstance).mockReturnValue({
+			listPages: vi.fn().mockReturnValue([{ pageId: "auto-tab", url: "https://example.com" }]),
+			screenshotPage: vi.fn().mockResolvedValue({
+				mimeType: "image/jpeg",
+				data: mockBuffer,
+			}),
+		} as any)
+
+		const mockTask: any = {
+			taskId: "test-task",
+			consecutiveMistakeCount: 0,
+			recordToolError: vi.fn(),
+			didToolFailInCurrentTurn: false,
+			sayAndCreateMissingParamError: vi.fn(),
+		}
+
+		const pushToolResult = vi.fn()
+
+		await browserScreenshotTool.execute({ pageId: "" } as any, mockTask, {
+			askApproval: vi.fn().mockResolvedValue(true),
+			handleError: vi.fn(),
+			pushToolResult,
+		} as any)
+
+		expect(mockTask.consecutiveMistakeCount).toBe(0)
+		expect(pushToolResult).toHaveBeenCalledTimes(1)
 	})
 
 	it("should handle errors from screenshotPage", async () => {

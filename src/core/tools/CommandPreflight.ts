@@ -23,6 +23,7 @@ export interface PreflightResult {
 	command: string
 	changed: boolean
 	issues: PreflightIssue[]
+	detectedShell: ShellKind
 }
 
 const UNIX_TOOLS = ["sed", "grep", "awk", "cat", "rm", "cp", "mv"]
@@ -39,6 +40,7 @@ export function preflightCommand(
 	priorFingerprints: ReadonlySet<string> = new Set(),
 ): PreflightResult {
 	const issues: PreflightIssue[] = []
+	const detectedShellEarly = detectShell(input.shell)
 	if (typeof input.command !== "string") {
 		return {
 			ok: false,
@@ -47,6 +49,7 @@ export function preflightCommand(
 			issues: [
 				{ code: "non_string_command", message: "execute_command.command must be a string", blocking: true },
 			],
+			detectedShell: detectedShellEarly,
 		}
 	}
 
@@ -57,10 +60,12 @@ export function preflightCommand(
 			command: "",
 			changed: false,
 			issues: [{ code: "empty_command", message: "execute_command.command cannot be empty", blocking: true }],
+			detectedShell: detectedShellEarly,
 		}
 	}
 
 	const shell = detectShell(input.shell)
+	const detectedShell = shell
 	if (shell === "powershell") {
 		if (/(^|[;&|]\s*|[^\w])where\s+[A-Za-z_]/.test(command)) {
 			issues.push({
@@ -90,7 +95,7 @@ export function preflightCommand(
 		})
 	}
 
-	return { ok: issues.every((issue) => !issue.blocking), command, changed: false, issues }
+	return { ok: issues.every((issue) => !issue.blocking), command, changed: false, issues, detectedShell }
 }
 
 export function fingerprintCommand(command: string): string {
