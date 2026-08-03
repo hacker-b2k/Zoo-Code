@@ -173,7 +173,7 @@ export const TOOL_PARAM_REGISTRY: Record<string, ToolParamSpec> = {
 
 	// ── Web / browser tools ─────────────────────────────────────────────
 	web_research: {
-		required: ["action"],
+		required: [], // Runtime accepts canonical input or legacy action/query/url.
 	},
 	open_tabs: {
 		required: ["urls"],

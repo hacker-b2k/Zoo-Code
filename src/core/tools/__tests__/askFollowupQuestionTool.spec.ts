@@ -615,4 +615,57 @@ describe("AskFollowupQuestionTool", () => {
 			expect(askPayload.suggest[0].answer).toBe("Keep going")
 		})
 	})
+
+	describe("follow_up stringified-array coercion (tool-issues Issue 1 + user.txt bug)", () => {
+		it("coerces a JSON-stringified follow_up array into a real array instead of erroring", async () => {
+			// Some providers over-encode follow_up as a JSON STRING containing the
+			// array. The tool-bridge must decode it rather than loop with a
+			// "must be an array" error (which surfaced as repeated tool failures).
+			const suggestions = [
+				{ text: "Keep", mode: null },
+				{ text: "Remove", mode: null },
+			]
+			const params = {
+				question: "How should I proceed?",
+				follow_up: JSON.stringify(suggestions),
+			} as any
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			// ask() should be called — NOT the validation error path.
+			expect(vi.mocked(mockTask.ask)).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(mockTask.say).mock.calls.some((c) => c[0] === "error")).toBe(false)
+
+			const askPayload = JSON.parse(vi.mocked(mockTask.ask).mock.calls[0][1] as string)
+			expect(askPayload.suggest).toHaveLength(2)
+			expect(askPayload.suggest[0].answer).toBe("Keep")
+			expect(askPayload.suggest[1].answer).toBe("Remove")
+		})
+
+		it("still reports a type error for a non-array object that cannot be coerced", async () => {
+			const params = {
+				question: "Pick one",
+				follow_up: { "0": { mode: null, text: "Keep" } },
+			} as any
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			// ask() must NOT be called — validation should fire.
+			expect(vi.mocked(mockTask.ask)).not.toHaveBeenCalled()
+			expect(vi.mocked(mockTask.say).mock.calls.some((c) => c[0] === "error")).toBe(true)
+			expect(mockTask.consecutiveMistakeCount).toBeGreaterThan(0)
+		})
+
+		it("still reports a type error for a non-JSON string follow_up", async () => {
+			const params = {
+				question: "Pick one",
+				follow_up: "not-an-array",
+			} as any
+
+			await tool.execute(params, mockTask, mockCallbacks)
+
+			expect(vi.mocked(mockTask.ask)).not.toHaveBeenCalled()
+			expect(vi.mocked(mockTask.say).mock.calls.some((c) => c[0] === "error")).toBe(true)
+		})
+	})
 })

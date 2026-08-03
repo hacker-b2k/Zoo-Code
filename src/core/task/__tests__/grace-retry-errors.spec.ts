@@ -243,7 +243,7 @@ describe("Grace Retry Error Handling", () => {
 			expect(task.consecutiveNoAssistantMessagesCount).toBe(0)
 		})
 
-		it("should reset consecutiveNoToolUseCount when abortTask is called", async () => {
+		it("should reset pipeline state when abortTask is called", async () => {
 			const task = new Task({
 				provider: mockProvider,
 				apiConfiguration: mockApiConfig,
@@ -251,22 +251,58 @@ describe("Grace Retry Error Handling", () => {
 				startTask: false,
 			})
 
-			// Manually set both counters
+			// Simulate no-tool failures via pipeline state
+			task.pipeline.state.reportNoTool()
+			task.pipeline.state.reportNoTool()
 			task.consecutiveNoAssistantMessagesCount = 3
-			task.consecutiveNoToolUseCount = 4
 
 			// Mock dispose to prevent actual cleanup
 			vi.spyOn(task, "dispose").mockImplementation(() => {})
 
 			await task.abortTask()
 
-			// Both counters should be reset
+			// Both should be reset
 			expect(task.consecutiveNoAssistantMessagesCount).toBe(0)
-			expect(task.consecutiveNoToolUseCount).toBe(0)
+			expect(task.pipeline.state.consecutiveNoToolCountValue).toBe(0)
+		})
+
+		it("should clear NativeToolCallParser static state when abortTask is called", async () => {
+			// Regression: NativeToolCallParser holds static Maps (streamingToolCalls,
+			// rawChunkTracker) that persist across the entire process. If a stream is
+			// aborted mid-tool-call, those Maps retain stale ids/indexes. The next turn
+			// would then try to dispatch against the leftover state, which the model
+			// reports as "Tool not found" for every tool — including basic ones like
+			// list_specs and ask_followup_question. abortTask must clear the static state
+			// so the next stream starts clean.
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+
+			// Simulate a mid-stream interrupted tool call
+			const { NativeToolCallParser } = await import("../../assistant-message/NativeToolCallParser")
+			NativeToolCallParser.startStreamingToolCall("toolu_interrupted_1", "write_spec")
+			NativeToolCallParser.processRawChunk({
+				index: 0,
+				id: "toolu_interrupted_1",
+				name: "write_spec",
+				arguments: "{}",
+			})
+			expect((NativeToolCallParser as any).streamingToolCalls.size).toBeGreaterThan(0)
+			expect((NativeToolCallParser as any).rawChunkTracker.size).toBeGreaterThan(0)
+
+			vi.spyOn(task, "dispose").mockImplementation(() => {})
+			await task.abortTask()
+
+			// abortTask must clear both static Maps so the next turn starts clean
+			expect((NativeToolCallParser as any).streamingToolCalls.size).toBe(0)
+			expect((NativeToolCallParser as any).rawChunkTracker.size).toBe(0)
 		})
 	})
 
-	describe("consecutiveNoToolUseCount", () => {
+	describe("pipeline consecutiveNoToolCount", () => {
 		it("should initialize to 0", () => {
 			const task = new Task({
 				provider: mockProvider,
@@ -275,7 +311,7 @@ describe("Grace Retry Error Handling", () => {
 				startTask: false,
 			})
 
-			expect(task.consecutiveNoToolUseCount).toBe(0)
+			expect(task.pipeline.state.consecutiveNoToolCountValue).toBe(0)
 		})
 	})
 
@@ -423,7 +459,7 @@ describe("Grace Retry Error Handling", () => {
 	})
 
 	describe("Parallel with noToolsUsed error handling", () => {
-		it("should have separate counters for noToolsUsed and noAssistantMessages", () => {
+		it("should have separate counters for pipeline and noAssistantMessages", () => {
 			const task = new Task({
 				provider: mockProvider,
 				apiConfiguration: mockApiConfig,
@@ -431,16 +467,18 @@ describe("Grace Retry Error Handling", () => {
 				startTask: false,
 			})
 
-			// Both counters should start at 0
-			expect(task.consecutiveNoToolUseCount).toBe(0)
+			// Both should start at 0
+			expect(task.pipeline.state.consecutiveNoToolCountValue).toBe(0)
 			expect(task.consecutiveNoAssistantMessagesCount).toBe(0)
 
-			// Incrementing one should not affect the other
-			task.consecutiveNoToolUseCount = 3
+			// Pipeline state is independent of noAssistantMessages
+			task.pipeline.state.reportNoTool()
+			task.pipeline.state.reportNoTool()
+			task.pipeline.state.reportNoTool()
 			expect(task.consecutiveNoAssistantMessagesCount).toBe(0)
 
 			task.consecutiveNoAssistantMessagesCount = 2
-			expect(task.consecutiveNoToolUseCount).toBe(3)
+			expect(task.pipeline.state.consecutiveNoToolCountValue).toBe(3)
 		})
 	})
 })

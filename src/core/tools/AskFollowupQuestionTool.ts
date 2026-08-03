@@ -13,16 +13,19 @@ interface Suggestion {
 interface AskFollowupQuestionParams {
 	question: string
 	// follow_up is typed as an array, but at runtime the value may arrive as a
-	// non-array (object/string/number) due to incremental JSON parsing, so the
-	// runtime validation in execute() guards against that explicitly.
-	follow_up: Suggestion[]
+	// non-array (object/string/number) due to incremental JSON parsing or
+	// provider over-encoding (a JSON-string containing the array). The runtime
+	// coercion + validation in execute() normalizes a stringified JSON array
+	// into a real array and guards against other non-array shapes.
+	follow_up: Suggestion[] | unknown
 }
 
 export class AskFollowupQuestionTool extends BaseTool<"ask_followup_question"> {
 	readonly name = "ask_followup_question" as const
 
 	async execute(params: AskFollowupQuestionParams, task: Task, callbacks: ToolCallbacks): Promise<void> {
-		const { question, follow_up } = params
+		const { question } = params
+		const follow_up: unknown = params.follow_up
 		const { handleError, pushToolResult } = callbacks
 
 		const recordMissingParamError = async (paramName: string): Promise<void> => {
@@ -52,10 +55,40 @@ export class AskFollowupQuestionTool extends BaseTool<"ask_followup_question"> {
 				return
 			}
 
-			// Present-but-wrong-type follow_up (object/string/number) -> report a clear
-			// type/shape error rather than the misleading "Missing value" message, so the
-			// model can correct it instead of looping with the same payload.
-			if (!Array.isArray(follow_up)) {
+			// Provider-agnostic follow_up coercion (tool-issues Issue 1 + user.txt bug):
+			// Some providers/models that receive strict-mode `["array","null"]` schemas
+			// over-encode `follow_up` as a JSON STRING containing the array (e.g.
+			// `"[{\"text\":\"Yes\",\"mode\":null}]"`) instead of a native JSON array.
+			// The previous behavior rejected this with a "must be an array" error, which
+			// forced the model into a retry loop with the exact same (wrong) payload —
+			// surfacing as the same tool failing repeatedly mid-session ("Tool not found"
+			// in user reports was this downstream loop, not a registry drop).
+			//
+			// Normalize once here so the tool-bridge never rejects an otherwise-valid
+			// suggestion list: decode a stringified JSON array into a real array. Only
+			// string values are candidates; non-array objects/numbers still fall through
+			// to the precise "must be an array" error below (preserving the existing
+			// forward-raw-object behavior covered by the keyed-object regression test).
+			let normalizedFollowUp: unknown = follow_up
+			if (typeof follow_up === "string") {
+				const trimmed = follow_up.trim()
+				if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+					try {
+						const parsed = JSON.parse(trimmed)
+						if (Array.isArray(parsed)) {
+							normalizedFollowUp = parsed
+						}
+					} catch {
+						// Not valid JSON — leave as-is so the type error path fires.
+					}
+				}
+			}
+
+			// Present-but-wrong-type follow_up (object/string/number that could not be
+			// coerced into an array) -> report a clear type/shape error rather than the
+			// misleading "Missing value" message, so the model can correct it instead of
+			// looping with the same payload.
+			if (!Array.isArray(normalizedFollowUp)) {
 				await recordValidationError(
 					"The 'follow_up' parameter must be an array of suggestion objects, each shaped like { text: string, mode?: string }. " +
 						"Retry with 'follow_up' as a JSON array.",
@@ -70,7 +103,7 @@ export class AskFollowupQuestionTool extends BaseTool<"ask_followup_question"> {
 			// webview with React error #31.
 			const follow_up_json = {
 				question,
-				suggest: (follow_up as Array<Suggestion | string>).map((s) => {
+				suggest: (normalizedFollowUp as Array<Suggestion | string>).map((s) => {
 					const rawAnswer: unknown = typeof s === "string" ? s : ((s as Suggestion | undefined)?.text ?? s)
 					const answer =
 						typeof rawAnswer === "string"

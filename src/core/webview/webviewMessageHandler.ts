@@ -698,7 +698,11 @@ export const webviewMessageHandler = async (
 					}
 				}
 
-				currentTask?.handleWebviewAskResponse(message.askResponse!, resolved.text, resolved.images)
+				if (message.askResponse === "messageResponse") {
+					await currentTask?.handleWebviewUserMessage(resolved.text, resolved.images)
+				} else {
+					currentTask?.handleWebviewAskResponse(message.askResponse!, resolved.text, resolved.images)
+				}
 			}
 			break
 
@@ -1770,6 +1774,10 @@ export const webviewMessageHandler = async (
 				// Just open the keyboard shortcuts settings
 				await vscode.commands.executeCommand("workbench.action.openGlobalKeybindings")
 			}
+			break
+		}
+		case "openSpecWorkspace": {
+			await vscode.commands.executeCommand("zoo-code.openSpecWorkspace")
 			break
 		}
 		case "openMcpSettings": {

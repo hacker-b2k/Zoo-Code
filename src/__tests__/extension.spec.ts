@@ -40,6 +40,14 @@ vi.mock("vscode", () => ({
 	ExtensionMode: {
 		Production: 1,
 	},
+	RelativePattern: vi.fn().mockImplementation((base: string, pattern: string) => ({
+		base,
+		pattern,
+	})),
+	Uri: {
+		file: vi.fn().mockImplementation((filePath) => ({ fsPath: filePath, scheme: "file" })),
+		parse: vi.fn().mockImplementation((uri) => ({ fsPath: uri, scheme: "file" })),
+	},
 }))
 
 vi.mock("@dotenvx/dotenvx", () => ({
@@ -107,6 +115,51 @@ vi.mock("../shared/language", () => ({
 	formatLanguage: vi.fn().mockReturnValue("en"),
 }))
 
+vi.mock("../utils/path", () => ({}))
+
+vi.mock("../utils/networkProxy", () => ({
+	initializeNetworkProxy: vi.fn(),
+}))
+
+vi.mock("../utils/parallelInit", () => ({
+	runParallel: vi.fn().mockImplementation(async (tasks) => {
+		const results = []
+		for (const task of tasks) {
+			try {
+				const value = await task()
+				results.push({ status: "fulfilled", value })
+			} catch (reason) {
+				results.push({ status: "rejected", reason })
+			}
+		}
+		return results
+	}),
+	PerformanceTimer: class MockPerformanceTimer {
+		end() {}
+	},
+}))
+
+vi.mock("../integrations/terminal/Terminal", () => ({
+	Terminal: vi.fn(),
+}))
+
+vi.mock("../integrations/openai-codex/oauth", () => ({
+	openAiCodexOAuthManager: {
+		getAuth: vi.fn(),
+	},
+}))
+
+vi.mock("@roo-code/core", () => ({
+	customToolRegistry: {
+		getTools: vi.fn().mockReturnValue([]),
+		setExtensionPath: vi.fn(),
+	},
+}))
+
+vi.mock("../services/zoo-code-auth", () => ({
+	initZooCodeAuth: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock("../core/config/ContextProxy", () => ({
 	ContextProxy: {
 		getInstance: vi.fn().mockResolvedValue({
@@ -120,6 +173,19 @@ vi.mock("../core/config/ContextProxy", () => ({
 
 vi.mock("../integrations/editor/DiffViewProvider", () => ({
 	DIFF_VIEW_URI_SCHEME: "test-diff-scheme",
+}))
+
+vi.mock("../core/specs/virtualDocs/SpecDocumentContentProvider", () => {
+	class MockSpecDocumentContentProvider {
+		dispose = vi.fn()
+	}
+	return {
+		SpecDocumentContentProvider: MockSpecDocumentContentProvider,
+	}
+})
+
+vi.mock("../core/specs/virtualDocs/specUri", () => ({
+	SPEC_DOCUMENT_SCHEME: "test-spec-scheme",
 }))
 
 vi.mock("../integrations/terminal/TerminalRegistry", () => ({
@@ -227,6 +293,7 @@ describe("extension.ts", () => {
 
 		mockContext = {
 			extensionPath: "/test/path",
+			globalStorageUri: { fsPath: "/test/path" },
 			globalState: {
 				get: vi.fn().mockReturnValue(undefined),
 				update: vi.fn(),

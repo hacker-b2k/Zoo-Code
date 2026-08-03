@@ -3,13 +3,15 @@ import type { ClineSayTool } from "@roo-code/types"
 import { Task } from "../task/Task"
 import type { ToolUse } from "../../shared/tools"
 import { BaseTool, type ToolCallbacks } from "./BaseTool"
-import { searchWeb, readUrl } from "./helpers/webResearch"
+import { research } from "./helpers/webResearchRequest"
 
 interface WebResearchParams {
-	action: "search" | "read_url"
+	input?: string | null
+	action?: "search" | "read_url"
 	query?: string | null
 	url?: string | null
 	max_results?: number | null
+	read_top_sources?: number | null
 }
 
 export class WebResearchTool extends BaseTool<"web_research"> {
@@ -27,29 +29,15 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 		// so the actionable missing-param error surfaces.
 		const query = typeof params.query === "string" ? params.query : null
 		const url = typeof params.url === "string" ? params.url : null
+		const directInput = typeof params.input === "string" ? params.input : null
+		const input = directInput ?? (action === "search" ? query : url)
 
 		try {
-			if (!action || typeof action !== "string") {
+			if (!input) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("web_research")
 				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("web_research" as any, "action" as any))
-				return
-			}
-
-			if (action === "search" && !query) {
-				task.consecutiveMistakeCount++
-				task.recordToolError("web_research")
-				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("web_research" as any, "query" as any))
-				return
-			}
-
-			if (action === "read_url" && !url) {
-				task.consecutiveMistakeCount++
-				task.recordToolError("web_research")
-				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("web_research" as any, "url" as any))
+				pushToolResult(await task.sayAndCreateMissingParamError("web_research" as any, "input" as any))
 				return
 			}
 
@@ -58,7 +46,7 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 			// Build the approval message
 			const toolPayload: Partial<ClineSayTool> = {
 				tool: "openTabs" as any, // Reuse the openTabs UI type for display
-				content: action === "search" ? `Search: ${query}` : `Read: ${url}`,
+				content: `Research: ${input}`,
 			}
 
 			const didApprove = await askApproval("tool", JSON.stringify(toolPayload))
@@ -66,58 +54,29 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 				return
 			}
 
-			if (action === "search") {
-				const result = await searchWeb(query!, max_results ?? 8)
-
-				if (result.results.length === 0) {
-					pushToolResult(`No search results found for: "${query}"`)
-					return
-				}
-
-				const provider = result.provider === "tavily" ? "Tavily API" : "DuckDuckGo"
-				const formatted = [
-					`Search results for: "${query}" (${provider})`,
-					`Found ${result.results.length} results:\n`,
-					...result.results.map((r, i) => `${i + 1}. ${r.title}\n   URL: ${r.url}\n   ${r.snippet}\n`),
-				].join("\n")
-
-				pushToolResult(formatted)
-			} else {
-				// read_url
-				const result = await readUrl(url!)
-
-				const formatted = [
-					`Page: ${result.title || "(no title)"}`,
-					`URL: ${result.url}`,
-					result.truncated ? "(Content was truncated due to length)" : "",
-					`\n--- Page Content ---\n`,
-					result.text,
-				]
-					.filter(Boolean)
-					.join("\n")
-
-				pushToolResult(formatted)
-			}
+			const result = await research({
+				input,
+				maxSources: max_results ?? 8,
+				readTopSources: params.read_top_sources ?? 0,
+			})
+			pushToolResult(JSON.stringify(result, null, 2))
 		} catch (error) {
-			await handleError(action === "search" ? "searching the web" : "reading URL content", error as Error)
+			await handleError("researching the web", error as Error)
 		} finally {
 			this.resetPartialState()
 		}
 	}
 
 	override async handlePartial(task: Task, block: ToolUse<"web_research">): Promise<void> {
-		const action = block.params.action
-		if (!action || typeof action !== "string") return
-
-		// Problem A: tolerate non-string query/url on partials (objects from
-		// broken gateways) — render a placeholder instead of "[object Object]".
-		const queryOrUrl =
-			typeof block.params.query === "string"
-				? block.params.query
-				: typeof block.params.url === "string"
-					? block.params.url
-					: "..."
-		const label = action === "search" ? `Searching: ${queryOrUrl}` : `Reading: ${queryOrUrl}`
+		const input =
+			typeof (block.params as any).input === "string"
+				? (block.params as any).input
+				: typeof block.params.query === "string"
+					? block.params.query
+					: typeof block.params.url === "string"
+						? block.params.url
+						: "..."
+		const label = `Researching: ${input}`
 
 		const partialPayload = {
 			tool: "openTabs" as any,

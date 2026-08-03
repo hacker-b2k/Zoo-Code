@@ -130,6 +130,7 @@ export function isNonBlockingAsk(ask: ClineAsk): ask is NonBlockingAsk {
  * - `user_feedback_diff`: Diff-formatted feedback from user showing requested changes
  * - `command_output`: Output from an executed command
  * - `shell_integration_warning`: Warning about shell integration issues or limitations
+ * - `stream_stalled_warning`: Soft (non-terminal) provider inactivity signal before the hard timeout
  * - `mcp_server_request_started`: MCP server request has been initiated
  * - `mcp_server_response`: Response received from MCP server
  * - `subtask_result`: Result of a completed subtask
@@ -158,6 +159,7 @@ export const clineSays = [
 	"user_feedback_diff",
 	"command_output",
 	"shell_integration_warning",
+	"stream_stalled_warning",
 	"mcp_server_request_started",
 	"mcp_server_response",
 	"subtask_result",

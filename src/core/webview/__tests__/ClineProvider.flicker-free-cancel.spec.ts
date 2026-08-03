@@ -403,22 +403,27 @@ describe("ClineProvider flicker-free cancel", () => {
 			workspace: "/test/workspace",
 		}
 
-		// Act: Create task with history item (should rehydrate in-place)
-		await provider.createTaskWithHistoryItem(historyItem)
+		// Act: Create task with history item — findLiveTask() returns the existing
+		// live task (mockTask1) since it's in clineStack with abandoned:false and
+		// no abort, so createTaskWithHistoryItem returns it early without replacement.
+		const result = await provider.createTaskWithHistoryItem(historyItem)
 
 		// Assert: removeClineFromStack should NOT be called
 		expect(removeClineFromStackSpy).not.toHaveBeenCalled()
 
-		// Verify the task was replaced in-place
+		// The existing live task is returned directly (no replacement)
+		expect(result).toBe(mockTask1)
+
+		// Stack remains unchanged — mockTask1 was already live
 		expect((provider as any).clineStack).toHaveLength(1)
-		expect((provider as any).clineStack[0]).toBe(mockTask2)
+		expect((provider as any).clineStack[0]).toBe(mockTask1)
 
-		// Verify old event listeners were cleaned up
-		expect(mockCleanupFunctions[0]).toHaveBeenCalled()
-		expect(mockCleanupFunctions[1]).toHaveBeenCalled()
+		// Event listeners should NOT be cleaned up (early return path)
+		expect(mockCleanupFunctions[0]).not.toHaveBeenCalled()
+		expect(mockCleanupFunctions[1]).not.toHaveBeenCalled()
 
-		// Verify new task received focus event
-		expect(mockTask2.emit).toHaveBeenCalledWith("taskFocused")
+		// mockTask2 was never used (no new task was created since findLiveTask returned early)
+		expect(mockTask2.emit).not.toHaveBeenCalled()
 	})
 
 	it("should remove task from stack when creating different task", async () => {
@@ -503,10 +508,11 @@ describe("ClineProvider flicker-free cancel", () => {
 
 		await provider.createTaskWithHistoryItem(historyItem)
 
-		// Assert: Stack should maintain parent task and replace current task
+		// Assert: Stack should maintain parent task; current task is already live
+		// so findLiveTask returns it directly (no replacement occurs)
 		expect((provider as any).clineStack).toHaveLength(2)
 		expect((provider as any).clineStack[0]).toBe(mockParentTask)
-		expect((provider as any).clineStack[1]).toBe(mockTask2)
+		expect((provider as any).clineStack[1]).toBe(mockTask1)
 	})
 
 	it("detaches runtime parent links for a cancelled delegated child while preserving history lineage", async () => {

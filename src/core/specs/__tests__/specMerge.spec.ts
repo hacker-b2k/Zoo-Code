@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest"
 
 import {
 	applyAppend,
+	applyBatchSearchReplace,
 	applySearchReplace,
 	applyUpsertSection,
+	extractHeadings,
 	normalizeWriteSpecMode,
 	resolveWriteBody,
 } from "../specMerge"
@@ -57,5 +59,83 @@ describe("specMerge (F-021)", () => {
 
 	it("resolveWriteBody replace ignores existing", () => {
 		expect(resolveWriteBody({ mode: "replace", existingContent: "old", content: "new" })).toBe("new")
+	})
+
+	// Issue B regression: fixing ONE broken Mermaid diagram inside a
+	// multi-diagram design doc via a targeted search_replace must leave the
+	// rest of the document byte-identical (no full rewrite side-effects).
+	it("Issue B: targeted edit of one mermaid block leaves rest byte-identical", () => {
+		const diagramA = "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```"
+		const diagramBbroken = "```mermaid\nsequenceDiagram\n  Alice->>Bob: hi\n  deactivate Alice\n```"
+		const diagramBfixed = "```mermaid\nsequenceDiagram\n  Alice->>Bob: hi\n```"
+		const diagramC = "```mermaid\nclassDiagram\n  Animal <|-- Dog\n```"
+		const doc =
+			"# Design\n\n## Flow\n\n" +
+			diagramA +
+			"\n\n## Sequence\n\n" +
+			diagramBbroken +
+			"\n\n## Classes\n\n" +
+			diagramC +
+			"\n"
+
+		const out = applySearchReplace(doc, diagramBbroken, diagramBfixed, false)
+
+		// The broken diagram is fixed.
+		expect(out).toContain(diagramBfixed)
+		expect(out).not.toContain("deactivate Alice")
+		// Everything else is byte-identical: replacing the fixed block back
+		// must reproduce the original document exactly.
+		const roundTrip = out.replace(diagramBfixed, diagramBbroken)
+		expect(roundTrip).toBe(doc)
+		// Untouched diagrams preserved verbatim.
+		expect(out).toContain(diagramA)
+		expect(out).toContain(diagramC)
+	})
+
+	it("Issue B: upsert_section rewrites only the targeted diagram section", () => {
+		const doc =
+			"# Design\n\n## Overview\n\nkeep this overview\n\n## Data Model\n\nold broken body\n\n## API\n\nkeep this api\n"
+		const out = applyUpsertSection(doc, "## Data Model", "```mermaid\nerDiagram\n  USER ||--o{ POST : writes\n```")
+		expect(out).toContain("keep this overview")
+		expect(out).toContain("keep this api")
+		expect(out).toContain("erDiagram")
+		expect(out).not.toContain("old broken body")
+	})
+
+	it("extractHeadings returns heading lines with line numbers", () => {
+		const doc = "# Title\n\nSome text\n\n## Section\n\nMore text\n\n### Sub\n\nEnd\n"
+		const result = extractHeadings(doc)
+		expect(result).toContain("L1: # Title")
+		expect(result).toContain("L5: ## Section")
+		expect(result).toContain("L9: ### Sub")
+		expect(result).not.toContain("Some text")
+	})
+
+	it("extractHeadings returns empty message for empty doc", () => {
+		expect(extractHeadings("")).toBe("(empty document)")
+		expect(extractHeadings("   ")).toBe("(empty document)")
+	})
+
+	it("extractHeadings returns no-headings message for doc without headings", () => {
+		expect(extractHeadings("just plain text\nno headings here\n")).toBe("(no headings found)")
+	})
+
+	it("applyBatchSearchReplace applies multiple replacements", () => {
+		const doc = "# Tasks\n\n- [ ] Alpha\n- [ ] Beta\n- [ ] Gamma\n"
+		const out = applyBatchSearchReplace(doc, [
+			{ old_string: "- [ ] Alpha", new_string: "- [x] Alpha" },
+			{ old_string: "- [ ] Gamma", new_string: "- [x] Gamma" },
+		])
+		expect(out).toContain("- [x] Alpha")
+		expect(out).toContain("- [ ] Beta")
+		expect(out).toContain("- [x] Gamma")
+	})
+
+	it("applyBatchSearchReplace rejects empty replacements array", () => {
+		expect(() => applyBatchSearchReplace("text", [])).toThrow(/non-empty/)
+	})
+
+	it("applyBatchSearchReplace rejects missing old_string in replacement", () => {
+		expect(() => applyBatchSearchReplace("text", [{ old_string: "", new_string: "x" }])).toThrow(/old_string/)
 	})
 })

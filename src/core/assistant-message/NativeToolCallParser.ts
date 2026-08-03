@@ -17,6 +17,7 @@ import type {
 	ApiStreamToolCallEndChunk,
 } from "../../api/transform/stream"
 import { MCP_TOOL_PREFIX, MCP_TOOL_SEPARATOR, parseMcpToolName, normalizeMcpToolName } from "../../utils/mcp-name"
+import { decodeXmlEntities } from "./TextToolCallParser"
 
 /**
  * Helper type to extract properly typed native arguments for a given tool.
@@ -122,7 +123,14 @@ export class NativeToolCallParser {
 			if (lower === "null" || lower === "undefined" || lower === "none" || lower === "nil") {
 				return undefined
 			}
-			return value
+			// Decode XML/HTML entities that models sometimes emit inside
+			// string parameters (e.g. Mermaid `<<abstract>>` sent as
+			// `&lt;&lt;abstract&gt;&gt;` even inside JSON strings). Without
+			// this, entity-encoded content reaches storage verbatim and the
+			// preview renderer shows `&lt;` literally instead of `<`.
+			// The XML recovery path already decodes via decodeXmlEntities in
+			// TextToolCallParser; this brings the native JSON path to parity.
+			return value.includes("&") ? decodeXmlEntities(value) : value
 		}
 		if (typeof value === "number" || typeof value === "boolean") {
 			return String(value)
@@ -204,6 +212,46 @@ export class NativeToolCallParser {
 	}
 
 	/**
+	 * Provider-agnostic coercion for the `ask_followup_question` `follow_up`
+	 * parameter (tool-issues Issue 1 + user.txt bug).
+	 *
+	 * Some providers/models that receive strict-mode `["array","null"]` schemas
+	 * over-encode `follow_up` as a JSON STRING containing the array (e.g.
+	 * `"[{\"text\":\"Yes\",\"mode\":null}]"`) instead of a native JSON array.
+	 * Without this layer, the tool's validator rejects the string with "must be
+	 * an array" and the model retries with the identical (wrong) payload —
+	 * surfacing as the same tool failing repeatedly mid-session.
+	 *
+	 * Policy:
+	 *   - Real array passes through unchanged.
+	 *   - String that looks like a JSON array (`[...]`) is parsed; if it yields a
+	 *     real array, that array is returned (the schema↔validator mismatch is
+	 *     resolved at the bridge).
+	 *   - Everything else (objects/numbers/non-JSON strings) is returned as-is so
+	 *     the tool's precise "must be an array" error path still fires for
+	 *     genuinely malformed shapes (preserving the keyed-object regression test).
+	 */
+	private static coerceFollowUpArray(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value
+		}
+		if (typeof value === "string") {
+			const trimmed = value.trim()
+			if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+				try {
+					const parsed = JSON.parse(trimmed)
+					if (Array.isArray(parsed)) {
+						return parsed
+					}
+				} catch {
+					// Not valid JSON — leave as-is so the tool's type error fires.
+				}
+			}
+		}
+		return value
+	}
+
+	/**
 	 * Process a raw tool call chunk from the API stream.
 	 * Handles tracking, buffering, and emits start/delta/end events.
 	 *
@@ -234,6 +282,29 @@ export class NativeToolCallParser {
 
 		let tracked = this.rawChunkTracker.get(index)
 
+		// Root-cause hardening for the mid-session "Tool not found" drop
+		// (user.txt): rawChunkTracker is process-static and keyed ONLY by the
+		// provider's stream `index` (0, 1, 2...), which restarts at 0 on every
+		// new API response. If a previous turn was interrupted without clearing
+		// this map (dispose/reload/non-abort stream error), a stale entry can
+		// survive at index N. When the new turn emits its next chunk for index N:
+		//   * if the chunk carries an `id` that DIFFERS from the stale entry's id,
+		//     the old code ignored it and kept streaming into the stale
+		//     id/name — the new tool call was silently appended to a dead tool_use,
+		//     and the fresh id never got a start event, so the block fell through
+		//     to the "unavailable/unknown tool" branch ("Tool not found").
+		//   * if the chunk is args-only (index only — how OpenAI-compatible
+		//     providers emit argument deltas after the first chunk), the old code
+		//     reused the stale id for accumulation, cross-linking two turns.
+		// Fix: treat an incoming `id` as the authoritative identity. When it does
+		// not match the tracked entry at this index, end/reap the stale entry and
+		// start fresh tracking for the new id.
+		if (id && tracked && tracked.id !== id) {
+			events.push({ type: "tool_call_end", id: tracked.id })
+			this.rawChunkTracker.delete(index)
+			tracked = undefined
+		}
+
 		// Initialize new tool call tracking when we receive an id
 		if (id && !tracked) {
 			tracked = {
@@ -245,6 +316,11 @@ export class NativeToolCallParser {
 			this.rawChunkTracker.set(index, tracked)
 		}
 
+		// Args-only chunk (no id) landing on an index with no live entry: this is
+		// the leftover-stale-continuity case (a prior turn left this index in the
+		// tracker and it was re-keyed above, OR the start chunk never delivered an
+		// id). We cannot safely attribute these arguments to any tool call, so
+		// drop them rather than corrupt a stale/other id's accumulator.
 		if (!tracked) {
 			return events
 		}
@@ -293,6 +369,15 @@ export class NativeToolCallParser {
 	/**
 	 * Process stream finish reason.
 	 * Emits end events when finish_reason is 'tool_calls'.
+	 *
+	 * Root-cause hardening (user.txt): previously this left rawChunkTracker
+	 * populated; only finalizeRawChunks() cleared it. Any finish_reason OTHER
+	 * than 'tool_calls' (e.g. 'stop' emitted after tool call chunks by some
+	 * providers / proxies, or an early terminate) left stale ids behind to be
+	 * picked up by the NEXT turn's index-reuse — the session-level "Tool not
+	 * found" drop. Clearing here as well makes the raw-chunk state self-healing:
+	 * once a finish_reason is observed, the tracker no longer hands stale ids
+	 * to subsequent turns regardless of provider behavior.
 	 */
 	public static processFinishReason(finishReason: string | null | undefined): ToolCallStreamEvent[] {
 		const events: ToolCallStreamEvent[] = []
@@ -304,6 +389,11 @@ export class NativeToolCallParser {
 					id: tracked.id,
 				})
 			}
+			// Consume-and-clear: the entries we just ended must not survive to
+			// collide with a future turn that reuses index 0..N. Safe to clear
+			// because the end events above are what drive
+			// Task.handleToolCallEndEvent -> finalizeStreamingToolCall.
+			this.rawChunkTracker.clear()
 		}
 
 		return events
@@ -780,11 +870,25 @@ export class NativeToolCallParser {
 				break
 
 			case "read_spec":
-				if (partialArgs.doc !== undefined || partialArgs.spec_id !== undefined) {
-					nativeArgs = {
+				if (
+					partialArgs.doc !== undefined ||
+					partialArgs.spec_id !== undefined ||
+					partialArgs.mode !== undefined ||
+					partialArgs.revision !== undefined
+				) {
+					const readArgs: Record<string, unknown> = {
 						spec_id: this.coerceOptionalSpecId(partialArgs.spec_id),
 						doc: this.coerceOptionalStringParam(partialArgs.doc),
 					}
+					// Forward mode (headings/history) and revision when provided
+					const readMode = this.coerceOptionalStringField(partialArgs.mode)
+					if (readMode !== undefined) {
+						readArgs.mode = readMode
+					}
+					if (typeof partialArgs.revision === "number" && partialArgs.revision > 0) {
+						readArgs.revision = partialArgs.revision
+					}
+					nativeArgs = readArgs
 				}
 				break
 
@@ -795,7 +899,9 @@ export class NativeToolCallParser {
 					partialArgs.doc !== undefined ||
 					partialArgs.content !== undefined ||
 					partialArgs.mode !== undefined ||
-					partialArgs.old_string !== undefined
+					partialArgs.old_string !== undefined ||
+					partialArgs.dry_run !== undefined ||
+					partialArgs.replacements !== undefined
 				) {
 					nativeArgs = {
 						title: partialArgs.title,
@@ -807,6 +913,8 @@ export class NativeToolCallParser {
 						old_string: partialArgs.old_string,
 						new_string: partialArgs.new_string,
 						replace_all: partialArgs.replace_all,
+						dry_run: partialArgs.dry_run,
+						replacements: partialArgs.replacements,
 					}
 				}
 				break
@@ -1439,6 +1547,15 @@ export class NativeToolCallParser {
 					}
 					break
 
+				case "browser_screenshot":
+					if (args.pageId !== undefined) {
+						nativeArgs = {
+							pageId: args.pageId,
+							fullPage: args.fullPage ?? undefined,
+						} as NativeArgsFor<TName>
+					}
+					break
+
 				case "apply_diff":
 					if (args.path !== undefined && args.diff !== undefined) {
 						nativeArgs = {
@@ -1471,10 +1588,20 @@ export class NativeToolCallParser {
 					// the raw value so the tool can emit a precise "must be an array" error
 					// instead of the generic parser failure, which would surface as a
 					// misleading "Missing value for required parameter 'follow_up'" error.
+					//
+					// Provider-agnostic follow_up array coercion (tool-issues Issue 1 +
+					// user.txt bug): some providers/models that receive strict-mode
+					// `["array","null"]` schemas over-encode `follow_up` as a JSON STRING
+					// containing the array (e.g. `"[{\"text\":\"Yes\"}]"`). Decode that
+					// stringified array into a real array here at the parser layer so the
+					// tool-bridge schema and the validator stay aligned — the model never
+					// sees a "must be an array" loop for a payload it believed was valid.
+					// Non-array objects/numbers are forwarded as-is so the tool still emits
+					// the precise type error for genuinely malformed shapes.
 					if (args.question !== undefined && args.follow_up !== undefined) {
 						nativeArgs = {
 							question: args.question,
-							follow_up: args.follow_up,
+							follow_up: this.coerceFollowUpArray(args.follow_up),
 						} as NativeArgsFor<TName>
 					}
 					break
@@ -1560,10 +1687,19 @@ export class NativeToolCallParser {
 					// tool's "doc is required" path via undefined, rather than
 					// crashing on `params.doc?.trim()` later.
 					if (args.doc !== undefined) {
-						nativeArgs = {
+						const readArgs: Record<string, unknown> = {
 							spec_id: this.coerceOptionalSpecId(args.spec_id),
 							doc: this.coerceOptionalStringParam(args.doc),
-						} as NativeArgsFor<TName>
+						}
+						// Forward mode (headings/history) and revision when provided
+						const readMode = this.coerceOptionalStringField(args.mode)
+						if (readMode !== undefined) {
+							readArgs.mode = readMode
+						}
+						if (typeof args.revision === "number" && args.revision > 0) {
+							readArgs.revision = args.revision
+						}
+						nativeArgs = readArgs as NativeArgsFor<TName>
 					}
 					break
 
@@ -1608,8 +1744,13 @@ export class NativeToolCallParser {
 							) {
 								contentCoerced = undefined
 							} else {
-								// Keep empty string and all other string bodies (including whitespace-only)
-								contentCoerced = args.content
+								// Keep empty string and all other string bodies (including whitespace-only).
+								// Decode XML/HTML entities that models sometimes emit inside content
+								// (e.g. Mermaid <<abstract>> sent as &lt;&lt;abstract&gt;&gt; even in
+								// JSON strings) — parity with the XML recovery path's decodeXmlEntities.
+								contentCoerced = args.content.includes("&")
+									? decodeXmlEntities(args.content)
+									: args.content
 							}
 						} else {
 							// Non-string content (object/array/number) dropped to undefined —
@@ -1654,6 +1795,13 @@ export class NativeToolCallParser {
 						}
 						if (replaceAll !== undefined) {
 							writeArgs.replace_all = replaceAll
+						}
+						// Forward dry_run and replacements when provided
+						if (args.dry_run === true || args.dry_run === "true") {
+							writeArgs.dry_run = true
+						}
+						if (Array.isArray(args.replacements) && args.replacements.length > 0) {
+							writeArgs.replacements = args.replacements
 						}
 						nativeArgs = writeArgs as NativeArgsFor<TName>
 					}

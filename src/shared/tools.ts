@@ -156,6 +156,7 @@ export type NativeToolArgs = {
 		pageId: string
 		actions: Array<{ type: string; selector?: string; text?: string; url?: string; script?: string }>
 	}
+	browser_screenshot: { pageId: string; fullPage?: boolean | null }
 	apply_diff: { path: string; diff: string }
 	edit: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
 	search_and_replace: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
@@ -191,7 +192,12 @@ export type NativeToolArgs = {
 	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
 	write_to_file: { path: string; content: string }
 	list_specs: Record<string, never>
-	read_spec: { spec_id?: string | null; doc: string }
+	read_spec: {
+		spec_id?: string | null
+		doc: string
+		mode?: "full" | "headings" | "history" | string | null
+		revision?: number | null
+	}
 	/**
 	 * title: required for create (spec_id null); optional on update.
 	 * mode: replace (default) | append | upsert_section | search_replace (F-021).
@@ -206,6 +212,8 @@ export type NativeToolArgs = {
 		old_string?: string | null
 		new_string?: string | null
 		replace_all?: boolean | null
+		dry_run?: boolean | null
+		replacements?: Array<{ old_string: string; new_string: string; replace_all?: boolean }> | null
 	}
 	/** F-022 / F-022b: delete one or many virtual packs. */
 	delete_spec: {
@@ -416,6 +424,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
 	evaluate_browser_js: "evaluate browser JS",
 	read_all_browser_tabs: "read all browser tabs",
 	batch_browser_actions: "batch browser actions",
+	browser_screenshot: "browser screenshot",
 	read_file: "read files",
 	read_command_output: "read command output",
 	write_to_file: "write files",
@@ -491,6 +500,7 @@ export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
 			"evaluate_browser_js",
 			"read_all_browser_tabs",
 			"batch_browser_actions",
+			"browser_screenshot",
 		],
 		alwaysAvailable: true,
 	},
@@ -565,6 +575,7 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 	"evaluate_browser_js",
 	"read_all_browser_tabs",
 	"batch_browser_actions",
+	"browser_screenshot",
 ] as const
 
 /**
@@ -580,6 +591,42 @@ export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
 export const TOOL_ALIASES: Record<string, ToolName> = {
 	write_file: "write_to_file",
 	search_and_replace: "edit",
+
+	// Resilience aliases: several models overfit on other agents' tool-name
+	// conventions and hallucinate `bash_tool` / `bash` / `shell` /
+	// `run_command` instead of the registered `execute_command`. Left
+	// unmappable, these calls fall through to the unknown-tool error, which
+	// manifests mid-session as a string of "Tool not found" failures and then
+	// forced model retries against the same invalid name. Map them to the
+	// real tool so the call still lands in the right place.
+	bash_tool: "execute_command",
+	bash: "execute_command",
+	shell_command: "execute_command",
+	run_command: "execute_command",
+
+	// Web research aliases (user.txt Round 3): models hallucinated
+	// `web_fetch` / `fetch_url` / `read_url` / `browse_url` / `open_url` /
+	// `search_web` instead of the registered `web_research` tool. The model
+	// was trained on other assistants where `web_fetch` is the canonical name
+	// for reading a URL. Map them so the call resolves to `web_research` with
+	// action "read_url" (handled downstream in the parser/tool layer).
+	web_fetch: "web_research",
+	fetch_url: "web_research",
+	read_url: "web_research",
+	browse_url: "web_research",
+	open_url: "web_research",
+	search_web: "web_research",
+	browse: "web_research",
+
+	// Common tool-name variations from other AI coding assistants.
+	read_file_content: "read_file",
+	load_file: "read_file",
+	list_files_recursive: "list_files",
+	list_files_tree: "list_files",
+	search_code: "search_files",
+	grep_code: "search_files",
+	find_in_codebase: "search_files",
+	create_file: "write_to_file",
 } as const
 
 export type DiffResult =

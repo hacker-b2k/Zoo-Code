@@ -1,4 +1,5 @@
 import { NativeToolCallParser } from "../NativeToolCallParser"
+import { resolveToolAlias } from "../../prompts/tools/filter-tools-for-mode"
 
 describe("NativeToolCallParser", () => {
 	beforeEach(() => {
@@ -460,6 +461,82 @@ describe("NativeToolCallParser", () => {
 		})
 	})
 
+	describe("ask_followup_question follow_up array coercion (tool-issues Issue 1 + user.txt bug)", () => {
+		beforeEach(() => {
+			NativeToolCallParser.clearAllStreamingToolCalls()
+			NativeToolCallParser.clearRawChunkState()
+		})
+
+		it("passes a native array follow_up through unchanged", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_afu_native",
+				name: "ask_followup_question",
+				arguments: JSON.stringify({
+					question: "Which option?",
+					follow_up: [
+						{ text: "Yes", mode: "code" },
+						{ text: "No", mode: null },
+					],
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs.follow_up).toEqual([
+				{ text: "Yes", mode: "code" },
+				{ text: "No", mode: null },
+			])
+		})
+
+		it("coerces a stringified JSON array follow_up into a real array", () => {
+			// Models that receive strict-mode ["array","null"] schemas sometimes
+			// over-encode follow_up as a JSON STRING containing the array. The parser
+			// must decode it so the tool never sees a "must be an array" loop.
+			const followUpArray = [
+				{ text: "Keep", mode: null },
+				{ text: "Remove", mode: null },
+			]
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_afu_string",
+				name: "ask_followup_question",
+				arguments: JSON.stringify({
+					question: "How should I proceed?",
+					follow_up: JSON.stringify(followUpArray),
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(Array.isArray(result?.nativeArgs.follow_up)).toBe(true)
+			expect(result?.nativeArgs.follow_up).toEqual(followUpArray)
+		})
+
+		it("forwards a non-array, non-stringified object so the tool can report the type error", () => {
+			// Regression guard: keyed objects must still reach the tool's precise
+			// "must be an array" error path (not be silently coerced).
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_afu_obj",
+				name: "ask_followup_question",
+				arguments: JSON.stringify({
+					question: "How should I proceed?",
+					follow_up: { "0": { mode: null, text: "Keep" } },
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(Array.isArray(result?.nativeArgs.follow_up)).toBe(false)
+			expect(result?.nativeArgs.follow_up).toEqual({ "0": { mode: null, text: "Keep" } })
+		})
+
+		it("forwards a non-JSON string so the tool can report the type error", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_afu_plainstr",
+				name: "ask_followup_question",
+				arguments: JSON.stringify({
+					question: "Pick one",
+					follow_up: "not-an-array",
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs.follow_up).toBe("not-an-array")
+		})
+	})
+
 	describe("parseToolCall F-004 specs", () => {
 		it("should parse write_spec create payload with nativeArgs", () => {
 			const result = NativeToolCallParser.parseToolCall({
@@ -598,6 +675,72 @@ describe("NativeToolCallParser", () => {
 				}),
 			}) as any
 			expect(read?.nativeArgs?.spec_id).toBe("abc-123-real")
+		})
+
+		it("parseToolCall forwards read_spec mode and revision through nativeArgs", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_mode",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: null, doc: "design", mode: "headings" }),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.doc).toBe("design")
+			expect(result?.nativeArgs?.spec_id).toBeNull()
+			expect(result?.nativeArgs?.mode).toBe("headings")
+
+			const history = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_history",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: "abc-123", doc: "tasks", mode: "history", revision: 3 }),
+			}) as any
+			expect(history?.nativeArgs?.mode).toBe("history")
+			expect(history?.nativeArgs?.revision).toBe(3)
+		})
+
+		it("parseToolCall omits mode/revision from read_spec nativeArgs when not provided", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_rs_basic",
+				name: "read_spec",
+				arguments: JSON.stringify({ spec_id: null, doc: "requirements" }),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.doc).toBe("requirements")
+			expect(result?.nativeArgs?.mode).toBeUndefined()
+			expect(result?.nativeArgs?.revision).toBeUndefined()
+		})
+
+		it("parseToolCall forwards write_spec dry_run and replacements through nativeArgs", () => {
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_dry",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Test",
+					spec_id: "abc",
+					doc: "design",
+					mode: "search_replace",
+					old_string: "old",
+					new_string: "new",
+					dry_run: true,
+				}),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result?.nativeArgs?.dry_run).toBe(true)
+
+			const batch = NativeToolCallParser.parseToolCall({
+				id: "toolu_ws_batch",
+				name: "write_spec",
+				arguments: JSON.stringify({
+					title: "Test",
+					spec_id: "abc",
+					doc: "tasks",
+					replacements: [
+						{ old_string: "- [ ] A", new_string: "- [x] A" },
+						{ old_string: "- [ ] B", new_string: "- [x] B" },
+					],
+				}),
+			}) as any
+			expect(batch?.nativeArgs?.replacements).toHaveLength(2)
+			expect(batch?.nativeArgs?.replacements[0].old_string).toBe("- [ ] A")
 		})
 	})
 
@@ -740,6 +883,149 @@ describe("NativeToolCallParser", () => {
 			expect(delta).toBeDefined()
 			expect(typeof delta.delta).toBe("string")
 			expect(JSON.parse(delta.delta)).toEqual({ command: "ls -la" })
+		})
+	})
+
+	describe("stale raw-chunk tracker reaping (user.txt bridge-drop regression)", () => {
+		beforeEach(() => {
+			NativeToolCallParser.clearAllStreamingToolCalls()
+			NativeToolCallParser.clearRawChunkState()
+		})
+
+		it("reaps a leftover tracked entry when a NEW tool id reuses the same stream index", () => {
+			// Simulate a previous turn whose stream was interrupted WITHOUT the
+			// begin-of-turn clear running (dispose/reload/non-abort error path).
+			// The tracker still holds index 0 -> old id "toolu_OLD".
+			NativeToolCallParser.processRawChunk({ index: 0, id: "toolu_OLD", name: "list_specs" })
+			expect((NativeToolCallParser as any).rawChunkTracker.size).toBe(1)
+
+			// A NEW turn reuses index 0 but with a different id (the provider
+			// re-issues a new call_id for the same slot). The tracker must END the
+			// stale entry and START fresh tracking for the new id — otherwise the
+			// new tool call's arguments are appended to the dead id and the block
+			// resolves to "Tool not found" for the rest of the session.
+			const events = NativeToolCallParser.processRawChunk({
+				index: 0,
+				id: "toolu_NEW",
+				name: "write_spec",
+			})
+
+			const endEvent = events.find((e) => e.type === "tool_call_end")
+			const startEvent = events.find((e) => e.type === "tool_call_start")
+			expect(endEvent).toEqual({ type: "tool_call_end", id: "toolu_OLD" })
+			expect(startEvent).toEqual({ type: "tool_call_start", id: "toolu_NEW", name: "write_spec" })
+
+			// Tracker now tracks the new id, not the stale one.
+			expect((NativeToolCallParser as any).rawChunkTracker.get(0)?.id).toBe("toolu_NEW")
+
+			// Subsequent args-only chunk (index only — how OpenAI-compatible
+			// providers emit argument deltas) must attach to the NEW id.
+			const deltaEvents = NativeToolCallParser.processRawChunk({ index: 0, arguments: '{"title":"x"}' })
+			const delta = deltaEvents.find((e) => e.type === "tool_call_delta")
+			expect(delta).toEqual({ type: "tool_call_delta", id: "toolu_NEW", delta: '{"title":"x"}' })
+		})
+
+		it("processFinishReason clears the tracker so a stop-finish leaves no residue", () => {
+			// Tracker populated mid-stream.
+			NativeToolCallParser.processRawChunk({ index: 0, id: "toolu_FR", name: "read_spec" })
+			NativeToolCallParser.processRawChunk({ index: 0, arguments: '{"spec_id":null,"doc":"design"}' })
+
+			// finish_reason === 'tool_calls' — end events are emitted AND the tracker
+			// is cleared so the NEXT turn's index reuse cannot pick up stale state.
+			const events = NativeToolCallParser.processFinishReason("tool_calls")
+			expect(events).toEqual([{ type: "tool_call_end", id: "toolu_FR" }])
+			expect((NativeToolCallParser as any).rawChunkTracker.size).toBe(0)
+
+			// A new turn reusing index 0 now starts clean — no end event for the old id.
+			const next = NativeToolCallParser.processRawChunk({ index: 0, id: "toolu_FR2", name: "list_specs" })
+			const startEvent = next.find((e) => e.type === "tool_call_start")
+			expect(startEvent).toEqual({ type: "tool_call_start", id: "toolu_FR2", name: "list_specs" })
+			expect(next.some((e) => e.type === "tool_call_end")).toBe(false)
+		})
+	})
+
+	describe("hallucinated shell-tool alias (user.txt issue 2)", () => {
+		it("resolves bash_tool → execute_command so a hallucinated call still lands", () => {
+			// Models overfit on other agents' conventions and emit `bash_tool`
+			// instead of `execute_command`. Before the alias was added, this fell
+			// into the unknown-tool branch ("Tool not found") visible in the live
+			// session screenshots.
+			const result = NativeToolCallParser.parseToolCall({
+				id: "toolu_bash_alias",
+				name: "bash_tool" as any,
+				arguments: JSON.stringify({ command: 'mkdir "global way"', cwd: null, timeout: null }),
+			}) as any
+			expect(result).not.toBeNull()
+			expect(result.type).toBe("tool_use")
+			// Resolved to the canonical tool name for execution...
+			expect(result.name).toBe("execute_command")
+			// ...and the args passed through.
+			expect(result.nativeArgs).toEqual({ command: 'mkdir "global way"', cwd: null, timeout: null })
+		})
+
+		it("resolves other hallucinated shell-tool names → execute_command", () => {
+			for (const alias of ["bash", "shell_command", "run_command"] as const) {
+				const result = NativeToolCallParser.parseToolCall({
+					id: `toolu_${alias}`,
+					name: alias as any,
+					arguments: JSON.stringify({ command: "ls", cwd: null, timeout: null }),
+				}) as any
+				expect(result, `${alias} should resolve`).not.toBeNull()
+				expect(result.name).toBe("execute_command")
+			}
+		})
+
+		it("resolves hallucinated web-fetch tool names → web_research", () => {
+			// Models trained on other assistants (e.g. OpenAI web tool) emit
+			// `web_fetch` / `fetch_url` / `read_url` / `browse_url` / `open_url` /
+			// `search_web` / `browse` instead of the registered `web_research`.
+			const webAliases = [
+				"web_fetch",
+				"fetch_url",
+				"read_url",
+				"browse_url",
+				"open_url",
+				"search_web",
+				"browse",
+			] as const
+			for (const alias of webAliases) {
+				const result = NativeToolCallParser.parseToolCall({
+					id: `toolu_${alias}`,
+					name: alias as any,
+					arguments: JSON.stringify({ action: "read_url", url: "https://example.com" }),
+				}) as any
+				expect(result, `${alias} should resolve`).not.toBeNull()
+				expect(result.name).toBe("web_research")
+			}
+		})
+
+		it("resolves hallucinated file/code tool names to their canonical tools", () => {
+			const cases: Array<[string, string]> = [
+				["read_file_content", "read_file"],
+				["load_file", "read_file"],
+				["list_files_recursive", "list_files"],
+				["list_files_tree", "list_files"],
+				["search_code", "search_files"],
+				["grep_code", "search_files"],
+				["find_in_codebase", "search_files"],
+				["create_file", "write_to_file"],
+			]
+			for (const [alias, canonical] of cases) {
+				const result = NativeToolCallParser.parseToolCall({
+					id: `toolu_${alias}`,
+					name: alias as any,
+					arguments: JSON.stringify({}),
+				}) as any
+				// Some of these tools may have required params that cause
+				// finalize to return null, but the NAME should still resolve.
+				if (result) {
+					expect(result.name, `${alias} should resolve to ${canonical}`).toBe(canonical)
+				} else {
+					// If the parser couldn't finalize args, at least verify the
+					// alias resolved to the canonical name via resolveToolAlias.
+					expect(resolveToolAlias(alias)).toBe(canonical)
+				}
+			}
 		})
 	})
 })

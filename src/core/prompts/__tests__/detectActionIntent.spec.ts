@@ -109,7 +109,7 @@ describe("formatResponse.noToolsUsed", () => {
 	it("escalates on a repeated no-tool response", () => {
 		const message = formatResponse.noToolsUsed(detectActionIntent("fix the bug"), 2)
 		expect(message).toContain("attempt 2")
-		expect(message).toContain("MUST invoke a tool")
+		expect(message).toContain("Emit only a native structured tool call")
 		// The model must still have an honest way out rather than inventing a call.
 		expect(message).toContain("ask_followup_question")
 	})

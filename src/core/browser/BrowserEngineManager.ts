@@ -440,13 +440,21 @@ export class BrowserEngineManager {
 	/**
 	 * Take a screenshot of a page.
 	 */
-	async screenshotPage(taskId: string, pageId: string): Promise<{ mimeType: string; data: Buffer }> {
+	async screenshotPage(
+		taskId: string,
+		pageId: string,
+		options: { fullPage?: boolean } = {},
+	): Promise<{ mimeType: string; data: Buffer }> {
 		const page = this.getPage(taskId, pageId)
 		if (!page) {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		const buffer = await page.screenshot({ type: "jpeg", quality: 80 })
+		const buffer = await page.screenshot({
+			type: "jpeg",
+			quality: 80,
+			fullPage: options.fullPage ?? false,
+		})
 		return { mimeType: "image/jpeg", data: buffer }
 	}
 
@@ -586,6 +594,17 @@ export class BrowserEngineManager {
 
 	/**
 	 * Evaluate JavaScript on a page (#28).
+	 *
+	 * The model-supplied `script` is wrapped in an ASYNC IIFE
+	 * (`(async function(){ ... })()`), never a sync one. Playwright's
+	 * `page.evaluate(string)` compiles the string as a normal function body —
+	 * if the model's snippet contains a top-level `await` (very common for
+	 * idioms like `await new Promise(r => setTimeout(r, ms))` or
+	 * `await fetch(...)`), a sync wrapper produces
+	 * `SyntaxError: await is only valid in async functions and the top level
+	 * bodies of modules` (this exact crash is in the current-session repo logs).
+	 * An async wrapper makes `await` legal, and a `return` value from the
+	 * model's script is forwarded to us as the resolved Promise value.
 	 */
 	async evaluateJs(taskId: string, pageId: string, script: string): Promise<unknown> {
 		const page = this.getPage(taskId, pageId)
@@ -593,8 +612,14 @@ export class BrowserEngineManager {
 			throw new Error(`Page not found: ${pageId}`)
 		}
 
-		// Wrap in IIFE to avoid variable conflicts (#13)
-		const wrappedScript = script.trim().startsWith("(function") ? script : `(function() { ${script} })()`
+		// If the model already wrapped the script in an (async) IIFE, respect it.
+		// Otherwise wrap in an async IIFE so top-level `await` is syntactically
+		// valid. We still use Playwright's string-evaluate path (`page.evaluate(string)`),
+		// so Playwright awaits the returned Promise for us.
+		const trimmed = script.trim()
+		const alreadyWrapped =
+			/^(\(\s*)?(async\s+)?(function\s*\(|(\(\s*\)\s*=>)|(\w+\s*=>))/.test(trimmed) && trimmed.endsWith("()")
+		const wrappedScript = alreadyWrapped ? trimmed : `(async () => { ${script} })()`
 
 		return page.evaluate(wrappedScript)
 	}

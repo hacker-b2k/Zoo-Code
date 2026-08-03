@@ -2,7 +2,7 @@ import { serializeError } from "serialize-error"
 import { Anthropic } from "@anthropic-ai/sdk"
 
 import type { ToolName, ClineAsk, ToolProgressStatus } from "@roo-code/types"
-import { ConsecutiveMistakeError, TelemetryEventName } from "@roo-code/types"
+import { ConsecutiveMistakeError, parseFollowUpData, TelemetryEventName } from "@roo-code/types"
 import { TelemetryService } from "@roo-code/telemetry"
 import { customToolRegistry } from "@roo-code/core"
 
@@ -14,7 +14,7 @@ import type { ToolParamName, ToolResponse, ToolUse, McpToolUse } from "../../sha
 import { AskIgnoredError } from "../task/AskIgnoredError"
 import { Task } from "../task/Task"
 
-import { looksLikeTextToolCall, parseTextToolCalls } from "./TextToolCallParser"
+import { looksLikeTextToolCall, parseTextToolCalls, stripMalformedToolCallMarkup } from "./TextToolCallParser"
 
 import { listFilesTool } from "../tools/ListFilesTool"
 import { openTabsTool } from "../tools/OpenTabsTool"
@@ -32,6 +32,7 @@ import {
 	evaluateBrowserJsTool,
 	readAllBrowserTabsTool,
 	batchBrowserActionsTool,
+	browserScreenshotTool,
 } from "../tools/BrowserTools"
 import { readFileTool } from "../tools/ReadFileTool"
 import { readCommandOutputTool } from "../tools/ReadCommandOutputTool"
@@ -347,7 +348,17 @@ export async function presentAssistantMessage(cline: Task) {
 				// to the native path). Strip recognizable markup for display
 				// so the UI always looks like the native tool-call flow.
 				if (looksLikeTextToolCall(content)) {
-					content = parseTextToolCalls(content).cleanedText
+					// Valid compatibility elicitation markup is consumed by ChatRow and
+					// rendered as suggestion controls. It is not a tool invocation, so
+					// retain it here instead of stripping it as broken tool markup.
+					if (parseFollowUpData(content).valid) {
+						await cline.say("text", content, undefined, block.partial)
+						break
+					}
+					// A valid textual tool call is removed by the recovery parser. For
+					// non-tool protocol markup (including elicitation tags) or malformed
+					// calls, additionally remove structural tags before presentation.
+					content = stripMalformedToolCallMarkup(parseTextToolCalls(content).cleanedText)
 				}
 
 				// Pure-markup block: nothing left worth displaying.
@@ -1034,6 +1045,13 @@ export async function presentAssistantMessage(cline: Task) {
 					break
 				case "batch_browser_actions":
 					await batchBrowserActionsTool.handle(cline, block as ToolUse<"batch_browser_actions">, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+				case "browser_screenshot":
+					await browserScreenshotTool.handle(cline, block as ToolUse<"browser_screenshot">, {
 						askApproval,
 						handleError,
 						pushToolResult,

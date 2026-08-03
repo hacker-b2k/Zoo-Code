@@ -3,6 +3,50 @@
  * Pure functions — no I/O.
  */
 
+/** Simple character-level similarity (0..1) — O(n*m) but fine for short strings. */
+function stringSimilarity(a: string, b: string): number {
+	if (!a || !b) return 0
+	if (a === b) return 1
+	const la = a.length
+	const lb = b.length
+	// Quick check: shared char ratio
+	let shared = 0
+	const shorter = la < lb ? a : b
+	const longer = la < lb ? b : a
+	for (const ch of shorter) {
+		if (longer.includes(ch)) shared++
+	}
+	return shared / longer.length
+}
+
+/** Find the line most similar to target in the document. */
+function findClosestMatch(content: string, target: string): { match: string; line: number; similarity: number } | null {
+	const lines = content.split("\n")
+	const normalizedTarget = target.trim().toLowerCase()
+	let best = { match: "", line: -1, similarity: 0 }
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i].trim()
+		if (!line || line.length < 3) continue
+		const normalizedLine = line.toLowerCase()
+		// Check substring containment first (highest signal)
+		if (normalizedLine.includes(normalizedTarget) || normalizedTarget.includes(normalizedLine)) {
+			const sim = normalizedLine.includes(normalizedTarget) ? 0.9 : 0.8
+			if (sim > best.similarity) {
+				best = { match: line, line: i + 1, similarity: sim }
+			}
+			continue
+		}
+		// Character-level similarity for non-substring matches
+		const sim = stringSimilarity(normalizedLine, normalizedTarget)
+		if (sim > best.similarity) {
+			best = { match: line, line: i + 1, similarity: sim }
+		}
+	}
+
+	return best.similarity > 0.5 ? best : null
+}
+
 export type WriteSpecMode = "replace" | "append" | "upsert_section" | "search_replace"
 
 export function normalizeWriteSpecMode(raw: unknown): WriteSpecMode {
@@ -116,9 +160,13 @@ export function applySearchReplace(existing: string, oldString: string, newStrin
 	const src = existing ?? ""
 	const count = src.split(oldString).length - 1
 	if (count === 0) {
+		const closest = findClosestMatch(src, oldString)
+		const hint = closest
+			? ` Closest match at line ${closest.line} (similarity ${Math.round(closest.similarity * 100)}%): "${closest.match.slice(0, 80)}${closest.match.length > 80 ? "…" : ""}"`
+			: ""
 		throw new Error(
 			`search_replace: old_string not found in document (${oldString.length} chars). ` +
-				`Use read_spec first and match exact text including whitespace.`,
+				`Use read_spec first and match exact text including whitespace.${hint}`,
 		)
 	}
 	if (!replaceAll && count > 1) {
@@ -131,6 +179,45 @@ export function applySearchReplace(existing: string, oldString: string, newStrin
 	}
 	const idx = src.indexOf(oldString)
 	return src.slice(0, idx) + newString + src.slice(idx + oldString.length)
+}
+
+/** Batch replacement: applies multiple old_string/new_string pairs atomically. */
+export interface BatchReplacement {
+	old_string: string
+	new_string: string
+	replace_all?: boolean
+}
+
+export function applyBatchSearchReplace(existing: string, replacements: BatchReplacement[]): string {
+	if (!Array.isArray(replacements) || replacements.length === 0) {
+		throw new Error("replacements array is required and must be non-empty")
+	}
+	let result = existing ?? ""
+	for (let i = 0; i < replacements.length; i++) {
+		const { old_string, new_string, replace_all } = replacements[i]
+		if (typeof old_string !== "string" || !old_string.length) {
+			throw new Error(`replacements[${i}]: old_string is required and must be non-empty`)
+		}
+		if (typeof new_string !== "string") {
+			throw new Error(`replacements[${i}]: new_string is required`)
+		}
+		result = applySearchReplace(result, old_string, new_string, replace_all === true)
+	}
+	return result
+}
+
+/** Extract only heading lines from markdown content with line numbers. */
+export function extractHeadings(content: string): string {
+	if (!content?.trim()) return "(empty document)"
+	const lines = content.split("\n")
+	const headings: string[] = []
+	for (let i = 0; i < lines.length; i++) {
+		const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
+		if (match) {
+			headings.push(`L${i + 1}: ${lines[i]}`)
+		}
+	}
+	return headings.join("\n") || "(no headings found)"
 }
 
 export function resolveWriteBody(params: {

@@ -247,20 +247,20 @@ describe("newTaskTool", () => {
 		})
 
 		expect(mockStartSubtask).toHaveBeenCalledWith(
-			"Mix: @file0.txt, \\@file1.txt, \\@file2.txt, \\\\\\@file3.txt", // Unit Test Expectation: @->@, \@->\@, \\@->\@, \\\\@->\\\\@
+			"Mix: @file0.txt, \\@file1.txt, \\@file2.txt, \\\\\\@file3.txt", // Unit Test Expectation: @->@, \@->\@, \\@->\@, \\\\@ -> \\\\@
 			expect.any(Array),
 			"code",
 		)
 	})
 
-	it("should handle missing todos parameter gracefully (backward compatibility)", async () => {
+	it("should error when todos parameter is missing (guard requires it)", async () => {
 		const block: ToolUse<"new_task"> = {
 			type: "tool_use",
 			name: "new_task",
 			params: {
 				mode: "code",
 				message: "Test message",
-				// todos missing - should work for backward compatibility
+				// todos missing - guard now catches this
 			},
 			partial: false,
 		}
@@ -271,16 +271,13 @@ describe("newTaskTool", () => {
 			pushToolResult: mockPushToolResult,
 		})
 
-		// Should NOT error when todos is missing
-		expect(mockSayAndCreateMissingParamError).not.toHaveBeenCalledWith("new_task", "todos")
-		expect(mockCline.consecutiveMistakeCount).toBe(0)
-		expect(mockCline.recordToolError).not.toHaveBeenCalledWith("new_task")
+		// Guard now requires todos - should error when missing
+		expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
+		expect(mockCline.consecutiveMistakeCount).toBe(1)
+		expect(mockCline.recordToolError).toHaveBeenCalledWith("new_task")
 
-		// Should create task with empty todos array
-		expect(mockStartSubtask).toHaveBeenCalledWith("Test message", [], "code")
-
-		// Should complete successfully
-		expect(mockPushToolResult).toHaveBeenCalledWith(expect.stringContaining("Delegated to child task"))
+		// Should NOT create task
+		expect(mockStartSubtask).not.toHaveBeenCalled()
 	})
 
 	it("should work with todos parameter when provided", async () => {
@@ -390,7 +387,7 @@ describe("newTaskTool", () => {
 	})
 
 	describe("VSCode setting: newTaskRequireTodos", () => {
-		it("should NOT require todos when VSCode setting is disabled (default)", async () => {
+		it("should error when todos is missing and VSCode setting is disabled (guard still requires todos)", async () => {
 			// Ensure VSCode setting is disabled
 			const mockGet = vi.fn().mockReturnValue(false)
 			vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -403,7 +400,7 @@ describe("newTaskTool", () => {
 				params: {
 					mode: "code",
 					message: "Test message",
-					// todos missing - should work when setting is disabled
+					// todos missing - guard catches this regardless of VSCode setting
 				},
 				partial: false,
 			}
@@ -414,16 +411,13 @@ describe("newTaskTool", () => {
 				pushToolResult: mockPushToolResult,
 			})
 
-			// Should NOT error when todos is missing and setting is disabled
-			expect(mockSayAndCreateMissingParamError).not.toHaveBeenCalledWith("new_task", "todos")
-			expect(mockCline.consecutiveMistakeCount).toBe(0)
-			expect(mockCline.recordToolError).not.toHaveBeenCalledWith("new_task")
+			// Guard now requires todos - should error when missing (regardless of VSCode setting)
+			expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
+			expect(mockCline.consecutiveMistakeCount).toBe(1)
+			expect(mockCline.recordToolError).toHaveBeenCalledWith("new_task")
 
-			// Should create task with empty todos array
-			expect(mockStartSubtask).toHaveBeenCalledWith("Test message", [], "code")
-
-			// Should complete successfully
-			expect(mockPushToolResult).toHaveBeenCalledWith(expect.stringContaining("Delegated to child task"))
+			// Should NOT create task
+			expect(mockStartSubtask).not.toHaveBeenCalled()
 		})
 
 		it("should REQUIRE todos when VSCode setting is enabled", async () => {
@@ -504,7 +498,7 @@ describe("newTaskTool", () => {
 			expect(mockPushToolResult).toHaveBeenCalledWith(expect.stringContaining("Delegated to child task"))
 		})
 
-		it("should work with empty todos string when VSCode setting is enabled", async () => {
+		it("should error with empty todos string when VSCode setting is enabled (guard treats empty as missing)", async () => {
 			// Enable VSCode setting
 			const mockGet = vi.fn().mockReturnValue(true)
 			vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -517,7 +511,7 @@ describe("newTaskTool", () => {
 				params: {
 					mode: "code",
 					message: "Test message",
-					todos: "", // Empty string should be accepted
+					todos: "", // Empty string - guard treats as missing
 				},
 				partial: false,
 			}
@@ -528,18 +522,16 @@ describe("newTaskTool", () => {
 				pushToolResult: mockPushToolResult,
 			})
 
-			// Should NOT error when todos is empty string and setting is enabled
-			expect(mockSayAndCreateMissingParamError).not.toHaveBeenCalledWith("new_task", "todos")
-			expect(mockCline.consecutiveMistakeCount).toBe(0)
+			// Guard treats empty string as missing - should error
+			expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
+			expect(mockCline.consecutiveMistakeCount).toBe(1)
+			expect(mockCline.recordToolError).toHaveBeenCalledWith("new_task")
 
-			// Should create task with empty todos array
-			expect(mockStartSubtask).toHaveBeenCalledWith("Test message", [], "code")
-
-			// Should complete successfully
-			expect(mockPushToolResult).toHaveBeenCalledWith(expect.stringContaining("Delegated to child task"))
+			// Should NOT create task
+			expect(mockStartSubtask).not.toHaveBeenCalled()
 		})
 
-		it("should check VSCode setting with Package.name configuration key", async () => {
+		it("should not reach VSCode configuration when todos is missing (guard intercepts first)", async () => {
 			const mockGet = vi.fn().mockReturnValue(false)
 			const mockGetConfiguration = vi.fn().mockReturnValue({
 				get: mockGet,
@@ -562,13 +554,14 @@ describe("newTaskTool", () => {
 				pushToolResult: mockPushToolResult,
 			})
 
-			// Verify that VSCode configuration was accessed with Package.name
-			expect(mockGetConfiguration).toHaveBeenCalledWith("zoo-code")
-			expect(mockGet).toHaveBeenCalledWith("newTaskRequireTodos", false)
+			// Guard intercepts missing todos before VSCode setting is checked
+			expect(mockGetConfiguration).not.toHaveBeenCalled()
+			expect(mockGet).not.toHaveBeenCalled()
+			// Should error with missing todos
+			expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
 		})
 
-		it("should use current Package.name value (zoo-code-nightly) when accessing VSCode configuration", async () => {
-			// Arrange: capture calls to VSCode configuration and ensure we can assert the namespace
+		it("should not reach VSCode configuration when todos is missing regardless of Package.name", async () => {
 			const mockGet = vi.fn().mockReturnValue(false)
 			const mockGetConfiguration = vi.fn().mockReturnValue({
 				get: mockGet,
@@ -596,9 +589,11 @@ describe("newTaskTool", () => {
 					pushToolResult: mockPushToolResult,
 				})
 
-				// Assert: configuration was read using the dynamic nightly namespace
-				expect(mockGetConfiguration).toHaveBeenCalledWith("zoo-code-nightly")
-				expect(mockGet).toHaveBeenCalledWith("newTaskRequireTodos", false)
+				// Guard intercepts missing todos before VSCode setting is checked
+				expect(mockGetConfiguration).not.toHaveBeenCalled()
+				expect(mockGet).not.toHaveBeenCalled()
+				// Should error with missing todos
+				expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
 			} finally {
 				;(pkg.Package as any).name = originalName
 			}
@@ -646,7 +641,7 @@ describe("newTaskTool delegation flow", () => {
 			params: {
 				mode: "code",
 				message: "Do something",
-				// no todos -> should default to []
+				// no todos -> guard catches this
 			},
 			partial: false,
 		}
@@ -658,15 +653,9 @@ describe("newTaskTool delegation flow", () => {
 			pushToolResult: mockPushToolResult,
 		})
 
-		// Assert: provider method called with correct params
-		expect(providerSpy.delegateParentAndOpenChild).toHaveBeenCalledWith({
-			parentTaskId: "mock-parent-task-id",
-			message: "Do something",
-			initialTodos: [],
-			mode: "code",
-		})
-
-		// Assert: legacy path not used
+		// Assert: guard intercepts - provider NOT called, legacy NOT called
+		expect(mockSayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "todos")
+		expect(providerSpy.delegateParentAndOpenChild).not.toHaveBeenCalled()
 		expect(localStartSubtask).not.toHaveBeenCalled()
 
 		// Assert: no pause/unpause events emitted in delegation path
@@ -674,8 +663,5 @@ describe("newTaskTool delegation flow", () => {
 			(c: any[]) => c[0] === "taskPaused" || c[0] === "taskUnpaused",
 		)
 		expect(pauseEvents.length).toBe(0)
-
-		// Assert: tool result reflects delegation
-		expect(mockPushToolResult).toHaveBeenCalledWith(expect.stringContaining("Delegated to child task child-1"))
 	})
 })

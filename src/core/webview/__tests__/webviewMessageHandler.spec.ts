@@ -193,6 +193,18 @@ import { resolveImageMentions } from "../../mentions/resolveImageMentions"
 import { Terminal } from "../../../integrations/terminal/Terminal"
 import { TerminalRegistry } from "../../../integrations/terminal/TerminalRegistry"
 
+describe("webviewMessageHandler - openSpecWorkspace", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("delegates to the registered Spec Workspace command", async () => {
+		await webviewMessageHandler(mockClineProvider, { type: "openSpecWorkspace" })
+
+		expect(vscode.commands.executeCommand).toHaveBeenCalledWith("zoo-code.openSpecWorkspace")
+	})
+})
+
 describe("webviewMessageHandler - requestLmStudioModels", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -270,11 +282,11 @@ describe("webviewMessageHandler - image mentions", () => {
 	})
 
 	it("should resolve image mentions for askResponse payloads", async () => {
-		const mockHandleWebviewAskResponse = vi.fn()
+		const mockHandleWebviewUserMessage = vi.fn()
 		vi.mocked(mockClineProvider.getCurrentTask).mockReturnValue({
 			cwd: "/mock/workspace",
 			rooIgnoreController: undefined,
-			handleWebviewAskResponse: mockHandleWebviewAskResponse,
+			handleWebviewUserMessage: mockHandleWebviewUserMessage,
 		} as any)
 
 		await webviewMessageHandler(mockClineProvider, {
@@ -285,7 +297,7 @@ describe("webviewMessageHandler - image mentions", () => {
 		})
 
 		expect(vi.mocked(resolveImageMentions)).toHaveBeenCalled()
-		expect(mockHandleWebviewAskResponse).toHaveBeenCalledWith("messageResponse", "See @/img.png", [
+		expect(mockHandleWebviewUserMessage).toHaveBeenCalledWith("See @/img.png", [
 			"data:image/png;base64,from-mention",
 		])
 	})

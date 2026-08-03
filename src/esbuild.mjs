@@ -183,6 +183,23 @@ async function main() {
 		copyLocales(srcDir, distDir)
 		setupLocaleWatcher(srcDir, distDir)
 	} else {
+		// Guard: never produce a dist/ while the chat webview bundle is missing.
+		// The chat UI loads webview-ui/build/assets/index.js + index.css via a
+		// <script>/<link> tag; if the VSIX is packaged without them the entire
+		// sidebar renders an empty "Open Chat" placeholder and VS Code surfaces
+		// its generic "Could not register service worker: InvalidStateError".
+		// webview-ui/clean wipes ../src/webview-ui, so a bundle run after clean
+		// (without re-running the Vite webview build) would silently package an
+		// empty chat. Fail fast here instead of shipping a broken extension.
+		const webviewIndexJs = path.join(srcDir, "webview-ui", "build", "assets", "index.js")
+		const webviewIndexCss = path.join(srcDir, "webview-ui", "build", "assets", "index.css")
+		if (!fs.existsSync(webviewIndexJs) || !fs.existsSync(webviewIndexCss)) {
+			throw new Error(
+				`[${name}] Chat webview bundle is missing (expected ${webviewIndexJs} and index.css). ` +
+					`Run the Vite webview build first: pnpm --filter webview-ui build. ` +
+					`Packaging without it produces an extension whose chat UI never loads.`,
+			)
+		}
 		// Run sequentially on rebuild to avoid Windows EBUSY races when both
 		// onEnd hooks copy the same asset directories concurrently.
 		await extensionCtx.rebuild()

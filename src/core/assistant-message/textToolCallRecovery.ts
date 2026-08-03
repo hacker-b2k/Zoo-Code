@@ -1,5 +1,7 @@
 import type { ToolUse, McpToolUse, TextContent } from "../../shared/tools"
+import { parseFollowUpData } from "@roo-code/types"
 import { looksLikeTextToolCall, parseTextToolCalls, stripMalformedToolCallMarkup } from "./TextToolCallParser"
+import { extractFileWriteIntent } from "./TextIntentExtractor"
 
 /**
  * Content blocks that participate in textual tool-call recovery.
@@ -83,6 +85,60 @@ export function applyTextualToolCallRecovery(state: TextualToolCallRecoveryState
 
 	const recovered = parseTextToolCalls(assistantMessage)
 	if (!recovered.recovered || recovered.toolUses.length === 0) {
+		// Complete ElicitationsGroup / FollowUp markup is a compatibility
+		// interaction, not a tool call. Keep it intact for the webview's
+		// schema-validated renderer; malformed variants continue through
+		// the sanitizer below.
+		if (parseFollowUpData(assistantMessage).valid) {
+			return {
+				...cloneState(state),
+				applied: false,
+				recoveredCount: 0,
+			}
+		}
+
+		// Last-resort: extract file-write intent from code blocks with file
+		// paths. This handles providers/models that lack native tool-calling
+		// and write code as plain text instead of invoking tools.
+		const intentTools = extractFileWriteIntent(assistantMessage)
+		if (intentTools.length > 0) {
+			// Strip any markup/interaction tags from the text so the user
+			// doesn't see raw protocol markup alongside the executed tools.
+			const strippedMessage = stripMalformedToolCallMarkup(assistantMessage)
+			for (const block of assistantMessageContent) {
+				if (block.type === "text") {
+					block.content = strippedMessage
+					block.partial = false
+				}
+			}
+			if (!strippedMessage.trim()) {
+				assistantMessageContent = assistantMessageContent.filter(
+					(block) => block.type !== "text" || (block.content && block.content.trim()),
+				)
+			}
+
+			const firstRecoveredIndex = assistantMessageContent.length
+			for (const toolUse of intentTools) {
+				const recoveredBlock = { ...toolUse, partial: true } as ToolUse | McpToolUse
+				assistantMessageContent.push(recoveredBlock)
+			}
+
+			if (
+				currentStreamingContentIndex > firstRecoveredIndex ||
+				currentStreamingContentIndex >= assistantMessageContent.length
+			) {
+				currentStreamingContentIndex = firstRecoveredIndex
+			}
+
+			return {
+				assistantMessage: strippedMessage,
+				assistantMessageContent,
+				currentStreamingContentIndex,
+				applied: true,
+				recoveredCount: intentTools.length,
+			}
+		}
+
 		// Malformed/garbled tool-call fragments: nothing valid to execute, but
 		// the user must never see raw broken XML. Strip structural tag-shaped
 		// tokens (conservative — never touches plain English prose).

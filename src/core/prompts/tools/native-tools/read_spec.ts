@@ -4,11 +4,21 @@ const DESCRIPTION = `Read a virtual Spec document from extension storage (not pr
 
 Always pass both parameters. Use null for spec_id when falling back to last-opened / sole pack.
 
-Example:
+## Read full document
 { "spec_id": null, "doc": "design" }
-{ "spec_id": "<id-from-list_specs>", "doc": "requirements" }
 
-doc: "requirements" | "design" | "tasks"`
+## Read only headings (no body content)
+{ "spec_id": null, "doc": "design", "mode": "headings" }
+
+## List revision history
+{ "spec_id": null, "doc": "design", "mode": "history" }
+
+## Read a specific revision
+{ "spec_id": null, "doc": "design", "revision": 3 }
+
+doc: "requirements" | "design" | "tasks"
+mode: "full" (default) | "headings" | "history"
+revision: number (specific revision to read)`
 
 export default {
 	type: "function",
@@ -27,6 +37,16 @@ export default {
 				doc: {
 					type: "string",
 					description: 'Document kind: "requirements" | "design" | "tasks"',
+				},
+				mode: {
+					type: ["string", "null"],
+					description:
+						'"full" (default) — returns full content. "headings" — returns only heading lines with line numbers. "history" — returns revision list.',
+				},
+				revision: {
+					type: ["number", "null"],
+					description:
+						"Specific revision number to read. Returns that revision content. Requires doc to be set.",
 				},
 			},
 			required: ["doc"],

@@ -200,6 +200,30 @@ Instructions here...`
 			expect(skills[0].source).toBe("global")
 		})
 
+		it("tombstones only the external global agent-browser skill", async () => {
+			const browserDir = p(globalSkillsDir, "agent-browser")
+			const keepDir = p(globalSkillsDir, "keep-me")
+			mockDirectoryExists.mockImplementation(async (dir: string) => dir === globalSkillsDir)
+			mockRealpath.mockImplementation(async (pathArg: string) => pathArg)
+			mockReaddir.mockImplementation(async (dir: string) =>
+				dir === globalSkillsDir ? ["agent-browser", "keep-me"] : [],
+			)
+			mockStat.mockResolvedValue({ isDirectory: () => true } as any)
+			mockFileExists.mockResolvedValue(true)
+			mockReadFile.mockImplementation(async (file: string) => {
+				const name = file.startsWith(browserDir)
+					? "agent-browser"
+					: file.startsWith(keepDir)
+						? "keep-me"
+						: "other"
+				return `---\nname: ${name}\ndescription: ${name} description\n---\nInstructions`
+			})
+
+			await skillsManager.discoverSkills()
+
+			expect(skillsManager.getAllSkills().map((skill) => skill.name)).toEqual(["keep-me"])
+		})
+
 		it("should discover skills from project directory", async () => {
 			const codeReviewDir = p(projectSkillsDir, "code-review")
 			const codeReviewMd = p(codeReviewDir, "SKILL.md")

@@ -36,8 +36,8 @@ Before making ANY changes, be aware of these already-implemented systems:
 
 ### 1. Governance System
 
-- **`WORKSPACE_GOVERNANCE.md`** — Absolute rules: no shortcuts, no cheating, plan first, no half-work, industry standard quality.
-- **`PLANNING_REQUIRED.md`** — 5-stage pipeline: Research -> Design -> Plan -> Review -> Execute. Zero code without a plan.
+- **`WORKSPACE_GOVERNANCE.md`** — Absolute rules: no shortcuts, no cheating, risk-proportionate planning, no half-work, industry standard quality.
+- **`PLANNING_REQUIRED.md`** — Scale planning to change risk and complexity. Agent-created plans live canonically in the virtual Spec Workspace; repository planning documents are created only when a maintainer or task explicitly requires them.
 - **`docs/ARCHITECTURE.md`** — Full architecture reference.
 - **`docs/REQUIREMENTS.md`** — Standing requirements.
 - **`docs/DEV_SETUP.md`** — Dev environment setup.

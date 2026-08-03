@@ -280,7 +280,7 @@ describe("OpenAiHandler", () => {
 			expect(textChunks[0].text).toBe("Test response")
 		})
 
-		it("uses non-streaming fallback when streaming yields no assistant content", async () => {
+		it("does not replay a reasoning-only stream as a non-streaming request", async () => {
 			mockCreate.mockImplementationOnce(async () => ({
 				[Symbol.asyncIterator]: async function* () {
 					yield {
@@ -289,22 +289,55 @@ describe("OpenAiHandler", () => {
 					}
 				},
 			}))
-			mockCreate.mockResolvedValueOnce({
-				choices: [
-					{ message: { role: "assistant", content: "fallback answer" }, finish_reason: "stop", index: 0 },
-				],
-				usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-			})
 
 			const chunks: any[] = []
 			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
 				chunks.push(chunk)
 			}
 
-			expect(mockCreate).toHaveBeenCalledTimes(2)
-			expect(mockCreate).toHaveBeenNthCalledWith(2, expect.objectContaining({ stream: false }))
+			// Only the original streaming request must run — no hidden non-streaming replay.
+			expect(mockCreate).toHaveBeenCalledTimes(1)
 			expect(chunks).toContainEqual({ type: "reasoning", text: "thinking only" })
-			expect(chunks).toContainEqual({ type: "text", text: "fallback answer" })
+		})
+
+		it("throws when a stream yields no content at all (truly empty)", async () => {
+			mockCreate.mockImplementationOnce(async () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield {
+						choices: [{ delta: {}, index: 0 }],
+						usage: { prompt_tokens: 1, completion_tokens: 0, total_tokens: 1 },
+					}
+				},
+			}))
+
+			const chunks: any[] = []
+			let caughtError: Error | undefined
+			try {
+				for await (const chunk of handler.createMessage(systemPrompt, messages)) {
+					chunks.push(chunk)
+				}
+			} catch (error) {
+				caughtError = error as Error
+			}
+
+			expect(mockCreate).toHaveBeenCalledTimes(1)
+			expect(caughtError?.message).toContain("returned no assistant content")
+		})
+
+		it("forwards the request abort signal to the OpenAI SDK", async () => {
+			const abortController = new AbortController()
+
+			for await (const _chunk of handler.createMessage(systemPrompt, messages, {
+				taskId: "test-task",
+				abortSignal: abortController.signal,
+			})) {
+				// drain
+			}
+
+			expect(mockCreate).toHaveBeenCalledWith(
+				expect.objectContaining({ stream: true }),
+				expect.objectContaining({ signal: abortController.signal }),
+			)
 		})
 
 		it("accepts OpenAI-compatible output_text deltas as assistant text", async () => {
@@ -736,8 +769,9 @@ describe("OpenAiHandler", () => {
 					},
 				})
 				const requestOptions = await streamWithToolCall({ handler: preserveHandler })
-				expect(requestOptions.parallel_tool_calls).toBe(true)
-				// tool_choice is passed through from metadata (undefined here).
+				// mimo-v2.5-pro is now inferred with supportedParameters that omits tool_choice/parallel_tool_calls
+				expect(requestOptions.parallel_tool_calls).toBeUndefined()
+				// tool_choice is not sent for mimo-class reasoning models.
 				expect(requestOptions.tool_choice).toBeUndefined()
 				expect(Array.isArray(requestOptions.tools)).toBe(true)
 			})
@@ -875,9 +909,9 @@ describe("OpenAiHandler", () => {
 			it("request-time inference adds additive preserveReasoning for a saved profile with NO reasoning flags", async () => {
 				// Reproduces the real-world `xiaomi` profile whose openAiCustomModelInfo was saved
 				// before capability persistence existed — only sane defaults, no reasoning flags.
-				// Request-time inference must add preserveReasoning (fixing the reasoning_content
-				// drop) WITHOUT re-shaping the request (no supportedParameters / thinking forced
-				// retroactively — those belong to an explicit re-save).
+				// Request-time inference now infers the FULL reasoning capability set for
+				// non-legacy reasoning models (preserveReasoning, supportsReasoningBinary,
+				// supportedParameters) so pre-existing profiles work completely.
 				const savedProfileHandler = new OpenAiHandler({
 					openAiApiKey: "test-key",
 					openAiBaseUrl: "https://api.xiaomimimo.com/v1",
@@ -894,11 +928,13 @@ describe("OpenAiHandler", () => {
 				})
 
 				const model = savedProfileHandler.getModel()
-				// Additive capability is inferred at request time.
+				// Additive capabilities are inferred at request time.
 				expect(model.info.preserveReasoning).toBe(true)
-				// Request-shape-changing capabilities are NOT forced at request time.
-				expect(model.info.supportsReasoningBinary).toBeUndefined()
-				expect(model.info.supportedParameters).toBeUndefined()
+				// Request-time inference now applies the full capability set for mimo models.
+				expect(model.info.supportsReasoningBinary).toBe(true)
+				expect(model.info.supportedParameters).toEqual(
+					expect.arrayContaining(["tools", "max_tokens", "temperature", "reasoning", "include_reasoning"]),
+				)
 			})
 
 			it("request-time inference does NOT re-shape the legacy deepseek-reasoner path", async () => {

@@ -35,7 +35,7 @@ describe("ContextProxy", () => {
 
 		// Mock secrets
 		mockSecrets = {
-			get: vi.fn().mockResolvedValue("test-secret"),
+			get: vi.fn().mockResolvedValue(undefined),
 			store: vi.fn().mockResolvedValue(undefined),
 			delete: vi.fn().mockResolvedValue(undefined),
 		}

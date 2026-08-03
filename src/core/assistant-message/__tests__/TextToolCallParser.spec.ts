@@ -25,6 +25,16 @@ describe("TextToolCallParser", () => {
 			).toBe(true)
 		})
 
+		it("detects direct legacy tool-name tags", () => {
+			expect(looksLikeTextToolCall('<attempt_completion>{"result":"Task completed"}</attempt_completion>')).toBe(
+				true,
+			)
+		})
+
+		it("does not treat unknown direct XML tags as tool calls", () => {
+			expect(looksLikeTextToolCall('<not_a_registered_tool>{"value":1}</not_a_registered_tool>')).toBe(false)
+		})
+
 		it("does not treat bare <parameter= as a tool call surface", () => {
 			// Avoid false positives on docs/prose that mention parameter tags alone.
 			expect(looksLikeTextToolCall("<parameter=title>x</parameter>")).toBe(false)
@@ -32,6 +42,14 @@ describe("TextToolCallParser", () => {
 
 		it("returns false for plain prose", () => {
 			expect(looksLikeTextToolCall("Hello, how can I help?")).toBe(false)
+		})
+
+		it("detects text-form elicitation markup for deferred sanitization", () => {
+			expect(
+				looksLikeTextToolCall(
+					'<ElicitationsGroup message="Choose"><Elicitation label="One" /></ElicitationsGroup>',
+				),
+			).toBe(true)
 		})
 	})
 
@@ -59,6 +77,52 @@ describe("TextToolCallParser", () => {
 			expect(textEndsWithIncompleteMarkup("Use `read_file` for that")).toBe(false) // single backticks are fine
 			expect(textEndsWithIncompleteMarkup("a < b")).toBe(false)
 			expect(textEndsWithIncompleteMarkup("")).toBe(false)
+		})
+	})
+
+	describe("parseTextToolCalls — direct legacy tool tags", () => {
+		it("recovers the reported attempt_completion shape", () => {
+			const text = `<attempt_completion>
+{"result":"Hi! I'm Zoo, ready to work."}
+</attempt_completion>`
+			const result = parseTextToolCalls(text)
+
+			expect(result.recovered).toBe(true)
+			expect(result.cleanedText).toBe("")
+			expect(result.toolUses).toHaveLength(1)
+			const tool = result.toolUses[0]
+			expect(tool.type).toBe("tool_use")
+			expect(tool.name).toBe("attempt_completion")
+			expect(tool.id).toMatch(/^text_call_attempt_completion_/)
+			if (tool.type === "tool_use") {
+				expect(tool.nativeArgs).toMatchObject({ result: "Hi! I'm Zoo, ready to work." })
+			}
+		})
+
+		it("preserves prose around a direct tool tag", () => {
+			const text = 'Before\n<attempt_completion>{"result":"Done"}</attempt_completion>\nAfter'
+			const result = parseTextToolCalls(text)
+
+			expect(result.recovered).toBe(true)
+			expect(result.cleanedText).toBe("Before\n\nAfter")
+			expect(result.toolUses[0].name).toBe("attempt_completion")
+		})
+
+		it("recovers an unclosed direct tool tag at end of stream", () => {
+			const text = '<attempt_completion>{"result":"Done"}'
+			const result = parseTextToolCalls(text)
+
+			expect(result.recovered).toBe(true)
+			expect(result.cleanedText).toBe("")
+			expect(result.toolUses[0].name).toBe("attempt_completion")
+		})
+
+		it("does not execute malformed JSON in a direct tool tag", () => {
+			const text = '<attempt_completion>{"result":}</attempt_completion>'
+			const result = parseTextToolCalls(text)
+
+			expect(result.recovered).toBe(false)
+			expect(result.toolUses).toHaveLength(0)
 		})
 	})
 

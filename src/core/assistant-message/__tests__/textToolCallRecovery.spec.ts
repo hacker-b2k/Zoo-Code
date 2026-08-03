@@ -241,6 +241,38 @@ describe("textToolCallRecovery", () => {
 			).toBe(true)
 		})
 
+		it("recovers direct attempt_completion markup and removes it from display", () => {
+			const text = '<attempt_completion>{"result":"Task completed successfully"}</attempt_completion>'
+			const result = applyTextualToolCallRecovery({
+				assistantMessage: text,
+				assistantMessageContent: [{ type: "text", content: text, partial: true }],
+				currentStreamingContentIndex: 0,
+			})
+
+			expect(result.applied).toBe(true)
+			expect(result.recoveredCount).toBe(1)
+			expect(result.assistantMessage).toBe("")
+			expect(result.assistantMessageContent.some((block) => block.type === "text")).toBe(false)
+			const tool = result.assistantMessageContent.find((block) => block.type === "tool_use") as ToolUse
+			expect(tool.name).toBe("attempt_completion")
+			expect(tool.id).toBeTruthy()
+			expect(tool.nativeArgs).toMatchObject({ result: "Task completed successfully" })
+		})
+
+		it("sanitizes malformed direct tool markup without executing it", () => {
+			const text = 'Visible prose\n<attempt_completion>{"result":}</attempt_completion>'
+			const result = applyTextualToolCallRecovery({
+				assistantMessage: text,
+				assistantMessageContent: [{ type: "text", content: text, partial: true }],
+				currentStreamingContentIndex: 0,
+			})
+
+			expect(result.applied).toBe(true)
+			expect(result.recoveredCount).toBe(0)
+			expect(result.assistantMessage).toBe("Visible prose")
+			expect(result.assistantMessage).not.toContain("attempt_completion")
+		})
+
 		it("does not apply for plain prose (no false recovery)", () => {
 			const result = applyTextualToolCallRecovery({
 				assistantMessage: "Just thinking about the plan.",

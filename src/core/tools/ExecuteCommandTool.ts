@@ -28,6 +28,7 @@ import { Package } from "../../shared/package"
 import { t } from "../../i18n"
 import { getTaskDirectoryPath } from "../../utils/storage"
 import { BaseTool, ToolCallbacks } from "./BaseTool"
+import { fingerprintCommand, preflightCommand } from "./CommandPreflight"
 
 export { ShellIntegrationError } from "../../integrations/terminal/types"
 
@@ -76,6 +77,23 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 			}
 
 			const canonicalCommand = unescapeHtmlEntities(command)
+			const preflight = preflightCommand(
+				{ command: canonicalCommand, shell: process.env.ComSpec ?? process.env.SHELL },
+				(task as any).failedCommandFingerprints ?? new Set<string>(),
+			)
+			if (!preflight.ok) {
+				task.consecutiveMistakeCount++
+				task.recordToolError("execute_command")
+				task.didToolFailInCurrentTurn = true
+				pushToolResult(
+					formatResponse.toolError(
+						preflight.issues
+							.map((issue) => `${issue.message}${issue.fix ? ` Suggested correction: ${issue.fix}` : ""}`)
+							.join("\n"),
+					),
+				)
+				return
+			}
 
 			const ignoredFileAttemptedToAccess = task.rooIgnoreController?.validateCommand(canonicalCommand)
 
@@ -186,6 +204,9 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 					} else {
 						pushToolResult(`Command failed to execute in terminal due to a shell integration error.`)
 					}
+					;(task as any).failedCommandFingerprints =
+						((task as any).failedCommandFingerprints as Set<string> | undefined) ?? new Set<string>()
+					;(task as any).failedCommandFingerprints.add(fingerprintCommand(canonicalCommand))
 				}
 			}
 

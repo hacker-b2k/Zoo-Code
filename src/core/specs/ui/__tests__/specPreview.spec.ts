@@ -235,3 +235,63 @@ describe("specPreview — MERMAID_THEME", () => {
 		expect(MERMAID_THEME.fontSize).toBe("16px")
 	})
 })
+
+// ---------------------------------------------------------------------------
+// Performance: Mermaid render cache key determinism.
+// The browser bundle's mermaidRenderCache is keyed by the exact source text
+// (decodeURIComponent of the data-mermaid attribute). These tests confirm the
+// markdown renderer produces deterministic, cacheable slot attributes so that
+// switching back to a previously-viewed spec always hits the cache (instant
+// innerHTML swap, no mermaid.render() re-execution).
+// ---------------------------------------------------------------------------
+
+describe("specPreview — Mermaid cache key determinism", () => {
+	it("same diagram source produces identical data-mermaid attribute", () => {
+		const mermaidSource = "graph TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Done]"
+		const md1 = "```mermaid\n" + mermaidSource + "\n```"
+		const md2 = "# Design\n\n```mermaid\n" + mermaidSource + "\n```\nMore text."
+		const html1 = renderSpecMarkdown(md1)
+		const html2 = renderSpecMarkdown(md2)
+		const slots1 = extractMermaidSlots(html1)
+		const slots2 = extractMermaidSlots(html2)
+		expect(slots1).toHaveLength(1)
+		expect(slots2).toHaveLength(1)
+		// Same source → same cache key (decoded code)
+		expect(slots1[0].code).toBe(slots2[0].code)
+	})
+
+	it("different diagram sources produce different cache keys", () => {
+		const md1 = "```mermaid\ngraph TD\n  A --> B\n```"
+		const md2 = "```mermaid\ngraph TD\n  A --> C\n```"
+		const html1 = renderSpecMarkdown(md1)
+		const html2 = renderSpecMarkdown(md2)
+		const slots1 = extractMermaidSlots(html1)
+		const slots2 = extractMermaidSlots(html2)
+		expect(slots1[0].code).not.toBe(slots2[0].code)
+	})
+
+	it("multiple diagrams in one doc each get unique cache keys", () => {
+		const md = [
+			"```mermaid\ngraph TD\n  A --> B\n```",
+			"```mermaid\nsequenceDiagram\n  A->>B: Hello\n```",
+			"```mermaid\nclassDiagram\n  Animal <|-- Dog\n```",
+		].join("\n\n")
+		const html = renderSpecMarkdown(md)
+		const slots = extractMermaidSlots(html)
+		expect(slots).toHaveLength(3)
+		const codes = slots.map((s) => s.code)
+		expect(new Set(codes).size).toBe(3) // all unique
+	})
+
+	it("entity-decoded content produces clean cache keys (no double-encoding)", () => {
+		// If entity decoding runs in the parser, the source reaching the
+		// renderer is clean <<abstract>> not &lt;&lt;abstract&gt;&gt;.
+		// The cache key is the clean source — a revisit with the same
+		// clean source is a cache hit.
+		const md = "```mermaid\nclassDiagram\n  class A {\n    <<abstract>>\n  }\n```"
+		const html = renderSpecMarkdown(md)
+		const slots = extractMermaidSlots(html)
+		expect(slots[0].code).not.toContain("&lt;")
+		expect(slots[0].code).not.toContain("&gt;")
+	})
+})

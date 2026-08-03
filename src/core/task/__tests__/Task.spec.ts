@@ -287,6 +287,7 @@ describe("Cline", () => {
 		mockProvider.postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		mockProvider.postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		mockProvider.postStateToWebviewWithoutTaskHistory = vi.fn().mockResolvedValue(undefined)
+		mockProvider.getCurrentTask = vi.fn().mockReturnValue(null)
 		mockProvider.getTaskWithId = vi.fn().mockImplementation(async (id) => ({
 			historyItem: {
 				id,
@@ -939,6 +940,7 @@ describe("Cline", () => {
 					}),
 					getMcpHub: vi.fn().mockReturnValue(undefined),
 					getSkillsManager: vi.fn().mockReturnValue(undefined),
+					getCurrentTask: vi.fn().mockReturnValue(null),
 					say: vi.fn(),
 					postStateToWebview: vi.fn().mockResolvedValue(undefined),
 					postStateToWebviewWithoutTaskHistory: vi.fn().mockResolvedValue(undefined),
@@ -1796,6 +1798,54 @@ describe("Cline", () => {
 				// Verify cancelCurrentRequest was called
 				expect(cancelSpy).toHaveBeenCalled()
 			})
+
+			it("dispose() clears NativeToolCallParser static tool-bridge state (session-resilience regression)", async () => {
+				// user.txt bug: tool-bridge "drops" mid-session when NativeToolCallParser's
+				// process-static Maps retain stale ids/indexes from a previous/aborted
+				// stream, poisoning the next task instance created in the same extension
+				// host (same tool reports "Tool not found" for the rest of the session).
+				// dispose() must defensively clear ALL tool-bridge state so the next
+				// session starts clean — even when dispose runs without a prior abortTask
+				// (extension reload, task switch, normal completion).
+				const { NativeToolCallParser } = await import("../../assistant-message/NativeToolCallParser")
+
+				const task = new Task({
+					provider: mockProvider,
+					apiConfiguration: mockApiConfig,
+					task: "test task",
+					startTask: false,
+				})
+
+				// Simulate leftover streaming state from an interrupted tool call.
+				NativeToolCallParser.startStreamingToolCall("toolu_dispose_leak", "write_spec")
+				NativeToolCallParser.processRawChunk({
+					index: 0,
+					id: "toolu_dispose_leak",
+					name: "write_spec",
+					arguments: "{}",
+				})
+				// Also simulate leftover per-instance tracking.
+				;(task as any).streamingToolCallIndices.set("toolu_dispose_leak", 0)
+				;(task as any).handledStreamedToolCallIds.add("toolu_dispose_leak")
+
+				expect((NativeToolCallParser as any).streamingToolCalls.size).toBeGreaterThan(0)
+				expect((NativeToolCallParser as any).rawChunkTracker.size).toBeGreaterThan(0)
+
+				// Mock the heavier dispose collaborators to keep the test isolated.
+				vi.spyOn(task.messageQueueService, "removeListener").mockImplementation(
+					() => task.messageQueueService as any,
+				)
+				vi.spyOn(task.messageQueueService, "dispose").mockImplementation(() => {})
+				vi.spyOn(task, "removeAllListeners").mockImplementation(() => task as any)
+
+				task.dispose()
+
+				// ALL tool-bridge state must be cleared.
+				expect((NativeToolCallParser as any).streamingToolCalls.size).toBe(0)
+				expect((NativeToolCallParser as any).rawChunkTracker.size).toBe(0)
+				expect((task as any).streamingToolCallIndices.size).toBe(0)
+				expect((task as any).handledStreamedToolCallIds.size).toBe(0)
+			})
 			describe("abortSignal", () => {
 				it("should pass AbortController signal to condenseContext metadata when a current request exists", async () => {
 					const task = new Task({
@@ -2431,6 +2481,9 @@ describe("Cline", () => {
 				task: "test task",
 				startTask: false,
 			})
+
+			// Make getCurrentTask return this task so the handler calls postStateToWebviewWithoutTaskHistory
+			mockProvider.getCurrentTask = vi.fn().mockReturnValue(task)
 
 			// Triggers messageQueueStateChangedHandler -> void postStateToWebviewWithoutTaskHistory()
 			task.messageQueueService.addMessage("queued text")

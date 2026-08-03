@@ -110,6 +110,7 @@ vi.mock("../../../webview/ClineProvider", () => ({
 import { SpecWorkspacePanel } from "../SpecWorkspacePanel"
 import { selectionContextStore } from "../../selection/SelectionContextStore"
 import { setClineProviderAccessor } from "../clineProviderAccessor"
+import { specDocumentEvents } from "../../specDocumentEvents"
 
 describe("SpecWorkspacePanel", () => {
 	let globalStorage: string
@@ -513,5 +514,212 @@ describe("SpecWorkspacePanel", () => {
 		const hash = hashWorkspaceRoot(projectRoot)
 		const last = loadLastOpened(mockWorkspaceState as any, hash)
 		expect(last).toBeUndefined()
+	})
+
+	// -----------------------------------------------------------------------
+	// Regression: live doc updates without close-reopen (field-reported bug).
+	//
+	// Bug behavior: spec card appeared instantly, but requirements/design/tasks
+	// tab content never updated when the agent wrote to it; Refresh didn't help;
+	// only closing and reopening the panel showed the content.
+	//
+	// Root causes fixed:
+	//  1. The panel never subscribed to the shared specDocumentEvents bus, so
+	//     committed writes from OTHER SpecService instances (the agent's
+	//     WriteSpecTool uses its own instance) never reached the webview.
+	//  2. Refresh only pushed the card list, never the active document.
+	//  3. The webview's blanket agentStreaming guard dropped every document
+	//     message whenever a finalize signal was lost (e.g. listWorkspaces
+	//     failure inside the shared best-effort try/catch in WriteSpecTool),
+	//     wedging the panel permanently.
+	// -----------------------------------------------------------------------
+
+	it("live-updates active document when an external SpecService writes to it (event-driven)", async () => {
+		createPanel()
+		await send({ type: "createSpec", title: "LiveDoc" })
+		const listMsg = await waitForPost("specsList")
+		const entry = (listMsg as any).entries[0]
+
+		// Open the requirements doc so the panel tracks it as active.
+		postMessage.mockClear()
+		await send({ type: "openDocument", specId: entry.id, docKind: "requirements" })
+		const initialDoc = await waitForPost("document")
+		expect(initialDoc).toMatchObject({ type: "document", specId: entry.id, docKind: "requirements" })
+
+		// Simulate the agent writing to the SAME doc via a DIFFERENT SpecService
+		// instance (exactly what WriteSpecTool does via getSpecServiceForTask —
+		// previously invisible to the panel until close-reopen).
+		postMessage.mockClear()
+		const externalService = new SpecService(globalStorage)
+		await externalService.writeDocument({
+			specId: entry.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "requirements",
+			content: "# Live-updated requirements\n\nWritten by the agent.\n",
+		})
+
+		// The event bus must trigger a fresh document push with new content+revision.
+		const pushedDoc = await waitForPost("document")
+		expect(pushedDoc).toMatchObject({
+			type: "document",
+			specId: entry.id,
+			docKind: "requirements",
+		})
+		expect((pushedDoc as any).content).toBe("# Live-updated requirements\n\nWritten by the agent.\n")
+		expect((pushedDoc as any).revision).toBe(2)
+	})
+
+	it("live-updates card list when an external SpecService creates a pack (event-driven)", async () => {
+		createPanel()
+		await send({ type: "ready" })
+		await waitForPost("specsList")
+
+		// External instance creates a new pack — card must appear without
+		// any manual refresh.
+		postMessage.mockClear()
+		const externalService = new SpecService(globalStorage)
+		await externalService.createWorkspace({ title: "External Pack", workspaceRoot: projectRoot })
+
+		const listMsg = await waitForPost("specsList")
+		expect((listMsg as any).entries).toHaveLength(1)
+		expect((listMsg as any).entries[0].title).toBe("External Pack")
+	})
+
+	it("refresh re-pushes BOTH the card list and the active document content", async () => {
+		createPanel()
+		await send({ type: "createSpec", title: "RefreshTest" })
+		const listMsg = await waitForPost("specsList")
+		const entry = (listMsg as any).entries[0]
+
+		await send({ type: "openDocument", specId: entry.id, docKind: "design" })
+		await waitForPost("document")
+
+		// Mutate the design doc externally, then hit Refresh — the fresh content
+		// must be re-pushed (previously Refresh only pushed the list).
+		const externalService = new SpecService(globalStorage)
+		await externalService.writeDocument({
+			specId: entry.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "design",
+			content: "# Fresh design after refresh\n",
+		})
+
+		postMessage.mockClear()
+		await send({ type: "refresh" })
+
+		const listMsg2 = await waitForPost("specsList")
+		expect(listMsg2).toMatchObject({ type: "specsList" })
+		const docMsg = await waitForPost("document")
+		expect(docMsg).toMatchObject({ type: "document", specId: entry.id, docKind: "design" })
+		expect((docMsg as any).content).toBe("# Fresh design after refresh\n")
+	})
+
+	it("event-driven re-push is skipped while a stream owns the active doc (stream is authoritative)", async () => {
+		createPanel()
+		await send({ type: "createSpec", title: "StreamGuard" })
+		const listMsg = await waitForPost("specsList")
+		const entry = (listMsg as any).entries[0]
+
+		const panel = SpecWorkspacePanel.getCurrent()!
+
+		// Simulate agent stream start for this exact doc.
+		panel.notifyAgentWriteStarted({
+			streamId: "stream-1",
+			specId: entry.id,
+			docKind: "requirements",
+			mode: "update",
+			title: "StreamGuard",
+		})
+
+		// External commit to the SAME doc mid-stream: the panel must NOT re-push
+		// a document message (the stream's partial/finalized messages own it).
+		postMessage.mockClear()
+		const externalService = new SpecService(globalStorage)
+		await externalService.writeDocument({
+			specId: entry.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "requirements",
+			content: "# External mid-stream write\n",
+		})
+
+		// Card list MAY refresh (allowed) but no document push must occur.
+		await new Promise((r) => setTimeout(r, 200))
+		const docPushes = postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type === "document")
+		expect(docPushes).toHaveLength(0)
+
+		// After finalize, the stream no longer owns the doc — a subsequent
+		// external write MUST live-update again.
+		panel.notifyAgentWriteFinalized({
+			streamId: "stream-1",
+			specId: entry.id,
+			docKind: "requirements",
+			mode: "update",
+			title: "StreamGuard",
+			content: "# Final streamed content\n",
+			revision: 3,
+			entries: [],
+		})
+
+		postMessage.mockClear()
+		await externalService.writeDocument({
+			specId: entry.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "requirements",
+			content: "# Post-stream external write\n",
+		})
+		const docMsg = await waitForPost("document")
+		expect((docMsg as any).content).toBe("# Post-stream external write\n")
+	})
+
+	it("event-driven re-push to a DIFFERENT doc than the active one does not disturb the view", async () => {
+		createPanel()
+		await send({ type: "createSpec", title: "MultiDoc" })
+		const listMsg = await waitForPost("specsList")
+		const entry = (listMsg as any).entries[0]
+
+		// Active doc = requirements.
+		await send({ type: "openDocument", specId: entry.id, docKind: "requirements" })
+		await waitForPost("document")
+
+		// External write to design (NOT the active doc): list may refresh but
+		// no document push should target the active requirements view.
+		postMessage.mockClear()
+		const externalService = new SpecService(globalStorage)
+		await externalService.writeDocument({
+			specId: entry.id,
+			workspaceRoot: projectRoot,
+			docIdOrKind: "design",
+			content: "# Design updated in background\n",
+		})
+		await new Promise((r) => setTimeout(r, 200))
+		const docPushes = postMessage.mock.calls.map((c) => c[0]).filter((m: any) => m?.type === "document")
+		expect(docPushes).toHaveLength(0)
+
+		// When the user then switches to the design tab, the fresh content loads.
+		await send({ type: "openDocument", specId: entry.id, docKind: "design" })
+		const designDoc = await waitForPost("document")
+		expect((designDoc as any).content).toBe("# Design updated in background\n")
+	})
+
+	it("specDocumentEvents bus emits for writeDocument (infrastructure guard)", async () => {
+		const events: Array<{ specId: string; docId: string; revision: number }> = []
+		const sub = specDocumentEvents.onDocumentChanged((e) => {
+			events.push({ specId: e.specId, docId: e.docId, revision: e.revision })
+		})
+		try {
+			const service = new SpecService(globalStorage)
+			const ws = await service.createWorkspace({ title: "BusCheck", workspaceRoot: projectRoot })
+			await service.writeDocument({
+				specId: ws.id,
+				workspaceRoot: projectRoot,
+				docIdOrKind: "requirements",
+				content: "# Bus check\n",
+			})
+			const writeEvents = events.filter((e) => e.specId === ws.id && e.docId === "requirements")
+			expect(writeEvents.length).toBeGreaterThanOrEqual(1)
+			expect(writeEvents.at(-1)!.revision).toBeGreaterThanOrEqual(1)
+		} finally {
+			sub.dispose()
+		}
 	})
 })

@@ -7,6 +7,6 @@ export interface SystemPromptSettings {
 	/** When true, recursively discover and load .roo/rules from subdirectories */
 	enableSubfolderRules?: boolean
 	newTaskRequireTodos: boolean
-	/** When true, model should hide vendor/company identity in responses */
+	/** When true, include bounded identity guidance without inventing provenance. */
 	isStealthModel?: boolean
 }

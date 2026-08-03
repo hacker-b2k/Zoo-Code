@@ -1,18 +1,9 @@
 import type OpenAI from "openai"
 
-const OPEN_TABS_DESCRIPTION = `Open URLs in the user's browser. This is the PRIMARY and PREFERRED tool for ALL browser navigation tasks — including web search, opening websites, reading articles, and checking web content.
-
-IMPORTANT: For web search tasks (e.g., "search online for X", "look up Y", "find Z on the web"), construct a search URL and use this tool directly. Examples:
-- "search online for ai latest news" → open_tabs with urls: ["https://www.google.com/search?q=ai+latest+news"]
-- "look up weather in Karachi" → open_tabs with urls: ["https://www.google.com/search?q=weather+in+Karachi"]
-- "find react docs" → open_tabs with urls: ["https://www.google.com/search?q=react+documentation"]
-
-After opening tabs, use the web_research tool (action="read_url") to read the page content — NOT execute_command or browser automation.
-
-When the user asks to open websites, use this tool. When the user asks to SEARCH or READ content from the web, use web_research instead — it returns the content directly without needing a browser.
+const OPEN_TABS_DESCRIPTION = `Open one or more URLs in a visible user browser. Use this when the user explicitly asks to open, show, or launch pages. Do not use it as an intermediate step for ordinary search or page reading; use web_research for non-interactive research and the interactive browser tools for clicking, forms, authentication, dynamic UI, or screenshots.
 
 Parameters:
-- urls: (required) Array of absolute URLs to open. For search, use https://www.google.com/search?q=ENCODED_QUERY
+- urls: (required) Array of absolute URLs to open
 - browser: (optional) Browser preference: auto, chrome, or edge
 - reuseExisting: (optional) When true, prefer reusing an existing browser session if possible
 - visible: (optional) When true, prefer a visible browser window/session

@@ -45,7 +45,22 @@ Server loads current doc and appends. Use for multi-turn large designs.
 }
 Replaces that section if present, else appends it. title optional.
 
-## Surgical edit (checkbox / one line) — DO NOT rewrite the whole doc
+## Rename a Spec Workspace
+{
+  "title": "New Feature Name",
+  "spec_id": "<id-from-list_specs>",
+  "doc": "requirements",
+  "mode": "search_replace",
+  "old_string": "- [ ] Task",
+  "new_string": "- [x] Task",
+  "replace_all": false
+}
+- title: pass a new name to rename the pack. Works with any doc/mode.
+- When spec_id is set: renames that specific pack.
+- When spec_id is null and only ONE pack exists: renames the sole pack automatically.
+- Multiple packs + null spec_id + distinct title: creates a new pack (import behavior).
+
+## Surgical edit (checkbox / one line / ONE broken diagram) — DO NOT rewrite the whole doc
 {
   "spec_id": "<id>",
   "doc": "tasks",
@@ -55,6 +70,14 @@ Replaces that section if present, else appends it. title optional.
   "replace_all": false
 }
 content may be omitted for search_replace. Prefer this for tiny edits.
+
+IMPORTANT — fixing ONE broken part (e.g. a single Mermaid diagram that failed to render, one wrong paragraph, one checkbox):
+NEVER use full "replace" to fix a localized problem. A full rewrite risks silently changing/losing content that was fine, is slower, and is riskier.
+Instead:
+1. read_spec the doc to get the exact current text.
+2. To fix one diagram/paragraph: use mode "search_replace" with old_string = the exact broken block (copy it verbatim from the read_spec output, including the \`\`\` code fences and all whitespace) and new_string = the corrected block. Everything outside old_string stays byte-identical.
+3. To fix a whole markdown section: use mode "upsert_section" with section_heading = that section's heading and content = the corrected section body.
+Only use full "replace" when the user explicitly asks to restructure/rewrite the entire document, or when most of the document must change.
 
 Prefer write_spec over write_to_file for plans. Create while other packs exist: non-empty title + spec_id null. On failure: fix params and retry write_spec; never fall back to write_to_file / plans/*.md.`
 
@@ -70,7 +93,7 @@ export default {
 				title: {
 					type: ["string", "null"],
 					description:
-						"Pack title. REQUIRED non-empty when creating (spec_id null). On update may be null/empty — not used for rename unless you pass a new title intentionally.",
+						"Pack title. REQUIRED non-empty when creating (spec_id null). On update: pass existing name, omit (null/empty), or pass a NEW name to rename the pack. Renames happen alongside any document write.",
 				},
 				spec_id: {
 					type: ["string", "null"],
@@ -106,6 +129,34 @@ export default {
 				replace_all: {
 					type: ["boolean", "null"],
 					description: "For search_replace: replace all matches (default false)",
+				},
+				dry_run: {
+					type: ["boolean", "null"],
+					description: "Preview changes without applying. Returns match info and preview. Default false.",
+				},
+				replacements: {
+					type: ["array", "null"],
+					description:
+						'Batch of search_replace ops. Each: {"old_string":"...","new_string":"...","replace_all":false}. Applied atomically.',
+					items: {
+						type: "object",
+						properties: {
+							old_string: {
+								type: "string",
+								description: "Exact non-empty text to find",
+							},
+							new_string: {
+								type: "string",
+								description: "Replacement text (may be empty)",
+							},
+							replace_all: {
+								type: "boolean",
+								description: "Replace every match for this operation (default false)",
+							},
+						},
+						required: ["old_string", "new_string"],
+						additionalProperties: false,
+					},
 				},
 			},
 			// Problem B root cause mitigation: marking all 9 keys as `required` with

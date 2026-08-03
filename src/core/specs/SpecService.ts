@@ -92,6 +92,20 @@ export class SpecService {
 			updatedAt: workspace.updatedAt,
 		})
 
+		// Emit for every starter doc so event-driven subscribers (Spec Workspace
+		// panel, virtual-doc provider) see the new pack immediately — previously
+		// only createWorkspaceFromDocuments/Template emitted, so packs created via
+		// write_spec/createSpec were invisible to the event bus until a doc write.
+		for (const doc of workspace.docs) {
+			this._eventBus.emitDocumentChanged({
+				workspaceRootHash,
+				specId,
+				docId: doc.id,
+				revision: doc.revision,
+				reason: "initial",
+			})
+		}
+
 		return workspace
 	}
 
@@ -515,6 +529,123 @@ export class SpecService {
 			}
 
 			return { deleted: true, id: specId, title }
+		})
+	}
+
+	/**
+	 * Rename a virtual spec pack — updates title in meta.json, index.json,
+	 * and auto-syncs first heading in each document if it matches the old title.
+	 */
+	async renameWorkspace(workspaceRoot: string, specId: string, newTitle: string): Promise<SpecWorkspace> {
+		assertSafeId(specId, "specId")
+		const title = newTitle.trim()
+		if (!title) {
+			throw new Error("title is required")
+		}
+
+		const root = normalizeWorkspaceRoot(workspaceRoot)
+		const workspaceRootHash = hashWorkspaceRoot(root)
+		const lockKey = `${workspaceRootHash}:${specId}`
+
+		return specMutationLock.runExclusive(lockKey, async () => {
+			const workspace = await this.store.readMeta(workspaceRootHash, specId)
+			if (!workspace) {
+				throw new Error(`Spec workspace not found: ${specId}`)
+			}
+
+			if (workspace.title === title) {
+				return { ...workspace } // no-op, title already matches
+			}
+
+			const oldTitle = workspace.title
+			const now = Date.now()
+
+			// Auto-sync first heading in each document if it contains the old title
+			for (const doc of workspace.docs) {
+				try {
+					const content = await this.store.readDocBody(workspaceRootHash, specId, doc.fileName)
+					if (!content) continue
+
+					const lines = content.split("\n")
+					let updated = false
+					for (let i = 0; i < lines.length; i++) {
+						const match = lines[i].match(/^(#{1,6})\s+(.+)$/)
+						if (match) {
+							const headingText = match[2].trim()
+							const oldLower = oldTitle.toLowerCase()
+							const headingLower = headingText.toLowerCase()
+							// Pattern 1: Exact match — "Auth System"
+							// Pattern 2: Prefix with separator — "Auth System - Requirements"
+							// Pattern 3: Suffix with separator — "Requirements for Auth System"
+							// Pattern 4: Contains (whole words) — "Auth System Requirements"
+							const isExact = headingLower === oldLower
+							const isPrefix =
+								headingLower.startsWith(`${oldLower} -`) ||
+								headingLower.startsWith(`${oldLower} —`) ||
+								headingLower.startsWith(`${oldLower}:`)
+							const isSuffix =
+								headingLower.endsWith(` ${oldLower}`) || headingLower.endsWith(` for ${oldLower}`)
+							const isContains = !isExact && !isPrefix && !isSuffix && headingLower.includes(oldLower)
+
+							if (isExact) {
+								lines[i] = `${match[1]} ${title}`
+								updated = true
+								break
+							} else if (isPrefix) {
+								const afterTitle = headingText.slice(oldTitle.length)
+								lines[i] = `${match[1]} ${title}${afterTitle}`
+								updated = true
+								break
+							} else if (isSuffix) {
+								const idx = headingLower.lastIndexOf(oldLower)
+								lines[i] = `${match[1]} ${headingText.slice(0, idx)}${title}`
+								updated = true
+								break
+							} else if (isContains) {
+								lines[i] =
+									`${match[1]} ${headingText.replace(new RegExp(oldTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), title)}`
+								updated = true
+								break
+							} else {
+								// Pattern 5: Default starter heading — prepend new title
+								// e.g. "# Design" → "# NewTitle — Design"
+								const defaultHeadings = doc.kind ? [doc.kind, doc.title] : [doc.title]
+								const isDefaultHeading = defaultHeadings.some((dh) => headingLower === dh.toLowerCase())
+								if (isDefaultHeading && !headingLower.startsWith(title.toLowerCase())) {
+									lines[i] = `${match[1]} ${title} — ${headingText}`
+									updated = true
+									break
+								}
+							}
+							break // Stop at first heading regardless
+						}
+					}
+
+					if (updated) {
+						const newContent = lines.join("\n")
+						await this.store.writeDocBody(workspaceRootHash, specId, doc.fileName, newContent)
+						doc.revision += 1
+						doc.updatedAt = now
+						console.info(`[SpecService] Auto-synced heading in ${doc.fileName} for rename`)
+					}
+				} catch (docErr) {
+					// Non-fatal: heading sync failure should not block the rename
+					console.warn(`[SpecService] Failed to sync heading in ${doc.fileName}:`, docErr)
+				}
+			}
+
+			workspace.title = title
+			workspace.updatedAt = now
+			await this.store.writeMeta(workspace)
+			await this.upsertIndexEntry(workspaceRootHash, {
+				id: workspace.id,
+				title: workspace.title,
+				stage: workspace.stage,
+				updatedAt: workspace.updatedAt,
+			})
+
+			console.info(`[SpecService] Renamed spec ${specId}: "${oldTitle}" → "${title}"`)
+			return { ...workspace }
 		})
 	}
 

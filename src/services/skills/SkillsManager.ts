@@ -18,6 +18,8 @@ import { t } from "../../i18n"
 // Re-export for convenience
 export type { SkillMetadata, SkillContent }
 
+const DISABLED_EXTERNAL_SKILLS = new Set(["agent-browser"])
+
 export class SkillsManager {
 	private skills: Map<string, SkillMetadata> = new Map()
 	private providerRef: WeakRef<ClineProvider>
@@ -117,6 +119,10 @@ export class SkillsManager {
 			// Validate that frontmatter name matches the skill name (directory name or symlink name)
 			// Per the Agent Skills spec: "name field must match the parent directory name"
 			const effectiveSkillName = skillName || path.basename(skillDir)
+
+			// Product tombstone: this exact external global skill conflicts with the
+			// built-in research/browser tools. Preserve every unrelated user skill.
+			if (source === "global" && DISABLED_EXTERNAL_SKILLS.has(effectiveSkillName)) return
 			if (frontmatter.name !== effectiveSkillName) {
 				console.error(`Skill name "${frontmatter.name}" doesn't match directory "${effectiveSkillName}"`)
 				return

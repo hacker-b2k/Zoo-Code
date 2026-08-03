@@ -11,7 +11,7 @@ import {
 import { getSpecServiceForTask, getSpecWorkspaceRoot, resolveExistingSpecIdSoft } from "../specs/getSpecServiceForTask"
 import { SpecWorkspacePanel, type AgentWriteStreamPayload } from "../specs/ui/SpecWorkspacePanel"
 import { saveLastOpened } from "../specs/ui/specUiState"
-import { normalizeWriteSpecMode, resolveWriteBody } from "../specs/specMerge"
+import { normalizeWriteSpecMode, resolveWriteBody, applyBatchSearchReplace } from "../specs/specMerge"
 import { invalidateSpecContextCache } from "../specs/specContext"
 
 const LOG_PREFIX = "[write_spec]"
@@ -41,6 +41,10 @@ interface WriteSpecParams {
 	old_string?: string | null
 	new_string?: string | null
 	replace_all?: boolean | null
+	/** Preview changes without applying (Issue #5). */
+	dry_run?: boolean | null
+	/** Batch of search_replace operations (Issue #6). */
+	replacements?: Array<{ old_string: string; new_string: string; replace_all?: boolean }> | null
 }
 
 /** F-020b Phase A: ~1–2 frames; time-only throttle (no large char gate). */
@@ -231,6 +235,9 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 
 			const writeMode = normalizeWriteSpecMode(params.mode)
 			const isSearch = writeMode === "search_replace"
+			const batchReplacements =
+				Array.isArray(params.replacements) && params.replacements.length > 0 ? params.replacements : null
+			const hasBatchReplacements = batchReplacements !== null
 			if (!isSearch && typeof params.content !== "string") {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
@@ -241,7 +248,11 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				this.resetStreamState()
 				return
 			}
-			if (isSearch && (typeof params.old_string !== "string" || !params.old_string.length)) {
+			if (
+				isSearch &&
+				!hasBatchReplacements &&
+				(typeof params.old_string !== "string" || !params.old_string.length)
+			) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
 				const reason =
@@ -297,16 +308,28 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 						useExisting = true
 						specId = existingId
 					} else if (distinctTitleReplace) {
-						// Explicit create path: non-empty distinct title + replace, even when
-						// multiple packs exist and last-opened would otherwise force an update.
-						useExisting = false
-						logWriteSpec("info", "create path chosen (distinct title + replace)", {
-							titleForCreate,
-							resolvedExistingId: existingId,
-							resolvedExistingTitle: meta?.title ?? null,
-							packCount: list.length,
-							writeMode,
-						})
+						if (list.length === 1) {
+							// Sole pack + distinct title: rename the existing pack instead of
+							// creating a new one. The user intends to rename, not duplicate.
+							useExisting = true
+							specId = existingId
+							logWriteSpec("info", "rename path chosen (sole pack + distinct title)", {
+								titleForCreate,
+								resolvedExistingId: existingId,
+								resolvedExistingTitle: meta?.title ?? null,
+							})
+						} else {
+							// Multiple packs + distinct title + replace → create new pack
+							// (import existing markdown as a new Spec Workspace).
+							useExisting = false
+							logWriteSpec("info", "create path chosen (distinct title + replace)", {
+								titleForCreate,
+								resolvedExistingId: existingId,
+								resolvedExistingTitle: meta?.title ?? null,
+								packCount: list.length,
+								writeMode,
+							})
+						}
 					} else {
 						// Fallback: partial-ish or ambiguous → prefer update
 						useExisting = true
@@ -405,15 +428,21 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 
 			let finalContent: string
 			try {
-				finalContent = resolveWriteBody({
-					mode: writeMode,
-					existingContent: created && writeMode === "replace" ? "" : existingContent,
-					content: typeof params.content === "string" ? params.content : undefined,
-					sectionHeading: params.section_heading ?? undefined,
-					oldString: params.old_string ?? undefined,
-					newString: params.new_string ?? undefined,
-					replaceAll: params.replace_all === true,
-				})
+				// Issue #6: batch replacements take priority over single search_replace
+				if (batchReplacements) {
+					const contentBase = created && writeMode === "replace" ? "" : existingContent
+					finalContent = applyBatchSearchReplace(contentBase, batchReplacements)
+				} else {
+					finalContent = resolveWriteBody({
+						mode: writeMode,
+						existingContent: created && writeMode === "replace" ? "" : existingContent,
+						content: typeof params.content === "string" ? params.content : undefined,
+						sectionHeading: params.section_heading ?? undefined,
+						oldString: params.old_string ?? undefined,
+						newString: params.new_string ?? undefined,
+						replaceAll: params.replace_all === true,
+					})
+				}
 			} catch (mergeErr) {
 				task.consecutiveMistakeCount++
 				task.didToolFailInCurrentTurn = true
@@ -421,6 +450,32 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				logWriteSpec("error", "final failure", { reason: "merge failed", message: msg, writeMode, specId })
 				this.abortStream(task, streamId, specId, doc, msg)
 				pushToolResult(formatResponse.toolError(msg))
+				this.resetStreamState()
+				return
+			}
+
+			// Issue #5: dry_run — preview changes without applying
+			if (params.dry_run === true) {
+				const preview =
+					finalContent.length > 2000 ? finalContent.slice(0, 2000) + "\n...(truncated)" : finalContent
+				task.consecutiveMistakeCount = 0
+				pushToolResult(
+					JSON.stringify(
+						{
+							ok: true,
+							dry_run: true,
+							specId,
+							doc,
+							mode: writeMode,
+							existingLength: existingContent.length,
+							resultLength: finalContent.length,
+							wouldChange: finalContent !== existingContent,
+							preview,
+						},
+						null,
+						2,
+					),
+				)
 				this.resetStreamState()
 				return
 			}
@@ -461,18 +516,64 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 				contentLength: finalContent.length,
 			})
 
-			try {
-				const provider = task.providerRef.deref()
-				if (provider?.context?.workspaceState) {
-					const hash = hashWorkspaceRoot(workspaceRoot)
-					await saveLastOpened(provider.context.workspaceState, hash, {
-						specId,
-						docKind: doc,
-						workspaceRoot,
-						updatedAt: Date.now(),
+			// Rename workspace title AFTER document write so search_replace/merge
+			// operates on pre-rename content (old headings still present for matching).
+			// The rename then auto-syncs document headings to the new title.
+			if (titleForCreate && !created) {
+				try {
+					const currentMeta = await service.getWorkspace(workspaceRoot, specId)
+					if (currentMeta && titleForCreate !== currentMeta.title) {
+						const approvalRename = await askApproval(
+							"tool",
+							JSON.stringify({
+								tool: "write_spec",
+								action: "rename",
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							}),
+						)
+						if (approvalRename) {
+							await service.renameWorkspace(workspaceRoot, specId, titleForCreate)
+							logWriteSpec("info", "workspace renamed", {
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							})
+						} else {
+							logWriteSpec("warn", "user denied rename", {
+								specId,
+								oldTitle: currentMeta.title,
+								newTitle: titleForCreate,
+							})
+						}
+					}
+				} catch (renameErr) {
+					// Non-fatal: rename failure should not block the write result
+					logWriteSpec("warn", "rename failed (continuing with write)", {
+						message: renameErr instanceof Error ? renameErr.message : String(renameErr),
 					})
 				}
-				const entries = await service.listWorkspaces(workspaceRoot)
+			}
+
+			// F-020: the finalize notification is the ONLY signal that releases the
+			// webview from streaming mode. If it is lost, the panel wedges with
+			// agentStreaming=true and every subsequent document push (including the
+			// Refresh path) is silently dropped — the exact "content only appears
+			// after close-reopen" field bug. It must therefore NEVER be suppressed
+			// by failures in best-effort side operations (listWorkspaces,
+			// saveLastOpened): post it FIRST, with entries attached opportunistically.
+			let entries: unknown[] | undefined
+			try {
+				entries = await service.listWorkspaces(workspaceRoot)
+			} catch (entriesError) {
+				// Best-effort only — the card list can refresh on the next event; the
+				// finalize signal itself must still be delivered.
+				logWriteSpec("warn", "listWorkspaces failed during finalize notify (continuing)", {
+					message: entriesError instanceof Error ? entriesError.message : String(entriesError),
+				})
+			}
+			try {
 				const panel = SpecWorkspacePanel.getCurrent() ?? this.ensurePanel(task)
 				panel?.notifyAgentWriteFinalized({
 					streamId,
@@ -484,8 +585,26 @@ export class WriteSpecTool extends BaseTool<"write_spec"> {
 					revision: updated.revision,
 					entries,
 				})
+			} catch (notifyError) {
+				logWriteSpec("warn", "notifyAgentWriteFinalized failed", {
+					message: notifyError instanceof Error ? notifyError.message : String(notifyError),
+				})
+			}
+
+			// Best-effort UI state — must not affect the write result or the notify.
+			try {
+				const provider = task.providerRef.deref()
+				if (provider?.context?.workspaceState) {
+					const hash = hashWorkspaceRoot(workspaceRoot)
+					await saveLastOpened(provider.context.workspaceState, hash, {
+						specId,
+						docKind: doc,
+						workspaceRoot,
+						updatedAt: Date.now(),
+					})
+				}
 			} catch {
-				// UI notify is best-effort
+				// UI state persistence is non-critical.
 			}
 
 			invalidateSpecContextCache(task.taskId)

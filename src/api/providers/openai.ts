@@ -261,11 +261,16 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			// Add max_tokens if needed
 			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
 
+			const requestStartedAt = performance.now()
+			console.info(`[API-TIMING] openai stream dispatch model=${modelId}`)
 			let stream
 			try {
-				stream = await this.client.chat.completions.create(
-					requestOptions,
-					isAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {},
+				stream = await this.client.chat.completions.create(requestOptions, {
+					...(isAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {}),
+					signal: metadata?.abortSignal,
+				})
+				console.info(
+					`[API-TIMING] openai stream headers model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)}`,
 				)
 			} catch (error) {
 				throw handleOpenAIError(error, this.providerName)
@@ -283,17 +288,25 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			let lastUsage
 			const activeToolCallIds = new Set<string>()
 			let yieldedAssistantContent = false
-			let streamedReasoningText = ""
+			let yieldedAnyContent = false
+			let receivedFirstRawChunk = false
 			let streamFailure: any
 
 			try {
 				for await (const chunk of stream) {
+					if (!receivedFirstRawChunk) {
+						receivedFirstRawChunk = true
+						console.info(
+							`[API-TIMING] openai first raw chunk model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)}`,
+						)
+					}
 					const delta = chunk.choices?.[0]?.delta ?? {}
 					const finishReason = chunk.choices?.[0]?.finish_reason
 					const text = extractOpenAiText(delta)
 
 					if (text) {
 						yieldedAssistantContent = true
+						yieldedAnyContent = true
 						for (const chunk of matcher.update(text)) {
 							yield chunk
 						}
@@ -301,13 +314,14 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 					const reasoningText = extractReasoningFromDelta(delta)
 					if (reasoningText) {
-						streamedReasoningText += reasoningText
+						yieldedAnyContent = true
 						yield { type: "reasoning", text: reasoningText }
 					}
 
 					yield* this.processToolCalls(delta, finishReason, activeToolCallIds)
 					if (delta.tool_calls?.length) {
 						yieldedAssistantContent = true
+						yieldedAnyContent = true
 					}
 
 					if (chunk.usage) {
@@ -315,77 +329,30 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 					}
 				}
 			} catch (streamError: any) {
-				if (yieldedAssistantContent) {
+				if (yieldedAnyContent) {
 					throw handleOpenAIError(streamError, this.providerName)
 				}
 				streamFailure = streamError
 			}
 
-			// If streaming completed but yielded no assistant text/tool content, the proxy may
-			// be non-standard or reasoning-only. Try non-streaming before surfacing an error.
-			if (!yieldedAssistantContent) {
-				try {
-					const nonStreamOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-						...requestOptions,
-						stream: false,
-					}
-					delete (nonStreamOptions as any).stream_options
+			console.info(
+				`[API-TIMING] openai stream complete model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)} assistantContent=${yieldedAssistantContent}`,
+			)
 
-					const response = await this.client.chat.completions.create(nonStreamOptions)
-					const message = response.choices?.[0]?.message
-					const content = extractOpenAiText(message) || streamedReasoningText.trim()
-					let yieldedFallbackContent = false
-
-					if (message?.tool_calls) {
-						for (const toolCall of message.tool_calls) {
-							if (toolCall.type === "function") {
-								yieldedFallbackContent = true
-								yield {
-									type: "tool_call",
-									id: toolCall.id,
-									name: toolCall.function.name,
-									arguments: toolCall.function.arguments,
-								}
-							}
-						}
-					}
-
-					if (content) {
-						yieldedFallbackContent = true
-						for (const chunk of matcher.update(content)) {
-							yield chunk
-						}
-						for (const chunk of matcher.final()) {
-							yield chunk
-						}
-					}
-
-					if (response.usage) {
-						lastUsage = response.usage
-					}
-
-					if (yieldedFallbackContent) {
-						if (lastUsage) {
-							yield this.processUsageMetrics(lastUsage, modelInfo)
-						}
-						return
-					}
-
-					const streamErrorMessage = streamFailure?.message ? ` Stream error: ${streamFailure.message}` : ""
-					throw new Error(
-						`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
-							`The model "${modelId}" may not be available on this endpoint, ` +
-							`or the server may require different authentication/client headers.` +
-							streamErrorMessage +
-							` Response: ${JSON.stringify(message ?? "empty")}`,
-					)
-				} catch (fallbackError: any) {
-					// If the non-streaming fallback also fails, report the combined error
-					if (fallbackError.message?.includes("API at")) {
-						throw fallbackError
-					}
-					throw handleOpenAIError(fallbackError, this.providerName)
+			// A request must never be replayed automatically after its stream has already run.
+			// Besides doubling cost and risking duplicate tool side effects, a proxy that holds
+			// an empty stream open until its timeout made this hidden second request appear as
+			// a multi-minute first-token delay. Surface the original failure/empty response so
+			// the normal retry UI can make the next action explicit.
+			if (!yieldedAnyContent) {
+				if (streamFailure) {
+					throw handleOpenAIError(streamFailure, this.providerName)
 				}
+				throw new Error(
+					`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
+						`The model "${modelId}" may not be available on this endpoint, ` +
+						`or the server may require different authentication/client headers.`,
+				)
 			}
 
 			for (const chunk of matcher.final()) {
@@ -422,10 +389,10 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 			let response
 			try {
-				response = await this.client.chat.completions.create(
-					requestOptions,
-					this._isAzureAiInference(modelUrl) ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {},
-				)
+				response = await this.client.chat.completions.create(requestOptions, {
+					...(this._isAzureAiInference(modelUrl) ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {}),
+					signal: metadata?.abortSignal,
+				})
 			} catch (error) {
 				throw handleOpenAIError(error, this.providerName)
 			}

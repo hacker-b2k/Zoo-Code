@@ -8,7 +8,7 @@
 
 ### 1. NO SHORTCUTS
 - Never use `--no-verify`, `--force`, shallow clones, or any flag that bypasses safety checks unless explicitly documented and approved.
-- Never skip tests, type checks, or linting.
+- Never skip checks that are relevant to the change; choose tests, type checks, linting, and manual verification proportionate to scope and risk.
 - Never comment out failing tests to make CI pass.
 - Never use `any` in TypeScript unless it is the ONLY option and is explicitly justified in a comment.
 - Never hardcode values that belong in config or constants.
@@ -20,9 +20,10 @@
 - Do not fake file counts, hashes, or comparison results.
 - Every claim must be provable. Every action must be verifiable.
 
-### 3. PLAN FIRST — ALWAYS
-- **Zero code changes without a written plan.** See `PLANNING_REQUIRED.md`.
-- Every feature, fix, or refactor starts with: Research → Design → Plan → Review → Execute.
+### 3. PLAN IN PROPORTION TO RISK
+- Assess scope, risk, reversibility, and complexity before changing code. See `PLANNING_REQUIRED.md`.
+- Trivial, low-risk changes may use a brief task checklist; substantial or high-risk work requires research, design, an implementation plan, and review.
+- Agent-created plans are canonical in the virtual Spec Workspace. Create repository planning documents only when a maintainer or the task explicitly requires a versioned artifact.
 - No one-line "quick fixes" without understanding the full impact.
 
 ### 4. NO HALF-WORK
@@ -40,17 +41,15 @@
 
 ## 📋 PRE-CHANGE CHECKLIST
 
-Before making ANY change to this codebase, answer ALL of these:
+Apply each item when relevant to the change's scope and risk:
 
-- [ ] Have I read `ARCHITECTURE.md` and understand the affected modules?
-- [ ] Have I read `REQUIREMENTS.md` for the current task scope?
-- [ ] Have I written a plan in `docs/plans/` (from `PLANNING_REQUIRED.md`)?
+- [ ] Have I read the relevant architecture and requirements for the affected modules?
+- [ ] Have I assessed scope, risk, reversibility, and complexity?
+- [ ] If a written plan is warranted, have I created or updated it in the virtual Spec Workspace?
+- [ ] If a repository planning document is explicitly required, have I created it in the requested location?
 - [ ] Have I identified all files that will be affected?
 - [ ] Have I checked for existing tests that cover this area?
-- [ ] Have I verified the change does not break existing functionality?
-- [ ] Have I run `pnpm check-types` before submitting?
-- [ ] Have I run `pnpm test` before submitting?
-- [ ] Have I run `pnpm lint` before submitting?
+- [ ] Have I selected verification proportionate to the change, including type checks, tests, lint, or manual checks as applicable?
 
 ---
 
@@ -100,9 +99,9 @@ apps/
   vscode-e2e/           ← End-to-end tests
   vscode-nightly/       ← Nightly build configuration
 
-docs/                   ← All planning, research, decisions (our addition)
-  plans/                ← Per-task implementation plans
-  research/             ← Research notes
+docs/                   ← Repository-visible references and durable records
+  plans/                ← Explicitly requested versioned implementation plans
+  research/             ← Explicitly requested versioned research notes
   decisions/            ← Architecture Decision Records (ADRs)
 ```
 
@@ -125,13 +124,11 @@ pnpm clean              # Clean all build artifacts
 
 ## 🚦 BRANCH STRATEGY
 
-- `main` — stable, always passing CI
-- `feature/<name>` — new features
-- `fix/<name>` — bug fixes
-- `refactor/<name>` — refactoring
-- `docs/<name>` — documentation only
+- `integration` — canonical working and integration branch; all ordinary PRs target this branch.
+- Short-lived `feature/<name>`, `fix/<name>`, `refactor/<name>`, or `docs/<name>` branches may be used when isolation or review warrants them; branch from and merge back into `integration`.
+- `main` — stable release branch; do not use it as the ordinary development base or PR target.
 
-Never push directly to `main`. Always use a branch + PR.
+Never push directly to `main`. Follow `docs/BRANCH_AND_UPSTREAM_POLICY.md` and ADR-005.
 
 ---
 
@@ -151,4 +148,4 @@ Examples:
 
 ---
 
-*Last updated: 2026-06-24 | Maintainer: hacker-b2k (Zoo Code fork)*
+*Last updated: 2026-08-02 | Maintainer: hacker-b2k (Zoo Code fork)*

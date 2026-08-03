@@ -181,6 +181,7 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 	it("handles empty stack gracefully", async () => {
 		const provider = {
 			clineStack: [] as any[],
+			liveTasks: new Map(),
 			taskEventListeners: new Map(),
 			log: vi.fn(),
 			getTaskWithId: vi.fn(),
@@ -261,6 +262,7 @@ describe("ClineProvider.removeClineFromStack() delegation awareness", () => {
 
 		const provider = {
 			clineStack: [taskB] as any[],
+			liveTasks: new Map(),
 			taskEventListeners: new Map(),
 			log: vi.fn(),
 			getTaskWithId,

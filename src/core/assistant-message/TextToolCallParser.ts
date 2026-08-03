@@ -1,4 +1,4 @@
-import { type ToolName } from "@roo-code/types"
+import { toolNames, type ToolName } from "@roo-code/types"
 
 import type { ToolUse, McpToolUse } from "../../shared/tools"
 import { NativeToolCallParser } from "./NativeToolCallParser"
@@ -27,7 +27,8 @@ import { NativeToolCallParser } from "./NativeToolCallParser"
  *      </function>
  *    </tool_call>
  * 6. Bare <function=name>…</function> without outer tool_call
- * 7. Unclosed trailing </tool_call> / </function> (stream truncation)
+ * 7. Direct legacy tool tags: <attempt_completion>{"result":"done"}</attempt_completion>
+ * 8. Unclosed trailing </tool_call> / </function> (stream truncation)
  *
  * Values "None" / "null" / "undefined" / empty are normalized before native parse
  * so nullable tool fields (e.g. write_spec.spec_id) work after XML recovery.
@@ -85,6 +86,24 @@ const FUNCTION_NAME_ATTR_BLOCK_RE =
 
 const NAME_ATTR_RE = /\bname\s*=\s*["']([^"']+)["']/i
 
+// Some providers ignore native function calling and emit the old Roo/Cline shape
+// directly in assistant text: <attempt_completion>{"result":"done"}</attempt_completion>.
+// Build this surface from the authoritative tool registry so ordinary/custom HTML
+// tags are not mistaken for executable calls. Longer names go first for clarity.
+const DIRECT_TOOL_NAME_PATTERN = [...toolNames]
+	.sort((a, b) => b.length - a.length)
+	.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+	.join("|")
+const DIRECT_TOOL_BLOCK_RE = new RegExp(
+	`<\\s*(${DIRECT_TOOL_NAME_PATTERN})\\s*>\\s*([\\s\\S]*?)<\\s*\\/\\s*\\1\\s*>`,
+	"gi",
+)
+const DIRECT_TOOL_LOOSE_RE = new RegExp(
+	`<\\s*(${DIRECT_TOOL_NAME_PATTERN})\\s*>\\s*([\\s\\S]*?)(?:<\\s*\\/\\s*\\1\\s*>|(?=$))`,
+	"gi",
+)
+const DIRECT_TOOL_SURFACE_RE = new RegExp(`<\\s*\\/?\\s*(?:${DIRECT_TOOL_NAME_PATTERN})(?:\\s*>|\\s*$)`, "i")
+
 /** Inner-content detectors (any parameter style, any function-name style). */
 const HAS_FUNCTION_MARKUP_RE = /<\s*function\s*=|<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=/i
 const HAS_PARAMETER_MARKUP_RE = /<\s*parameter\s*(?:=|\bname\s*=)/i
@@ -97,6 +116,9 @@ const FENCED_TOOL_JSON_RE = /```(?:json|JSON)?\s*\r?\n?(\{[\s\S]*?\})\r?\n?```/g
 // same fenced block, which ordinary code samples virtually never combine.
 const LOOKS_LIKE_TEXT_TOOL_RE =
 	/<\s*(?:tool_call|function_call|toolcall|invoke)\b|<\s*function\s*=|<\s*function\b[^>]*\bname\s*=|<\s*tool\b[^>]*\bname\s*=|```(?:json|JSON)?\s*\r?\n?\s*\{\s*"(?:name|tool|function|tool_name)"\s*:[\s\S]{0,4000}?"(?:arguments|parameters|input|args)"\s*:/i
+
+/** Text-form interaction protocol emitted by non-conforming models. */
+const ELICITATION_MARKUP_RE = /<\s*\/?\s*ElicitationsGroup\b|<\s*Elicitation\b|<\s*FollowUp\b/i
 
 let textToolCallSeq = 0
 
@@ -111,8 +133,14 @@ function nextSyntheticId(name: string): string {
  * (e.g. code content written as `if (a &lt; b &amp;&amp; c &gt; d)`).
  * `&amp;` is decoded LAST so a literal `&amp;lt;` becomes `&lt;` (correct XML
  * semantics) rather than collapsing to `<`.
+ *
+ * Exported so NativeToolCallParser can share the same decoding logic for
+ * native JSON tool call string parameters — some models entity-encode
+ * bracket-heavy content (e.g. Mermaid `<<abstract>>` as `&lt;&lt;abstract&gt;&gt;`)
+ * even inside JSON strings, and the content must be decoded before storage
+ * to avoid double-encoding in the preview renderer.
  */
-function decodeXmlEntities(value: string): string {
+export function decodeXmlEntities(value: string): string {
 	if (!value.includes("&")) {
 		return value
 	}
@@ -495,9 +523,63 @@ export function parseTextToolCalls(text: string): TextToolCallParseResult {
 		return any
 	}
 
+	// ── Pass 0: direct legacy <tool_name>{args}</tool_name> tags ─────────────
+	DIRECT_TOOL_BLOCK_RE.lastIndex = 0
+	let match: RegExpExecArray | null
+	while ((match = DIRECT_TOOL_BLOCK_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		const name = match[1]?.trim()
+		const inner = stripMarkdownFence(match[2] ?? "").trim()
+		if (!name || !inner) {
+			continue
+		}
+		try {
+			const parsed = JSON.parse(inner)
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				continue
+			}
+			const toolUse = toToolUse(name, JSON.stringify(parsed))
+			if (toolUse) {
+				toolUses.push(toolUse)
+				mark(start, end)
+			}
+		} catch {
+			// The loose pass below may recover a later complete occurrence. Invalid
+			// direct markup is sanitized before display rather than executed.
+		}
+	}
+
+	// Also recover a valid direct call whose closing tag was truncated at EOS.
+	DIRECT_TOOL_LOOSE_RE.lastIndex = 0
+	while ((match = DIRECT_TOOL_LOOSE_RE.exec(text)) !== null) {
+		const start = match.index
+		const end = start + match[0].length
+		if (isSpanCovered(replacements, start, end)) {
+			continue
+		}
+		const name = match[1]?.trim()
+		const inner = stripMarkdownFence(match[2] ?? "").trim()
+		if (!name || !inner) {
+			continue
+		}
+		try {
+			const parsed = JSON.parse(inner)
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				continue
+			}
+			const toolUse = toToolUse(name, JSON.stringify(parsed))
+			if (toolUse) {
+				toolUses.push(toolUse)
+				mark(start, end)
+			}
+		} catch {
+			// Sanitization handles invalid/truncated JSON without leaking tags.
+		}
+	}
+
 	// ── Pass A: closed outer tags (JSON and/or nested MiniMax XML) ──────────
 	OUTER_CLOSED_BLOCK_RE.lastIndex = 0
-	let match: RegExpExecArray | null
 	while ((match = OUTER_CLOSED_BLOCK_RE.exec(text)) !== null) {
 		const start = match.index
 		const end = start + match[0].length
@@ -667,7 +749,7 @@ export function looksLikeTextToolCall(text: string): boolean {
 	if (!text) {
 		return false
 	}
-	return LOOKS_LIKE_TEXT_TOOL_RE.test(text)
+	return LOOKS_LIKE_TEXT_TOOL_RE.test(text) || DIRECT_TOOL_SURFACE_RE.test(text) || ELICITATION_MARKUP_RE.test(text)
 }
 
 /**
@@ -689,12 +771,41 @@ const PARTIAL_FENCE_TAIL_RE = /`{2,3}[a-zA-Z]*$/
  * "…<tool_cal", "…</par", "…```j". Used by the streaming presenter to defer
  * saying text until the fragment resolves, so raw tag fragments never flash
  * in the chat UI mid-stream.
+ *
+ * Mermaid fix: a trailing ``` is only treated as "incomplete" when it
+ * OPENS a new code block (unmatched fence). When the text contains an even
+ * number of ``` sequences, the trailing fence CLOSES a complete block and
+ * the text is safe to present immediately. Without this distinction, any
+ * response ending with a fenced code block (Mermaid diagrams, code samples)
+ * is incorrectly deferred — and if the stream ends there, the text is
+ * held back from the user until the post-stream flush.
  */
 export function textEndsWithIncompleteMarkup(text: string): boolean {
 	if (!text) {
 		return false
 	}
-	return PARTIAL_TAG_TAIL_RE.test(text) || PARTIAL_FENCE_TAIL_RE.test(text)
+	if (PARTIAL_TAG_TAIL_RE.test(text)) {
+		return true
+	}
+	if (PARTIAL_FENCE_TAIL_RE.test(text)) {
+		// Determine whether the trailing fence opens or closes a block by
+		// toggling fence state on each ``` sequence. If we end up "inside"
+		// a fence, the trailing ``` opened a new block (incomplete → defer).
+		// If we end up "outside", the trailing ``` closed a block (complete
+		// → safe to present).
+		let insideFence = false
+		let i = 0
+		while (i < text.length) {
+			if (text[i] === "`" && text[i + 1] === "`" && text[i + 2] === "`") {
+				insideFence = !insideFence
+				i += 3
+			} else {
+				i++
+			}
+		}
+		return insideFence
+	}
+	return false
 }
 
 /**
@@ -720,6 +831,13 @@ export function stripMalformedToolCallMarkup(text: string): string {
 
 	let cleaned = text
 
+	// Strip complete or truncated direct legacy tool blocks. These names come
+	// from the registered tool list, so normal HTML/XML examples remain intact.
+	DIRECT_TOOL_BLOCK_RE.lastIndex = 0
+	cleaned = cleaned.replace(DIRECT_TOOL_BLOCK_RE, "")
+	DIRECT_TOOL_LOOSE_RE.lastIndex = 0
+	cleaned = cleaned.replace(DIRECT_TOOL_LOOSE_RE, "")
+
 	// Strip complete <tool_call>…</tool_call> blocks (even if inner is garbled)
 	// — these are unambiguous tool-call containers.
 	cleaned = cleaned.replace(/<\s*tool_call\b[^>]*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, "")
@@ -735,6 +853,19 @@ export function stripMalformedToolCallMarkup(text: string): string {
 		/<\s*(?:function|tool|invoke)\b[^>]*\bname\s*=\s*["'][^"']+["'][^>]*>[\s\S]*?<\s*\/\s*(?:function|tool|invoke)\s*>/gi,
 		"",
 	)
+
+	// Elicitation markup is not a tool invocation and cannot safely be executed
+	// from assistant prose. A valid follow-up payload is rendered through the
+	// typed follow-up channel; stray markup in regular text is removed so broken
+	// protocol tags never leak into the chat transcript.
+	cleaned = cleaned
+		.replace(/<\s*ElicitationsGroup\b[^>]*>[\s\S]*?<\s*\/\s*ElicitationsGroup\s*>/gi, "")
+		.replace(/<\s*\/?\s*ElicitationsGroup\b[^>]*>/gi, "")
+		.replace(/<\s*Elicitation\b[^>]*\/?>/gi, "")
+		.replace(/<\s*FollowUp\b[^>]*>[\s\S]*?<\s*\/\s*FollowUp\s*>/gi, "")
+		.replace(/<\s*\/?\s*FollowUp\b[^>]*>/gi, "")
+		.replace(/<\s*\/?\s*Suggestion\b[^>]*>/gi, "")
+		.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
 
 	// Strip stray/unclosed structural tag fragments that are clearly tool-call
 	// markup, not prose. These are the exact tokens from the field report:

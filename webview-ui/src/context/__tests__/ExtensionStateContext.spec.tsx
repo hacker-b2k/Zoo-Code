@@ -70,6 +70,18 @@ const ApiConfigTestComponent = () => {
 	)
 }
 
+const WelcomeStateTestComponent = () => {
+	const { showWelcome, apiConfiguration, currentApiConfigName } = useExtensionState()
+
+	return (
+		<div>
+			<div data-testid="show-welcome">{JSON.stringify(showWelcome)}</div>
+			<div data-testid="welcome-api-provider">{apiConfiguration?.apiProvider ?? ""}</div>
+			<div data-testid="welcome-api-config-name">{currentApiConfigName}</div>
+		</div>
+	)
+}
+
 describe("ExtensionStateContext", () => {
 	it("initializes with empty allowedCommands array", () => {
 		render(
@@ -319,6 +331,94 @@ describe("ExtensionStateContext", () => {
 				modelTemperature: 0.7, // Should add this from partial update
 			}),
 		)
+	})
+
+	it("keeps a worker using the parent's profile out of onboarding without disabling main-chat validation", () => {
+		render(
+			<ExtensionStateContextProvider>
+				<WelcomeStateTestComponent />
+			</ExtensionStateContextProvider>,
+		)
+
+		const sharedProfileState = {
+			apiConfiguration: { apiProvider: "roo" as const },
+			currentApiConfigName: "shared-parent-worker-profile",
+		}
+
+		// The same configuration remains setup-gated in a main chat when it is not valid by itself.
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						type: "state",
+						state: {
+							...sharedProfileState,
+							currentTaskId: "parent-1",
+							currentTaskIsBackgroundWorker: false,
+						},
+					},
+				}),
+			)
+		})
+
+		expect(screen.getByTestId("show-welcome")).toHaveTextContent("true")
+
+		// A live worker has already been assigned an executable handler by the host. Sharing
+		// the parent's profile must not replace that worker's chat with first-run onboarding.
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						type: "state",
+						state: {
+							...sharedProfileState,
+							currentTaskId: "worker-1",
+							currentTaskIsBackgroundWorker: true,
+						},
+					},
+				}),
+			)
+		})
+
+		expect(screen.getByTestId("show-welcome")).toHaveTextContent("false")
+		expect(screen.getByTestId("welcome-api-provider")).toHaveTextContent("roo")
+		expect(screen.getByTestId("welcome-api-config-name")).toHaveTextContent("shared-parent-worker-profile")
+
+		// Partial worker-state pushes must preserve both the profile and worker-session gate.
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						type: "state",
+						state: {
+							currentTaskId: "worker-1",
+							clineMessages: [],
+						},
+					},
+				}),
+			)
+		})
+
+		expect(screen.getByTestId("show-welcome")).toHaveTextContent("false")
+		expect(screen.getByTestId("welcome-api-config-name")).toHaveTextContent("shared-parent-worker-profile")
+
+		// Returning to the main chat restores ordinary provider validation.
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						type: "state",
+						state: {
+							...sharedProfileState,
+							currentTaskId: "parent-1",
+							currentTaskIsBackgroundWorker: false,
+						},
+					},
+				}),
+			)
+		})
+
+		expect(screen.getByTestId("show-welcome")).toHaveTextContent("true")
 	})
 })
 

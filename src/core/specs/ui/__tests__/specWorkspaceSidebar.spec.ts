@@ -95,7 +95,9 @@ describe("F-026/F-027 spec workspace sidebar cards", () => {
 	})
 
 	it("enhances hover with elevation and animates only non-layout properties", () => {
-		expect(ruleBody(css, ".spec-card:hover")).toMatch(/box-shadow:\s*var\(--elevation-2\)/)
+		// Subtle aesthetic: hover uses elevation-1 (gentler than elevation-2)
+		// to match the new icon-button / segmented control design language.
+		expect(ruleBody(css, ".spec-card:hover")).toMatch(/box-shadow:\s*var\(--elevation-1\)/)
 		expect(ruleBody(css, ".spec-card.active:hover")).toMatch(/box-shadow:\s*var\(--elevation-2\)/)
 
 		const transition = ruleBody(css, ".spec-card").match(/transition:([^;]*);/)

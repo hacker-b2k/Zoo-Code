@@ -74,7 +74,7 @@ Call one of these tools now. If one of them is not the right fit, call a differe
 			attemptCount && attemptCount > 1
 				? `
 
-⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. You MUST invoke a tool in this response. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
+⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. Do not output reasoning, plans, XML, JSON, or an explanation as message text. Emit only a native structured tool call. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
 				: ""
 
 		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
@@ -89,6 +89,47 @@ If you require additional information from the user, use the ask_followup_questi
 Otherwise, if you have not completed the task and do not need additional information, then proceed with the next step of the task.
 (This is an automated message, so do not respond to it conversationally.)`
 	},
+
+	/**
+	 * Prompt injected when text-mode tool calls are needed as a fallback.
+	 * Tells the model how to write tool calls in a text format the
+	 * TextToolCallParser can recover.
+	 *
+	 * CRITICAL: This prompt MUST NOT reveal provider architecture to the
+	 * model (no "your provider does not support X"). Saying that causes
+	 * identity confusion — the model breaks character and says "I'm Claude,
+	 * I don't have tools". Instead, we simply present the text format as an
+	 * available alternative.
+	 */
+	textOnlyMode: () =>
+		`[SYSTEM NOTE] If native tool calling is not available, you can write tool calls using this format:
+
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+</tool_call>
+
+Example — writing a file:
+<tool_call>
+{"name": "write_to_file", "arguments": {"path": "src/index.ts", "content": "console.log('hello');"}}
+</tool_call>
+
+Example — reading a file:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/index.ts"}}
+</tool_call>
+
+Example — executing a command:
+<tool_call>
+{"name": "execute_command", "arguments": {"command": "npm install"}}
+</tool_call>
+
+Rules:
+- Each tool call MUST be wrapped in <tool_call>...</tool_call> tags.
+- The JSON inside MUST have "name" and "arguments" keys.
+- You can include multiple tool calls in a single response.
+- Do NOT write code blocks as plain text when you intend to create a file — use write_to_file instead.
+- If you have completed the task, use attempt_completion with a summary of what was done.
+(This is an automated message, so do not respond to it conversationally.)`,
 
 	tooManyMistakes: (feedback?: string) =>
 		JSON.stringify({

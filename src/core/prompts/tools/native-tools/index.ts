@@ -24,6 +24,7 @@ import clickBrowserByText from "./click_browser_by_text"
 import evaluateBrowserJs from "./evaluate_browser_js"
 import readAllBrowserTabs from "./read_all_browser_tabs"
 import batchBrowserActions from "./batch_browser_actions"
+import browserScreenshot from "./browser_screenshot"
 import spawnWorker from "./spawn_worker"
 import listWorkers from "./list_workers"
 import collectResults from "./collect_results"
@@ -109,6 +110,7 @@ export function getNativeTools(options: NativeToolsOptions = {}): OpenAI.Chat.Ch
 		evaluateBrowserJs,
 		readAllBrowserTabs,
 		batchBrowserActions,
+		browserScreenshot,
 		spawnWorker,
 		listWorkers,
 		collectResults,

@@ -46,6 +46,7 @@ export const toolNames = [
 	"evaluate_browser_js",
 	"read_all_browser_tabs",
 	"batch_browser_actions",
+	"browser_screenshot",
 	"read_file",
 	"read_command_output",
 	"write_to_file",

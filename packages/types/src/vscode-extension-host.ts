@@ -142,6 +142,10 @@ export interface ExtensionMessage {
 		path?: string
 	}>
 	clineMessage?: ClineMessage
+	/** Task generation that produced a chat-scoped incremental message. */
+	taskId?: string
+	/** In-memory task generation ID used to reject delayed chat events. */
+	taskInstanceId?: string
 	routerModels?: RouterModels
 	openAiModels?: string[]
 	imageGenerationModels?: string[]
@@ -348,6 +352,10 @@ export type ExtensionState = Pick<
 	version: string
 	clineMessages: ClineMessage[]
 	currentTaskId?: string
+	/** True when the currently focused chat is a live background worker. */
+	currentTaskIsBackgroundWorker?: boolean
+	/** Identifies the currently hydrated task generation for incremental event validation. */
+	currentTaskInstanceId?: string
 	currentTaskItem?: HistoryItem
 	currentTaskTodos?: TodoItem[] // Initial todos for the current task
 	apiConfiguration: ProviderSettings
@@ -535,6 +543,7 @@ export interface WebviewMessage {
 		| "ttsEnabled"
 		| "ttsSpeed"
 		| "openKeyboardShortcuts"
+		| "openSpecWorkspace"
 		| "openMcpSettings"
 		| "openProjectMcpSettings"
 		| "restartMcpServer"
@@ -978,6 +987,7 @@ export interface ClineAskUseMcpServer {
 
 export interface ClineApiReqInfo {
 	request?: string
+	status?: "active" | "completed" | "failed" | "cancelled"
 	tokensIn?: number
 	tokensOut?: number
 	cacheWrites?: number

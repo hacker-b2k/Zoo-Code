@@ -13,7 +13,15 @@ import { buildVirtuosoItems, isTaskActivityGroup } from "@src/utils/taskActivity
 import type { VirtuosoItem, TaskActivityGroupData } from "@src/utils/taskActivityGrouping"
 import { deriveTaskActivityViewModel } from "@src/utils/taskActivityViewModel"
 
-import type { ClineAsk, ClineSayTool, ClineMessage, ExtensionMessage, AudioType, SuggestionItem } from "@roo-code/types"
+import type {
+	ClineApiReqInfo,
+	ClineAsk,
+	ClineSayTool,
+	ClineMessage,
+	ExtensionMessage,
+	AudioType,
+	SuggestionItem,
+} from "@roo-code/types"
 import type { CollapseDecision } from "@src/utils/messageSize"
 import { analyzeMessage, isUserMessage, shouldNeverCollapse } from "@src/utils/messageSize"
 import { getCompletionCheckpoint, getSuggestionMode, isRetiredProvider } from "@roo-code/types"
@@ -619,9 +627,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 				lastApiReqStarted.text !== undefined &&
 				lastApiReqStarted.say === "api_req_started"
 			) {
-				const cost = JSON.parse(lastApiReqStarted.text).cost
+				const requestInfo = JSON.parse(lastApiReqStarted.text) as ClineApiReqInfo
 
-				if (cost === undefined) {
+				if (
+					requestInfo.status === "active" ||
+					(requestInfo.status === undefined && requestInfo.cost === undefined)
+				) {
 					return true // API request has not finished yet.
 				}
 			}
@@ -629,6 +640,33 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 
 		return false
 	}, [modifiedMessages, clineAsk, enableButtons, primaryButtonText])
+
+	// `sendingDisabled` is an independent, stateful busy gate. `api_req_started`
+	// sets it to true, but ordinary text/completion messages intentionally do not
+	// alter it. Consequently it used to remain true after the request status had
+	// become terminal: the processing indicator disappeared, yet the next message
+	// was still routed to queueMessage. Keep that gate synchronized with the
+	// provider-neutral request lifecycle rather than waiting for another message.
+	useEffect(() => {
+		const latestApiRequest = findLast(
+			modifiedMessages,
+			(message: ClineMessage) => message.say === "api_req_started",
+		)
+
+		if (!latestApiRequest?.text) return
+
+		try {
+			const { status } = JSON.parse(latestApiRequest.text) as ClineApiReqInfo
+			if (status === "active") {
+				setSendingDisabled(true)
+			} else if (status === "completed" || status === "failed" || status === "cancelled") {
+				setSendingDisabled(false)
+			}
+		} catch {
+			// Historical messages can contain malformed request metadata. Preserve the
+			// legacy state behavior for those snapshots.
+		}
+	}, [modifiedMessages])
 
 	const markFollowUpAsAnswered = useCallback(() => {
 		const lastFollowUpMessage = messagesRef.current.findLast((msg: ClineMessage) => msg.ask === "followup")
@@ -2120,6 +2158,16 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 					}
 				}}
 			/>
+			{isStreaming && (
+				<div
+					className="flex items-center gap-2 px-[15px] py-1 text-xs"
+					role="status"
+					aria-live="polite"
+					style={{ color: "var(--vscode-descriptionForeground)" }}>
+					<span className="codicon codicon-loading codicon-modifier-spin" aria-hidden="true" />
+					{t("chat:apiRequest.processingResponse")}
+				</div>
+			)}
 			{showRetiredProviderWarning && (
 				<div className="px-[15px] py-1">
 					<WarningRow
