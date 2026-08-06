@@ -362,11 +362,17 @@ describe("OrchestrationRuntime.list/count/inbox", () => {
 		rt.completeWorker(snap.workerId, "shipped")
 		// Allow async notify
 		await new Promise((r) => setTimeout(r, 20))
+		// UI breadcrumb only — no full result injection into chat queue.
+		// Results are delivered as a batch at the next reasoning boundary.
 		expect(parentTask.say).toHaveBeenCalled()
-		expect(parentTask.messageQueueService.addMessage).toHaveBeenCalled()
-		const queued = (parentTask.messageQueueService.addMessage as any).mock.calls[0][0] as string
-		expect(queued).toContain("worker_event")
-		expect(queued).toContain("shipped")
+		const sayCall = (parentTask.say as any).mock.calls[0]
+		expect(sayCall[0]).toBe("text")
+		expect(sayCall[1]).toContain("completed")
+		expect(sayCall[1]).toContain("impl")
+		// Full result should NOT be in the breadcrumb
+		expect(sayCall[1]).not.toContain("shipped")
+		// Message queue should NOT be used for one-by-one injection
+		expect(parentTask.messageQueueService.addMessage).not.toHaveBeenCalled()
 	})
 
 	it("handleWorkerApiFailure switches provider via manager", async () => {

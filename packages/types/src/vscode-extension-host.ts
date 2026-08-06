@@ -461,6 +461,17 @@ export type ExtensionState = Pick<
 		/** 1-based ordinal among workers for this parent (spawn order). */
 		index: number
 	}>
+	/** Completed/failed/cancelled worker results for the Worker Results Panel. */
+	workerResults?: Array<{
+		workerId: string
+		name: string
+		role: string
+		kind: string
+		summary: string
+		provider?: string
+		attempt: number
+		ts: number
+	}>
 	/** Last worker the user focused via WorkerSwitcher (workerId), for badge display. */
 	lastFocusedWorkerId?: string
 }

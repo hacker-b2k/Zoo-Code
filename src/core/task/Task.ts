@@ -3108,6 +3108,27 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const isActionableTurn = !!this.lastActionIntent
 			const effectiveIncludeFileDetails = currentIncludeFileDetails && isActionableTurn
 
+			// ─── Worker Results Batch Delivery ───────────────────────────────
+			// At this reasoning boundary, collect all unconsumed worker results
+			// from the ResultInbox and inject them as ONE batch into the context.
+			// This replaces the old one-by-one chat injection pattern.
+			// Results that complete later wait for the next reasoning cycle.
+			let workerResultsBatch = ""
+			if (!this.isBackgroundWorker) {
+				try {
+					const provider = this.providerRef.deref()
+					const runtime = provider?.getOrchestrationRuntime?.()
+					if (runtime) {
+						const unconsumed = runtime.collectResults(this.taskId, true)
+						if (unconsumed && unconsumed !== "No worker results pending.") {
+							workerResultsBatch = unconsumed
+						}
+					}
+				} catch {
+					// Non-fatal: orchestration may not be available
+				}
+			}
+
 			const environmentDetails = await getEnvironmentDetails(this, effectiveIncludeFileDetails)
 
 			// Remove any existing environment_details blocks before adding fresh ones.
@@ -3148,10 +3169,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			}
 
 			// Add environment details as its own text block, separate from tool
-			// results.
+			// results. Also inject any batched worker results at this reasoning boundary.
 			const finalUserContent = [
 				...contentWithoutEnvDetails,
 				...hiddenContextBlocks,
+				...(workerResultsBatch
+					? [{ type: "text" as const, text: `<worker_results>\n${workerResultsBatch}\n</worker_results>` }]
+					: []),
 				{ type: "text" as const, text: environmentDetails },
 			]
 			if (shouldAddUserMessage) {

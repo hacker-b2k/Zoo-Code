@@ -27,6 +27,8 @@ export class CollectResultsTool extends BaseTool<"collect_results"> {
 				return
 			}
 
+			// Default to true (unread only) when param is missing or null.
+			// Models often call collect_results() with no arguments.
 			const unreadOnly =
 				params.unread_only === undefined ||
 				params.unread_only === null ||
