@@ -1,0 +1,675 @@
+import { Anthropic } from "@anthropic-ai/sdk"
+
+import type { ClineAsk, ToolProgressStatus, ToolGroup, ToolName, GenerateImageParams } from "@roo-code/types"
+
+export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
+
+export type AskApproval = (
+	type: ClineAsk,
+	partialMessage?: string,
+	progressStatus?: ToolProgressStatus,
+	forceApproval?: boolean,
+) => Promise<boolean>
+
+export type HandleError = (action: string, error: Error) => Promise<void>
+
+export type PushToolResult = (content: ToolResponse) => void
+
+export type AskFinishSubTaskApproval = () => Promise<boolean>
+
+export interface TextContent {
+	type: "text"
+	content: string
+	partial: boolean
+}
+
+export const toolParamNames = [
+	"command",
+	"path",
+	"content",
+	"regex",
+	"file_pattern",
+	"recursive",
+	"action",
+	"url",
+	"urls",
+	"browser",
+	"reuseExisting",
+	"visible",
+	"coordinate",
+	"text",
+	"server_name",
+	"tool_name",
+	"arguments",
+	"uri",
+	"question",
+	"result",
+	"diff",
+	"mode_slug",
+	"reason",
+	"line",
+	"mode",
+	"message",
+	"cwd",
+	"follow_up",
+	"task",
+	"size",
+	"query",
+	"args",
+	"skill", // skill tool parameter
+	"start_line",
+	"end_line",
+	"todos",
+	"prompt",
+	"image",
+	// read_file parameters (native protocol)
+	"operations", // search_and_replace parameter for multiple operations
+	"patch", // apply_patch parameter
+	"file_path", // search_replace and edit_file parameter
+	"old_string", // search_replace and edit_file parameter
+	"new_string", // search_replace and edit_file parameter
+	"replace_all", // edit tool parameter for replacing all occurrences
+	"expected_replacements", // edit_file parameter for multiple occurrences
+	"timeout", // execute_command parameter
+	"artifact_id", // read_command_output parameter
+	"search", // read_command_output parameter for grep-like search
+	"offset", // read_command_output and read_file parameter
+	"limit", // read_command_output and read_file parameter
+	// read_file indentation mode parameters
+	"indentation",
+	"anchor_line",
+	"max_levels",
+	"include_siblings",
+	"include_header",
+	"max_lines",
+	// read_file legacy format parameter (backward compatibility)
+	"files",
+	"line_ranges",
+	// provider_manage tools
+	"name",
+	"action",
+	"settings",
+	"activate",
+	"key",
+	"value",
+	"profile_name",
+	"secrets",
+	// mcp_manage tools
+	"scope",
+	"intent",
+	"config",
+	"channel",
+	"disabled",
+	// multi-agent orchestration
+	"api_config_name",
+	"fallback_api_config_names",
+	"role",
+	"review_target_id",
+	"include_completed",
+	"unread_only",
+	// Spec Workspace tools (F-004)
+	"spec_id",
+	"doc",
+] as const
+
+export type ToolParamName = (typeof toolParamNames)[number]
+
+/**
+ * Type map defining the native (typed) argument structure for each tool.
+ * Tools not listed here will fall back to `any` for backward compatibility.
+ */
+export type NativeToolArgs = {
+	access_mcp_resource: { server_name: string; uri: string }
+	read_file: import("@roo-code/types").ReadFileToolParams
+	read_command_output: { artifact_id: string; search?: string; offset?: number; limit?: number }
+	attempt_completion: { result: string }
+	execute_command: { command: string; cwd?: string; timeout?: number | null }
+	open_tabs: {
+		urls: string[]
+		browser?: "auto" | "chrome" | "edge"
+		reuseExisting?: boolean
+		visible?: boolean
+	}
+	web_research: {
+		action: "search" | "read_url"
+		query?: string | null
+		url?: string | null
+		max_results?: number | null
+	}
+	open_browser_page: { url: string }
+	read_browser_page: { pageId: string }
+	navigate_browser_page: { pageId: string; url: string }
+	extract_browser_urls: { pageId: string; sameOriginOnly?: boolean | null; limit?: number | null }
+	extract_browser_data: {
+		pageId: string
+		selector?: string | null
+		extractType?: string | null
+		maxRows?: number | null
+	}
+	list_browser_tabs: Record<string, never>
+	click_browser_element: { pageId: string; selector: string }
+	type_browser_text: { pageId: string; selector: string; text: string }
+	click_browser_by_text: { pageId: string; text: string }
+	evaluate_browser_js: { pageId: string; script: string }
+	read_all_browser_tabs: Record<string, never>
+	batch_browser_actions: {
+		pageId: string
+		actions: Array<{ type: string; selector?: string; text?: string; url?: string; script?: string }>
+	}
+	browser_screenshot: { pageId: string; fullPage?: boolean | null }
+	apply_diff: { path: string; diff: string }
+	edit: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
+	search_and_replace: { file_path: string; old_string: string; new_string: string; replace_all?: boolean }
+	search_replace: { file_path: string; old_string: string; new_string: string }
+	edit_file: { file_path: string; old_string: string; new_string: string; expected_replacements?: number }
+	apply_patch: { patch: string }
+	list_files: { path: string; recursive?: boolean }
+	new_task: { mode: string; message: string; todos?: string }
+	spawn_worker: {
+		name: string
+		message: string
+		mode?: string | null
+		api_config_name?: string | null
+		fallback_api_config_names?: string | null
+		role?: string | null
+		review_target_id?: string | null
+	}
+	list_workers: { include_completed?: boolean | string | null }
+	collect_results: { unread_only?: boolean | string | null }
+	cancel_worker: { worker_id: string; reason?: string | null }
+	get_worker_status: { worker_id: string }
+	ask_followup_question: {
+		question: string
+		follow_up: Array<{ text: string; mode?: string }>
+	}
+	codebase_search: { query: string; path?: string }
+	generate_image: GenerateImageParams
+	run_slash_command: { command: string; args?: string }
+	skill: { skill: string; args?: string }
+	search_files: { path: string; regex: string; file_pattern?: string | null }
+	switch_mode: { mode_slug: string; reason: string }
+	update_todo_list: { todos: string }
+	use_mcp_tool: { server_name: string; tool_name: string; arguments?: Record<string, unknown> }
+	write_to_file: { path: string; content: string }
+	list_specs: Record<string, never>
+	read_spec: {
+		spec_id?: string | null
+		doc: string
+		mode?: "full" | "headings" | "history" | string | null
+		revision?: number | null
+	}
+	/**
+	 * title: required for create (spec_id null); optional on update.
+	 * mode: replace (default) | append | upsert_section | search_replace (F-021).
+	 */
+	write_spec: {
+		title?: string | null
+		spec_id?: string | null
+		doc: string
+		content?: string
+		mode?: string | null
+		section_heading?: string | null
+		old_string?: string | null
+		new_string?: string | null
+		replace_all?: boolean | null
+		dry_run?: boolean | null
+		replacements?: Array<{ old_string: string; new_string: string; replace_all?: boolean }> | null
+	}
+	/** F-022 / F-022b: delete one or many virtual packs. */
+	delete_spec: {
+		spec_id?: string | null
+		spec_ids?: string[] | null
+		delete_all?: boolean | null
+		title_contains?: string | null
+	}
+	list_provider_profiles: Record<string, never>
+	get_provider_profile: { name: string }
+	list_provider_types: Record<string, never>
+	manage_provider_profile: {
+		action: "create" | "update" | "upsert"
+		name: string
+		activate?: boolean
+		settings: Record<string, unknown>
+		secrets?: Record<string, string>
+	}
+	set_provider_secret: { name: string; key: string; value?: string }
+	activate_provider_profile: { name: string }
+	delete_provider_profile: { name: string }
+	set_mode_provider: { mode_slug: string; name: string }
+	list_mcp_config: { scope?: "project" | "global" | "all" }
+	get_mcp_server: { name: string; scope: "project" | "global" }
+	manage_mcp_server: {
+		action: "admit" | "update" | "patch"
+		name: string
+		scope: "project" | "global"
+		intent?: "install_only" | "start" | "preserve"
+		config: Record<string, unknown>
+	}
+	set_mcp_secret: {
+		name: string
+		scope: "project" | "global"
+		channel: "env" | "header"
+		key: string
+		value?: string
+	}
+	toggle_mcp_server: { name: string; scope: "project" | "global"; disabled: boolean }
+	delete_mcp_server: { name: string; scope: "project" | "global" }
+	refresh_mcp_servers: Record<string, never>
+}
+
+/**
+ * Generic ToolUse interface that provides proper typing for both protocols.
+ *
+ * @template TName - The specific tool name, which determines the nativeArgs type
+ */
+export interface ToolUse<TName extends ToolName = ToolName> {
+	type: "tool_use"
+	id?: string // Optional ID to track tool calls
+	name: TName
+	/**
+	 * The original tool name as called by the model (e.g. an alias like "edit_file"),
+	 * if it differs from the canonical tool name used for execution.
+	 * Used to preserve tool names in API conversation history.
+	 */
+	originalName?: string
+	// params is a partial record, allowing only some or none of the possible parameters to be used
+	params: Partial<Record<ToolParamName, string>>
+	partial: boolean
+	// nativeArgs is properly typed based on TName if it's in NativeToolArgs, otherwise never
+	nativeArgs?: TName extends keyof NativeToolArgs ? NativeToolArgs[TName] : never
+	/**
+	 * Flag indicating whether the tool call used a legacy/deprecated format.
+	 * Used for telemetry tracking to monitor migration from old formats.
+	 */
+	usedLegacyFormat?: boolean
+}
+
+/**
+ * Represents a native MCP tool call from the model.
+ * In native mode, MCP tools are called directly with their prefixed name (e.g., "mcp_serverName_toolName")
+ * rather than through the use_mcp_tool wrapper. This type preserves the original tool name
+ * so it appears correctly in API conversation history.
+ */
+export interface McpToolUse {
+	type: "mcp_tool_use"
+	id?: string // Tool call ID from the API
+	/** The original tool name from the API (e.g., "mcp_serverName_toolName") */
+	name: string
+	/** Extracted server name from the tool name */
+	serverName: string
+	/** Extracted tool name from the tool name */
+	toolName: string
+	/** Arguments passed to the MCP tool */
+	arguments: Record<string, unknown>
+	partial: boolean
+}
+
+export interface ExecuteCommandToolUse extends ToolUse<"execute_command"> {
+	name: "execute_command"
+	// Pick<Record<ToolParamName, string>, "command"> makes "command" required, but Partial<> makes it optional
+	params: Partial<Pick<Record<ToolParamName, string>, "command" | "cwd" | "timeout">>
+}
+
+export interface OpenTabsToolUse extends ToolUse<"open_tabs"> {
+	name: "open_tabs"
+	params: Partial<Pick<Record<ToolParamName, string>, "urls" | "browser" | "reuseExisting" | "visible">>
+}
+
+export interface ReadFileToolUse extends ToolUse<"read_file"> {
+	name: "read_file"
+	params: Partial<
+		Pick<
+			Record<ToolParamName, string>,
+			| "args"
+			| "path"
+			| "start_line"
+			| "end_line"
+			| "mode"
+			| "offset"
+			| "limit"
+			| "indentation"
+			| "anchor_line"
+			| "max_levels"
+			| "include_siblings"
+			| "include_header"
+		>
+	>
+}
+
+export interface WriteToFileToolUse extends ToolUse<"write_to_file"> {
+	name: "write_to_file"
+	params: Partial<Pick<Record<ToolParamName, string>, "path" | "content">>
+}
+
+export interface CodebaseSearchToolUse extends ToolUse<"codebase_search"> {
+	name: "codebase_search"
+	params: Partial<Pick<Record<ToolParamName, string>, "query" | "path">>
+}
+
+export interface SearchFilesToolUse extends ToolUse<"search_files"> {
+	name: "search_files"
+	params: Partial<Pick<Record<ToolParamName, string>, "path" | "regex" | "file_pattern">>
+}
+
+export interface ListFilesToolUse extends ToolUse<"list_files"> {
+	name: "list_files"
+	params: Partial<Pick<Record<ToolParamName, string>, "path" | "recursive">>
+}
+
+export interface UseMcpToolToolUse extends ToolUse<"use_mcp_tool"> {
+	name: "use_mcp_tool"
+	params: Partial<Pick<Record<ToolParamName, string>, "server_name" | "tool_name" | "arguments">>
+}
+
+export interface AccessMcpResourceToolUse extends ToolUse<"access_mcp_resource"> {
+	name: "access_mcp_resource"
+	params: Partial<Pick<Record<ToolParamName, string>, "server_name" | "uri">>
+}
+
+export interface AskFollowupQuestionToolUse extends ToolUse<"ask_followup_question"> {
+	name: "ask_followup_question"
+	params: Partial<Pick<Record<ToolParamName, string>, "question" | "follow_up">>
+}
+
+export interface AttemptCompletionToolUse extends ToolUse<"attempt_completion"> {
+	name: "attempt_completion"
+	params: Partial<Pick<Record<ToolParamName, string>, "result">>
+}
+
+export interface SwitchModeToolUse extends ToolUse<"switch_mode"> {
+	name: "switch_mode"
+	params: Partial<Pick<Record<ToolParamName, string>, "mode_slug" | "reason">>
+}
+
+export interface NewTaskToolUse extends ToolUse<"new_task"> {
+	name: "new_task"
+	params: Partial<Pick<Record<ToolParamName, string>, "mode" | "message" | "todos">>
+}
+
+export interface RunSlashCommandToolUse extends ToolUse<"run_slash_command"> {
+	name: "run_slash_command"
+	params: Partial<Pick<Record<ToolParamName, string>, "command" | "args">>
+}
+
+export interface SkillToolUse extends ToolUse<"skill"> {
+	name: "skill"
+	params: Partial<Pick<Record<ToolParamName, string>, "skill" | "args">>
+}
+
+export interface GenerateImageToolUse extends ToolUse<"generate_image"> {
+	name: "generate_image"
+	params: Partial<Pick<Record<ToolParamName, string>, "prompt" | "path" | "image">>
+}
+
+// Define tool group configuration
+export type ToolGroupConfig = {
+	tools: readonly string[]
+	alwaysAvailable?: boolean // Whether this group is always available and shouldn't show in prompts view
+	customTools?: readonly string[] // Opt-in only tools - only available when explicitly included via model's includedTools
+}
+
+export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
+	execute_command: "run commands",
+	open_tabs: "open browser tabs",
+	web_research: "web research",
+	open_browser_page: "open browser page",
+	read_browser_page: "read browser page",
+	navigate_browser_page: "navigate browser page",
+	extract_browser_urls: "extract browser URLs",
+	extract_browser_data: "extract browser data",
+	list_browser_tabs: "list browser tabs",
+	click_browser_element: "click browser element",
+	type_browser_text: "type browser text",
+	click_browser_by_text: "click browser by text",
+	evaluate_browser_js: "evaluate browser JS",
+	read_all_browser_tabs: "read all browser tabs",
+	batch_browser_actions: "batch browser actions",
+	browser_screenshot: "browser screenshot",
+	read_file: "read files",
+	read_command_output: "read command output",
+	write_to_file: "write files",
+	apply_diff: "apply changes",
+	edit: "edit files",
+	search_and_replace: "apply changes using search and replace",
+	search_replace: "apply single search and replace",
+	edit_file: "edit files using search and replace",
+	apply_patch: "apply patches using codex format",
+	search_files: "search files",
+	list_files: "list files",
+	use_mcp_tool: "use mcp tools",
+	access_mcp_resource: "access mcp resources",
+	ask_followup_question: "ask questions",
+	attempt_completion: "complete tasks",
+	switch_mode: "switch modes",
+	new_task: "create new task",
+	spawn_worker: "spawn background worker",
+	list_workers: "list workers",
+	collect_results: "collect worker results",
+	cancel_worker: "cancel background worker",
+	get_worker_status: "get worker live status",
+	codebase_search: "codebase search",
+	update_todo_list: "update todo list",
+	list_specs: "list virtual specs",
+	read_spec: "read virtual spec",
+	write_spec: "write virtual spec",
+	delete_spec: "delete virtual spec",
+	run_slash_command: "run slash command",
+	skill: "load skill",
+	generate_image: "generate images",
+	custom_tool: "use custom tools",
+	list_provider_profiles: "list provider profiles",
+	get_provider_profile: "get provider profile",
+	list_provider_types: "list provider types",
+	manage_provider_profile: "manage provider profile",
+	set_provider_secret: "set provider secret",
+	activate_provider_profile: "activate provider profile",
+	delete_provider_profile: "delete provider profile",
+	set_mode_provider: "set mode provider",
+	list_mcp_config: "list MCP config",
+	get_mcp_server: "get MCP server",
+	manage_mcp_server: "manage MCP server",
+	set_mcp_secret: "set MCP secret",
+	toggle_mcp_server: "toggle MCP server",
+	delete_mcp_server: "delete MCP server",
+	refresh_mcp_servers: "refresh MCP servers",
+} as const
+
+// Define available tool groups.
+export const TOOL_GROUPS: Record<ToolGroup, ToolGroupConfig> = {
+	read: {
+		tools: ["read_file", "search_files", "list_files", "codebase_search"],
+	},
+	edit: {
+		tools: ["apply_diff", "write_to_file", "generate_image"],
+		customTools: ["edit", "search_replace", "edit_file", "apply_patch"],
+	},
+	command: {
+		tools: ["execute_command", "open_tabs", "web_research", "read_command_output"],
+	},
+	browser: {
+		tools: [
+			"open_browser_page",
+			"read_browser_page",
+			"navigate_browser_page",
+			"extract_browser_urls",
+			"extract_browser_data",
+			"list_browser_tabs",
+			"click_browser_element",
+			"type_browser_text",
+			"click_browser_by_text",
+			"evaluate_browser_js",
+			"read_all_browser_tabs",
+			"batch_browser_actions",
+			"browser_screenshot",
+		],
+		alwaysAvailable: true,
+	},
+	mcp: {
+		tools: ["use_mcp_tool", "access_mcp_resource"],
+	},
+	modes: {
+		tools: [
+			"switch_mode",
+			"new_task",
+			"spawn_worker",
+			"list_workers",
+			"collect_results",
+			"cancel_worker",
+			"get_worker_status",
+		],
+		alwaysAvailable: true,
+	},
+	provider_manage: {
+		tools: [
+			"list_provider_profiles",
+			"get_provider_profile",
+			"list_provider_types",
+			"manage_provider_profile",
+			"set_provider_secret",
+			"activate_provider_profile",
+			"delete_provider_profile",
+			"set_mode_provider",
+		],
+	},
+	mcp_manage: {
+		tools: [
+			"list_mcp_config",
+			"get_mcp_server",
+			"manage_mcp_server",
+			"set_mcp_secret",
+			"toggle_mcp_server",
+			"delete_mcp_server",
+			"refresh_mcp_servers",
+		],
+	},
+}
+
+// Tools that are always available to all modes.
+export const ALWAYS_AVAILABLE_TOOLS: ToolName[] = [
+	"ask_followup_question",
+	"attempt_completion",
+	"switch_mode",
+	"new_task",
+	"spawn_worker",
+	"list_workers",
+	"collect_results",
+	"cancel_worker",
+	"get_worker_status",
+	"update_todo_list",
+	"list_specs",
+	"read_spec",
+	"write_spec",
+	"delete_spec",
+	"run_slash_command",
+	"skill",
+	"web_research",
+	"open_browser_page",
+	"read_browser_page",
+	"navigate_browser_page",
+	"extract_browser_urls",
+	"extract_browser_data",
+	"list_browser_tabs",
+	"click_browser_element",
+	"type_browser_text",
+	"click_browser_by_text",
+	"evaluate_browser_js",
+	"read_all_browser_tabs",
+	"batch_browser_actions",
+	"browser_screenshot",
+] as const
+
+/**
+ * Central registry of tool aliases.
+ * Maps alias name -> canonical tool name.
+ *
+ * This allows models to use alternative names for tools (e.g., "edit_file" instead of "apply_diff").
+ * When a model calls a tool by its alias, the system resolves it to the canonical name for execution,
+ * but preserves the alias in API conversation history for consistency.
+ *
+ * To add a new alias, simply add an entry here. No other files need to be modified.
+ */
+export const TOOL_ALIASES: Record<string, ToolName> = {
+	write_file: "write_to_file",
+	search_and_replace: "edit",
+
+	// Resilience aliases: several models overfit on other agents' tool-name
+	// conventions and hallucinate `bash_tool` / `bash` / `shell` /
+	// `run_command` instead of the registered `execute_command`. Left
+	// unmappable, these calls fall through to the unknown-tool error, which
+	// manifests mid-session as a string of "Tool not found" failures and then
+	// forced model retries against the same invalid name. Map them to the
+	// real tool so the call still lands in the right place.
+	bash_tool: "execute_command",
+	bash: "execute_command",
+	shell_command: "execute_command",
+	run_command: "execute_command",
+
+	// Web research aliases (user.txt Round 3): models hallucinated
+	// `web_fetch` / `fetch_url` / `read_url` / `browse_url` / `open_url` /
+	// `search_web` instead of the registered `web_research` tool. The model
+	// was trained on other assistants where `web_fetch` is the canonical name
+	// for reading a URL. Map them so the call resolves to `web_research` with
+	// action "read_url" (handled downstream in the parser/tool layer).
+	web_fetch: "web_research",
+	fetch_url: "web_research",
+	read_url: "web_research",
+	browse_url: "web_research",
+	open_url: "web_research",
+	search_web: "web_research",
+	browse: "web_research",
+
+	// Common tool-name variations from other AI coding assistants.
+	read_file_content: "read_file",
+	load_file: "read_file",
+	list_files_recursive: "list_files",
+	list_files_tree: "list_files",
+	search_code: "search_files",
+	grep_code: "search_files",
+	find_in_codebase: "search_files",
+	create_file: "write_to_file",
+} as const
+
+export type DiffResult =
+	| { success: true; content: string; failParts?: DiffResult[] }
+	| ({
+			success: false
+			error?: string
+			details?: {
+				similarity?: number
+				threshold?: number
+				matchedRange?: { start: number; end: number }
+				searchContent?: string
+				bestMatch?: string
+			}
+			failParts?: DiffResult[]
+	  } & ({ error: string } | { failParts: DiffResult[] }))
+
+export interface DiffItem {
+	content: string
+	startLine?: number
+}
+
+export interface DiffStrategy {
+	/**
+	 * Get the name of this diff strategy for analytics and debugging
+	 * @returns The name of the diff strategy
+	 */
+	getName(): string
+
+	/**
+	 * Apply a diff to the original content
+	 * @param originalContent The original file content
+	 * @param diffContent The diff content in the strategy's format (string for legacy, DiffItem[] for new)
+	 * @param startLine Optional line number where the search block starts. If not provided, searches the entire file.
+	 * @param endLine Optional line number where the search block ends. If not provided, searches the entire file.
+	 * @returns A DiffResult object containing either the successful result or error details
+	 */
+	applyDiff(
+		originalContent: string,
+		diffContent: string | DiffItem[],
+		startLine?: number,
+		endLine?: number,
+	): Promise<DiffResult>
+
+	getProgressStatus?(toolUse: ToolUse, result?: any): ToolProgressStatus
+}

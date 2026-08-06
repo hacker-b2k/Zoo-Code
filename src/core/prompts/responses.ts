@@ -1,0 +1,353 @@
+import { Anthropic } from "@anthropic-ai/sdk"
+import * as path from "path"
+import * as diff from "diff"
+import { RooIgnoreController, LOCK_TEXT_SYMBOL } from "../ignore/RooIgnoreController"
+import { RooProtectedController } from "../protect/RooProtectedController"
+import type { ActionIntent } from "./detectActionIntent"
+
+export const formatResponse = {
+	toolDenied: () =>
+		JSON.stringify({
+			status: "denied",
+			message: "The user denied this operation.",
+		}),
+
+	toolDeniedWithFeedback: (feedback?: string) =>
+		JSON.stringify({
+			status: "denied",
+			feedback,
+		}),
+
+	toolApprovedWithFeedback: (feedback?: string) =>
+		JSON.stringify({
+			status: "approved",
+			feedback,
+		}),
+
+	toolError: (error?: string) =>
+		JSON.stringify({
+			status: "error",
+			message: "The tool execution failed",
+			error,
+		}),
+
+	rooIgnoreError: (path: string) =>
+		JSON.stringify({
+			status: "error",
+			type: "access_denied",
+			message: "Access blocked by .rooignore",
+			path,
+			suggestion: "Try to continue without this file, or ask the user to update the .rooignore file",
+		}),
+
+	/**
+	 * Recovery prompt for a turn that produced text/reasoning but no tool call.
+	 *
+	 * When the user's request was classified as actionable, the retry names the
+	 * detected intent and the expected tool category. Re-sending an identical
+	 * context-free sentence to a model that has already misjudged the turn gives
+	 * it nothing new to act on, which is how a task stalls until the mistake
+	 * limit is reached.
+	 *
+	 * `intent` is undefined for questions and explanations, in which case the
+	 * original generic wording is used unchanged — a conversational turn must
+	 * not be pushed into calling a tool.
+	 */
+	noToolsUsed: (intent?: ActionIntent, attemptCount?: number) => {
+		const instructions = getToolInstructionsReminder()
+
+		const intentSection = intent
+			? `
+
+# Detected Intent
+
+The user's request requires you to ${intent.summary} (signal: "${intent.matchedVerb}").
+This is an action, not a question. An explanation alone does not satisfy it.
+
+Expected tool category: ${intent.category}
+Appropriate tools: ${intent.expectedTools.join(", ")}
+
+Call one of these tools now. If one of them is not the right fit, call a different tool that performs the action — but do not reply with prose describing what should be done instead of doing it.`
+			: ""
+
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `
+
+⚠️ CRITICAL: This is attempt ${attemptCount} with no tool call. Do not output reasoning, plans, XML, JSON, or an explanation as message text. Emit only a native structured tool call. If you genuinely cannot proceed, call ask_followup_question; if the work is finished, call attempt_completion.`
+				: ""
+
+		return `[ERROR] You did not use a tool in your previous response! Please retry with a tool use.
+${intentSection}
+${instructions}
+${escalation}
+
+# Next Steps
+
+If you have completed the user's task, use the attempt_completion tool.
+If you require additional information from the user, use the ask_followup_question tool.
+Otherwise, if you have not completed the task and do not need additional information, then proceed with the next step of the task.
+(This is an automated message, so do not respond to it conversationally.)`
+	},
+
+	/**
+	 * Prompt injected when text-mode tool calls are needed as a fallback.
+	 * Tells the model how to write tool calls in a text format the
+	 * TextToolCallParser can recover.
+	 *
+	 * CRITICAL: This prompt MUST NOT reveal provider architecture to the
+	 * model (no "your provider does not support X"). Saying that causes
+	 * identity confusion — the model breaks character and says "I'm Claude,
+	 * I don't have tools". Instead, we simply present the text format as an
+	 * available alternative.
+	 */
+	textOnlyMode: () =>
+		`[SYSTEM NOTE] If native tool calling is not available, you can write tool calls using this format:
+
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+</tool_call>
+
+Example — writing a file:
+<tool_call>
+{"name": "write_to_file", "arguments": {"path": "src/index.ts", "content": "console.log('hello');"}}
+</tool_call>
+
+Example — reading a file:
+<tool_call>
+{"name": "read_file", "arguments": {"path": "src/index.ts"}}
+</tool_call>
+
+Example — executing a command:
+<tool_call>
+{"name": "execute_command", "arguments": {"command": "npm install"}}
+</tool_call>
+
+Rules:
+- Each tool call MUST be wrapped in <tool_call>...</tool_call> tags.
+- The JSON inside MUST have "name" and "arguments" keys.
+- You can include multiple tool calls in a single response.
+- Do NOT write code blocks as plain text when you intend to create a file — use write_to_file instead.
+- If you have completed the task, use attempt_completion with a summary of what was done.
+(This is an automated message, so do not respond to it conversationally.)`,
+
+	tooManyMistakes: (feedback?: string) =>
+		JSON.stringify({
+			status: "guidance",
+			feedback,
+		}),
+
+	missingToolParameterError: (paramName: string, toolName?: string, attemptCount?: number) => {
+		const instructions = getToolInstructionsReminder()
+		const escalation =
+			attemptCount && attemptCount > 1
+				? `\n\n⚠️ CRITICAL: This is attempt ${attemptCount}. You MUST provide ALL required parameters in this call. Do NOT call this tool again with missing values. Read the tool schema carefully.`
+				: ""
+		const toolRef = toolName ? ` for tool '${toolName}'` : ""
+
+		return `Missing value for required parameter '${paramName}'${toolRef}. You must provide a non-empty string value for this parameter.${escalation}\n\n${instructions}`
+	},
+
+	invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
+		JSON.stringify({
+			status: "error",
+			type: "invalid_argument",
+			message: "Invalid JSON argument",
+			server: serverName,
+			tool: toolName,
+			suggestion: "Please retry with a properly formatted JSON argument",
+		}),
+
+	unknownMcpToolError: (serverName: string, toolName: string, availableTools: string[]) =>
+		JSON.stringify({
+			status: "error",
+			type: "unknown_tool",
+			message: "Tool does not exist on server",
+			server: serverName,
+			tool: toolName,
+			available_tools: availableTools.length > 0 ? availableTools : [],
+			suggestion: "Please use one of the available tools or check if the server is properly configured",
+		}),
+
+	/**
+	 * Recovery payload for a built-in (non-MCP) tool that is unknown or not
+	 * allowed for the current mode. Lists ranked alternatives and discourages
+	 * shell fallback when file tools exist.
+	 */
+	unknownToolError: (
+		toolName: string,
+		availableAlternatives: string[],
+		options?: {
+			reason?: "unknown" | "mode"
+			mode?: string
+			discourageShellFallback?: boolean
+			recoveryMessage?: string
+		},
+	) => {
+		const discourageShell = options?.discourageShellFallback !== false
+		return JSON.stringify({
+			status: "error",
+			type: "unknown_tool",
+			message:
+				options?.recoveryMessage ??
+				`This tool is unavailable. Available alternatives are: ${
+					availableAlternatives.length > 0 ? availableAlternatives.join(", ") : "(none)"
+				}.`,
+			tool: toolName,
+			reason: options?.reason ?? "unknown",
+			mode: options?.mode,
+			available_tools: availableAlternatives.length > 0 ? availableAlternatives : [],
+			suggestion: discourageShell
+				? "Retry with one of the available tools using native tool calling. Do not use execute_command (shell) for file read/list/search when read_file, list_files, or search_files are available."
+				: "Retry with one of the available tools using native tool calling.",
+		})
+	},
+
+	unknownMcpServerError: (serverName: string, availableServers: string[]) =>
+		JSON.stringify({
+			status: "error",
+			type: "unknown_server",
+			message: "Server is not configured",
+			server: serverName,
+			available_servers: availableServers.length > 0 ? availableServers : [],
+		}),
+
+	toolResult: (
+		text: string,
+		images?: string[],
+	): string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam> => {
+		if (images && images.length > 0) {
+			const textBlock: Anthropic.TextBlockParam = { type: "text", text }
+			const imageBlocks: Anthropic.ImageBlockParam[] = formatImagesIntoBlocks(images)
+			// Placing images after text leads to better results
+			return [textBlock, ...imageBlocks]
+		} else {
+			return text
+		}
+	},
+
+	imageBlocks: (images?: string[]): Anthropic.ImageBlockParam[] => {
+		return formatImagesIntoBlocks(images)
+	},
+
+	formatFilesList: (
+		absolutePath: string,
+		files: string[],
+		didHitLimit: boolean,
+		rooIgnoreController: RooIgnoreController | undefined,
+		showRooIgnoredFiles: boolean,
+		rooProtectedController?: RooProtectedController,
+	): string => {
+		const sorted = files
+			.map((file) => {
+				// convert absolute path to relative path
+				const relativePath = path.relative(absolutePath, file).toPosix()
+				return file.endsWith("/") ? relativePath + "/" : relativePath
+			})
+			// Sort so files are listed under their respective directories to make it clear what files are children of what directories. Since we build file list top down, even if file list is truncated it will show directories that cline can then explore further.
+			.sort((a, b) => {
+				const aParts = a.split("/") // only works if we use toPosix first
+				const bParts = b.split("/")
+				for (let i = 0; i < Math.min(aParts.length, bParts.length); i++) {
+					if (aParts[i] !== bParts[i]) {
+						// If one is a directory and the other isn't at this level, sort the directory first
+						if (i + 1 === aParts.length && i + 1 < bParts.length) {
+							return -1
+						}
+						if (i + 1 === bParts.length && i + 1 < aParts.length) {
+							return 1
+						}
+						// Otherwise, sort alphabetically
+						return aParts[i].localeCompare(bParts[i], undefined, { numeric: true, sensitivity: "base" })
+					}
+				}
+				// If all parts are the same up to the length of the shorter path,
+				// the shorter one comes first
+				return aParts.length - bParts.length
+			})
+
+		let rooIgnoreParsed: string[] = sorted
+
+		if (rooIgnoreController) {
+			rooIgnoreParsed = []
+			for (const filePath of sorted) {
+				// path is relative to absolute path, not cwd
+				// validateAccess expects either path relative to cwd or absolute path
+				// otherwise, for validating against ignore patterns like "assets/icons", we would end up with just "icons", which would result in the path not being ignored.
+				const absoluteFilePath = path.resolve(absolutePath, filePath)
+				const isIgnored = !rooIgnoreController.validateAccess(absoluteFilePath)
+
+				if (isIgnored) {
+					// If file is ignored and we're not showing ignored files, skip it
+					if (!showRooIgnoredFiles) {
+						continue
+					}
+					// Otherwise, mark it with a lock symbol
+					rooIgnoreParsed.push(LOCK_TEXT_SYMBOL + " " + filePath)
+				} else {
+					// Check if file is write-protected (only for non-ignored files)
+					const isWriteProtected = rooProtectedController?.isWriteProtected(absoluteFilePath) || false
+					if (isWriteProtected) {
+						rooIgnoreParsed.push("🛡️ " + filePath)
+					} else {
+						rooIgnoreParsed.push(filePath)
+					}
+				}
+			}
+		}
+		if (didHitLimit) {
+			return `${rooIgnoreParsed.join(
+				"\n",
+			)}\n\n(File list truncated. Use list_files on specific subdirectories if you need to explore further.)`
+		} else if (rooIgnoreParsed.length === 0 || (rooIgnoreParsed.length === 1 && rooIgnoreParsed[0] === "")) {
+			return "No files found."
+		} else {
+			return rooIgnoreParsed.join("\n")
+		}
+	},
+
+	createPrettyPatch: (filename = "file", oldStr?: string, newStr?: string) => {
+		// strings cannot be undefined or diff throws exception
+		const patch = diff.createPatch(filename.toPosix(), oldStr || "", newStr || "", undefined, undefined, {
+			context: 3,
+		})
+		const lines = patch.split("\n")
+		const prettyPatchLines = lines.slice(4)
+		return prettyPatchLines.join("\n")
+	},
+}
+
+// to avoid circular dependency
+const formatImagesIntoBlocks = (images?: string[]): Anthropic.ImageBlockParam[] => {
+	return images
+		? images.map((dataUrl) => {
+				// data:image/png;base64,base64string
+				const [rest, base64] = dataUrl.split(",")
+				const mimeType = rest.split(":")[1].split(";")[0]
+				return {
+					type: "image",
+					source: { type: "base64", media_type: mimeType, data: base64 },
+				} as Anthropic.ImageBlockParam
+			})
+		: []
+}
+
+const toolUseInstructionsReminderNative = `# Reminder: Instructions for Tool Use
+
+Tools are invoked using the platform's native structured tool calling mechanism (the tool_calls / function-calling API). Each tool requires specific parameters as defined in the tool schemas provided via the API tools parameter.
+
+If you wrote a tool call as text, XML markup, or a JSON block inside your message content (e.g. <tool_call>...</tool_call>, <function=name>, <parameter=key>, <invoke name="...">, or a \`\`\`json block), that was invalid — it was not executed as a tool call. Re-issue the same call now as a structured tool_calls entry.
+
+Always ensure you provide all required parameters for the tool you wish to use.
+
+Acting outranks describing. When a tool can perform what the user asked for, call
+it instead of explaining how it would be done — a description of the change is
+not the change. Reserve prose-only replies for questions, explanations, and
+genuine ambiguity that ask_followup_question should resolve.`
+
+/**
+ * Gets the tool use instructions reminder.
+ */
+function getToolInstructionsReminder(): string {
+	return toolUseInstructionsReminderNative
+}

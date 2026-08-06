@@ -1,0 +1,879 @@
+import { Anthropic } from "@anthropic-ai/sdk"
+import OpenAI, { AzureOpenAI } from "openai"
+import axios from "axios"
+
+import {
+	type ModelInfo,
+	azureOpenAiDefaultApiVersion,
+	mergeOpenAiCompatibleModelInfo,
+	DEEP_SEEK_DEFAULT_TEMPERATURE,
+	OPENAI_AZURE_AI_INFERENCE_PATH,
+} from "@roo-code/types"
+
+import type { ApiHandlerOptions } from "../../shared/api"
+import { Package } from "../../shared/package"
+
+import { TagMatcher } from "../../utils/tag-matcher"
+import { sanitizeOpenAiCallId } from "../../utils/tool-id"
+
+import { convertToOpenAiMessages } from "../transform/openai-format"
+import { convertToR1Format } from "../transform/r1-format"
+import { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
+import { getModelParams } from "../transform/model-params"
+
+import { DEFAULT_HEADERS } from "./constants"
+import { BaseProvider } from "./base-provider"
+import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
+import { handleOpenAIError } from "./utils/openai-error-handler"
+import { extractReasoningFromDelta } from "./utils/extract-reasoning"
+import { analyzeOpenAiCompatibleBaseUrl, getOpenAiCompatibleModelsUrl } from "./utils/openai-base-url"
+import { withInferredReasoningCapabilities } from "./utils/reasoning-capabilities"
+
+// TODO: Rename this to OpenAICompatibleHandler. Also, I think the
+// `OpenAINativeHandler` can subclass from this, since it's obviously
+// compatible with the OpenAI API. We can also rename it to `OpenAIHandler`.
+export class OpenAiHandler extends BaseProvider implements SingleCompletionHandler {
+	protected options: ApiHandlerOptions
+	protected client: OpenAI
+	private readonly providerName = "OpenAI"
+	/**
+	 * Optional per-request tool-call id normalizer. Set to sanitizeOpenAiCallId for
+	 * reasoning-capable (preserveReasoning) providers that enforce strict id format;
+	 * undefined (no-op) for all other OpenAI-compatible providers.
+	 */
+	protected _toolCallIdNormalizer: ((id: string) => string) | undefined
+
+	constructor(options: ApiHandlerOptions) {
+		super()
+		this.options = options
+
+		const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
+		const baseURL = analyzedBaseUrl.baseUrl || this.options.openAiBaseUrl || "https://api.openai.com/v1"
+		const apiKey = this.options.openAiApiKey || "not-provided"
+		// When no real API key is provided, this is a free/no-auth endpoint (e.g., g4f.space, pollinations.ai).
+		// We need to strip the Authorization header so the server doesn't reject the fake key.
+		const isFreeEndpoint = !this.options.openAiApiKey
+		const isAzureAiInference = analyzedBaseUrl.isAzureAiInference
+		const isAzureOpenAi = analyzedBaseUrl.isAzureOpenAi || options.openAiUseAzure
+
+		const headers = {
+			...DEFAULT_HEADERS,
+			"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
+			"X-Title": "Roo Code",
+			...(this.options.openAiHeaders || {}),
+		}
+
+		// Custom fetch wrapper that strips the Authorization header for free/no-auth endpoints.
+		// The OpenAI SDK always adds `Authorization: Bearer <apiKey>` internally, but free APIs
+		// (like g4f.space) reject fake keys with 401 Unauthorized.
+		const freeEndpointFetch = isFreeEndpoint
+			? async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+					const newHeaders = new Headers(init?.headers)
+					newHeaders.delete("authorization")
+					return globalThis.fetch(url, { ...init, headers: newHeaders })
+				}
+			: undefined
+
+		if (isAzureAiInference) {
+			// Azure AI Inference Service (e.g., for DeepSeek) uses a different path structure
+			this.client = new OpenAI({
+				baseURL,
+				apiKey,
+				defaultHeaders: headers,
+				defaultQuery: { "api-version": this.options.azureApiVersion || "2024-05-01-preview" },
+				timeout: this.timeoutMs,
+				...(freeEndpointFetch ? { fetch: freeEndpointFetch } : {}),
+			})
+		} else if (isAzureOpenAi) {
+			// Azure API shape slightly differs from the core API shape:
+			// https://github.com/openai/openai-node?tab=readme-ov-file#microsoft-azure-openai
+			this.client = new AzureOpenAI({
+				baseURL,
+				apiKey,
+				apiVersion: this.options.azureApiVersion || azureOpenAiDefaultApiVersion,
+				defaultHeaders: headers,
+				timeout: this.timeoutMs,
+			})
+		} else {
+			this.client = new OpenAI({
+				baseURL,
+				apiKey,
+				defaultHeaders: headers,
+				timeout: this.timeoutMs,
+				...(freeEndpointFetch ? { fetch: freeEndpointFetch } : {}),
+			})
+		}
+	}
+
+	override async *createMessage(
+		systemPrompt: string,
+		messages: Anthropic.Messages.MessageParam[],
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): ApiStream {
+		const { info: modelInfo, reasoning } = this.getModel()
+		const modelUrl = this.options.openAiBaseUrl ?? ""
+		const modelId = this.options.openAiModelId ?? ""
+		const enabledR1Format = this.options.openAiR1FormatEnabled ?? false
+		const isAzureAiInference = this._isAzureAiInference(modelUrl)
+		const deepseekReasoner = modelId.includes("deepseek-reasoner") || enabledR1Format
+		// Capability-aware reasoning preservation: any OpenAI-compatible model whose
+		// ModelInfo explicitly opts into `preserveReasoning` needs reasoning_content
+		// carried across multi-turn tool-call continuations. Route those through the
+		// R1 converter with mergeToolResultText so interleaved thinking survives
+		// tool results. When the capability is unknown/absent, behaviour is unchanged.
+		const preserveReasoning = modelInfo.preserveReasoning === true
+		const useR1Format = deepseekReasoner || preserveReasoning
+		// mergeToolResultText is required for interleaved-thinking models (the
+		// preserveReasoning path) but is left off for the legacy deepseek-reasoner /
+		// openAiR1FormatEnabled path to avoid changing long-standing behaviour.
+		const r1FormatOptions = preserveReasoning ? { mergeToolResultText: true } : undefined
+		// Reasoning-capable (preserveReasoning) providers require valid tool-call ids on
+		// both the outgoing tool_calls and the tool result references. Normalize them so
+		// multi-turn continuations don't get rejected. Other providers keep raw ids.
+		this._toolCallIdNormalizer = preserveReasoning ? sanitizeOpenAiCallId : undefined
+		// Free/no-auth only when there is neither a Bearer key nor custom credential headers.
+		// Custom endpoints that auth via X-Api-Key (etc.) must still receive tools.
+		const isFreeEndpoint = this._isFreeEndpoint()
+		const enableStrictTools = this._shouldUseOpenAiStrictTools()
+
+		// --- Generic capability gates (no provider/model hardcoding) -----------------
+		// These read generic ModelInfo flags. When the flags are absent (unknown or
+		// partially-specified providers), every request field below falls back to the
+		// exact pre-existing behaviour, so generic OpenAI-compatible providers and
+		// custom endpoints are byte-for-byte unaffected.
+		//
+		// 1. Binary reasoning/thinking: models that expose an on/off thinking mode
+		//    (supportsReasoningBinary === true) get `extra_body.thinking = {type:"enabled"}`
+		//    when reasoning is not explicitly disabled. Mirrors base-openai-compatible-provider.
+		const supportsReasoningBinary = modelInfo.supportsReasoningBinary === true
+		const reasoningNotDisabled = this.options.enableReasoningEffort !== false
+		const enableBinaryThinking = supportsReasoningBinary && reasoningNotDisabled
+		//
+		// 2. tool_choice / parallel_tool_calls are NOT universally supported. Many
+		//    OpenAI-compatible reasoning endpoints reject or mishandle them (and emit
+		//    tool calls as text markup instead of native tool_calls). Only send them
+		//    when the model's supportedParameters allow-list explicitly includes them;
+		//    when supportedParameters is undefined we keep the historical defaults.
+		const supportedParameters = modelInfo.supportedParameters
+		const supportsToolChoiceParam = supportedParameters === undefined || supportedParameters.includes("tool_choice")
+		const supportsParallelToolCallsParam =
+			supportedParameters === undefined || supportedParameters.includes("parallel_tool_calls")
+
+		if (modelId.includes("o1") || modelId.includes("o3") || modelId.includes("o4")) {
+			yield* this.handleO3FamilyMessage(modelId, systemPrompt, messages, metadata)
+			return
+		}
+
+		let systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
+			role: "system",
+			content: systemPrompt,
+		}
+
+		if (this.options.openAiStreamingEnabled ?? true) {
+			let convertedMessages
+
+			if (useR1Format) {
+				convertedMessages = convertToR1Format(
+					[{ role: "user", content: systemPrompt }, ...messages],
+					r1FormatOptions,
+				)
+			} else {
+				if (modelInfo.supportsPromptCache) {
+					systemMessage = {
+						role: "system",
+						content: [
+							{
+								type: "text",
+								text: systemPrompt,
+								// @ts-ignore-next-line
+								cache_control: { type: "ephemeral" },
+							},
+						],
+					}
+				}
+
+				convertedMessages = [systemMessage, ...convertToOpenAiMessages(messages)]
+
+				if (modelInfo.supportsPromptCache) {
+					// Note: the following logic is copied from openrouter:
+					// Add cache_control to the last two user messages
+					// (note: this works because we only ever add one user message at a time, but if we added multiple we'd need to mark the user message before the last assistant message)
+					const lastTwoUserMessages = convertedMessages.filter((msg) => msg.role === "user").slice(-2)
+
+					lastTwoUserMessages.forEach((msg) => {
+						if (typeof msg.content === "string") {
+							msg.content = [{ type: "text", text: msg.content }]
+						}
+
+						if (Array.isArray(msg.content)) {
+							// NOTE: this is fine since env details will always be added at the end. but if it weren't there, and the user added a image_url type message, it would pop a text part before it and then move it after to the end.
+							let lastTextPart = msg.content.filter((part) => part.type === "text").pop()
+
+							if (!lastTextPart) {
+								lastTextPart = { type: "text", text: "..." }
+								msg.content.push(lastTextPart)
+							}
+
+							// @ts-ignore-next-line
+							lastTextPart["cache_control"] = { type: "ephemeral" }
+						}
+					})
+				}
+			}
+
+			const isGrokXAI = this._isGrokXAI(this.options.openAiBaseUrl)
+
+			// For free/no-auth endpoints (e.g., g4f.space), some Go-based backends only accept
+			// content as a plain string, not as an array of content blocks. Flatten array content
+			// to plain strings for text-only blocks to ensure compatibility.
+			if (isFreeEndpoint) {
+				this._flattenMessageContent(convertedMessages)
+			}
+
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+				model: modelId,
+				// Some OpenAI-Compatible models (e.g. claude-opus-4-7, claude-opus-4-8) reject
+				// `temperature` as deprecated/unsupported, so honor the model's `supportsTemperature`
+				// flag and omit it when that flag is false. Beyond that, only send `temperature` when
+				// the user set a custom value or the model needs a specific default (deepseek-reasoner);
+				// otherwise omit it so the server's own default applies instead of forcing 0.
+				...(modelInfo.supportsTemperature !== false &&
+					(this.options.modelTemperature != null || deepseekReasoner) && {
+						temperature: this.options.modelTemperature ?? DEEP_SEEK_DEFAULT_TEMPERATURE,
+					}),
+				messages: convertedMessages,
+				stream: true as const,
+				...(isGrokXAI ? {} : { stream_options: { include_usage: true } }),
+				...(reasoning && reasoning),
+				// Free endpoints (e.g., g4f.space) may not support tool calls — only include
+				// tools when authenticated (Bearer key or custom credential headers).
+				// Third-party gateways must not get OpenAI-only strict tool schemas.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
+				...(!isFreeEndpoint && supportsToolChoiceParam && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint &&
+					supportsParallelToolCallsParam && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				// Binary thinking mode for reasoning-capable OpenAI-compatible models.
+				...(enableBinaryThinking && { extra_body: { thinking: { type: "enabled" } } }),
+			}
+
+			// Add max_tokens if needed
+			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
+
+			const requestStartedAt = performance.now()
+			console.info(`[API-TIMING] openai stream dispatch model=${modelId}`)
+			let stream
+			try {
+				stream = await this.client.chat.completions.create(requestOptions, {
+					...(isAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {}),
+					signal: metadata?.abortSignal,
+				})
+				console.info(
+					`[API-TIMING] openai stream headers model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)}`,
+				)
+			} catch (error) {
+				throw handleOpenAIError(error, this.providerName)
+			}
+
+			const matcher = new TagMatcher(
+				["think", "thought"],
+				(chunk) =>
+					({
+						type: chunk.matched ? "reasoning" : "text",
+						text: chunk.data,
+					}) as const,
+			)
+
+			let lastUsage
+			const activeToolCallIds = new Set<string>()
+			let yieldedAssistantContent = false
+			let yieldedAnyContent = false
+			let receivedFirstRawChunk = false
+			let streamFailure: any
+
+			try {
+				for await (const chunk of stream) {
+					if (!receivedFirstRawChunk) {
+						receivedFirstRawChunk = true
+						console.info(
+							`[API-TIMING] openai first raw chunk model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)}`,
+						)
+					}
+					const delta = chunk.choices?.[0]?.delta ?? {}
+					const finishReason = chunk.choices?.[0]?.finish_reason
+					const text = extractOpenAiText(delta)
+
+					if (text) {
+						yieldedAssistantContent = true
+						yieldedAnyContent = true
+						for (const chunk of matcher.update(text)) {
+							yield chunk
+						}
+					}
+
+					const reasoningText = extractReasoningFromDelta(delta)
+					if (reasoningText) {
+						yieldedAnyContent = true
+						yield { type: "reasoning", text: reasoningText }
+					}
+
+					yield* this.processToolCalls(delta, finishReason, activeToolCallIds)
+					if (delta.tool_calls?.length) {
+						yieldedAssistantContent = true
+						yieldedAnyContent = true
+					}
+
+					if (chunk.usage) {
+						lastUsage = chunk.usage
+					}
+				}
+			} catch (streamError: any) {
+				if (yieldedAnyContent) {
+					throw handleOpenAIError(streamError, this.providerName)
+				}
+				streamFailure = streamError
+			}
+
+			console.info(
+				`[API-TIMING] openai stream complete model=${modelId} elapsedMs=${Math.round(performance.now() - requestStartedAt)} assistantContent=${yieldedAssistantContent}`,
+			)
+
+			// A request must never be replayed automatically after its stream has already run.
+			// Besides doubling cost and risking duplicate tool side effects, a proxy that holds
+			// an empty stream open until its timeout made this hidden second request appear as
+			// a multi-minute first-token delay. Surface the original failure/empty response so
+			// the normal retry UI can make the next action explicit.
+			if (!yieldedAnyContent) {
+				if (streamFailure) {
+					throw handleOpenAIError(streamFailure, this.providerName)
+				}
+				throw new Error(
+					`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
+						`The model "${modelId}" may not be available on this endpoint, ` +
+						`or the server may require different authentication/client headers.`,
+				)
+			}
+
+			for (const chunk of matcher.final()) {
+				yield chunk
+			}
+
+			if (lastUsage) {
+				yield this.processUsageMetrics(lastUsage, modelInfo)
+			}
+		} else {
+			const nonStreamingMessages = useR1Format
+				? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages], r1FormatOptions)
+				: [systemMessage, ...convertToOpenAiMessages(messages)]
+
+			if (isFreeEndpoint) {
+				this._flattenMessageContent(nonStreamingMessages)
+			}
+
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+				model: modelId,
+				messages: nonStreamingMessages,
+				// Free endpoints may not support tool calls — only include when authenticated.
+				...(!isFreeEndpoint && {
+					tools: this.convertToolsForOpenAI(metadata?.tools, { enableStrict: enableStrictTools }),
+				}),
+				...(!isFreeEndpoint && supportsToolChoiceParam && { tool_choice: metadata?.tool_choice }),
+				...(!isFreeEndpoint &&
+					supportsParallelToolCallsParam && { parallel_tool_calls: metadata?.parallelToolCalls ?? true }),
+				...(enableBinaryThinking && { extra_body: { thinking: { type: "enabled" } } }),
+			}
+
+			// Add max_tokens if needed
+			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
+
+			let response
+			try {
+				response = await this.client.chat.completions.create(requestOptions, {
+					...(this._isAzureAiInference(modelUrl) ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {}),
+					signal: metadata?.abortSignal,
+				})
+			} catch (error) {
+				throw handleOpenAIError(error, this.providerName)
+			}
+
+			const message = response.choices?.[0]?.message
+			let yieldedContent = false
+
+			if (message?.tool_calls) {
+				for (const toolCall of message.tool_calls) {
+					if (toolCall.type === "function") {
+						yieldedContent = true
+						yield {
+							type: "tool_call",
+							id: toolCall.id,
+							name: toolCall.function.name,
+							arguments: toolCall.function.arguments,
+						}
+					}
+				}
+			}
+
+			const content = extractOpenAiText(message)
+			if (content) {
+				yieldedContent = true
+				yield {
+					type: "text",
+					text: content,
+				}
+			}
+
+			if (!yieldedContent) {
+				throw new Error(
+					`API at ${this.options.openAiBaseUrl || "OpenAI"} returned no assistant content. ` +
+						`Response: ${JSON.stringify(message ?? "empty")}`,
+				)
+			}
+
+			yield this.processUsageMetrics(response.usage, modelInfo)
+		}
+	}
+
+	protected processUsageMetrics(usage: any, _modelInfo?: ModelInfo): ApiStreamUsageChunk {
+		return {
+			type: "usage",
+			inputTokens: usage?.prompt_tokens || 0,
+			outputTokens: usage?.completion_tokens || 0,
+			cacheWriteTokens: usage?.cache_creation_input_tokens || undefined,
+			cacheReadTokens: usage?.cache_read_input_tokens || undefined,
+		}
+	}
+
+	override getModel() {
+		const id = this.options.openAiModelId ?? ""
+		// Merge so partial openAiCustomModelInfo does not drop supportsImages / defaults,
+		// then enrich with reasoning capabilities inferred from the model id at REQUEST
+		// TIME. This matters for profiles saved before capability persistence existed (or
+		// written by hand) whose openAiCustomModelInfo carries no reasoning flags — the
+		// save-time defaults never run for them, so without request-time enrichment every
+		// capability gate stays off. Explicit saved values always win over inference.
+		const info: ModelInfo = withInferredReasoningCapabilities(
+			id,
+			mergeOpenAiCompatibleModelInfo(this.options.openAiCustomModelInfo),
+		)
+		const params = getModelParams({
+			format: "openai",
+			modelId: id,
+			model: info,
+			settings: this.options,
+			defaultTemperature: 0,
+		})
+		return { id, info, ...params }
+	}
+
+	async completePrompt(prompt: string): Promise<string> {
+		try {
+			const isAzureAiInference = this._isAzureAiInference(this.options.openAiBaseUrl)
+			const model = this.getModel()
+			const modelInfo = model.info
+
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+				model: model.id,
+				messages: [{ role: "user", content: prompt }],
+			}
+
+			// Add max_tokens if needed
+			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
+
+			let response
+			try {
+				response = await this.client.chat.completions.create(
+					requestOptions,
+					isAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {},
+				)
+			} catch (error) {
+				throw handleOpenAIError(error, this.providerName)
+			}
+
+			return response.choices?.[0]?.message.content || ""
+		} catch (error) {
+			if (error instanceof Error) {
+				throw new Error(`${this.providerName} completion error: ${error.message}`)
+			}
+
+			throw error
+		}
+	}
+
+	private async *handleO3FamilyMessage(
+		modelId: string,
+		systemPrompt: string,
+		messages: Anthropic.Messages.MessageParam[],
+		metadata?: ApiHandlerCreateMessageMetadata,
+	): ApiStream {
+		const modelInfo = this.getModel().info
+		const methodIsAzureAiInference = this._isAzureAiInference(this.options.openAiBaseUrl)
+
+		if (this.options.openAiStreamingEnabled ?? true) {
+			const isGrokXAI = this._isGrokXAI(this.options.openAiBaseUrl)
+
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
+				model: modelId,
+				messages: [
+					{
+						role: "developer",
+						content: `Formatting re-enabled\n${systemPrompt}`,
+					},
+					...convertToOpenAiMessages(messages),
+				],
+				stream: true,
+				...(isGrokXAI ? {} : { stream_options: { include_usage: true } }),
+				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
+				temperature: undefined,
+				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
+				tool_choice: metadata?.tool_choice,
+				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+			}
+
+			// O3 family models do not support the deprecated max_tokens parameter
+			// but they do support max_completion_tokens (the modern OpenAI parameter)
+			// This allows O3 models to limit response length when includeMaxTokens is enabled
+			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
+
+			let stream
+			try {
+				stream = await this.client.chat.completions.create(
+					requestOptions,
+					methodIsAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {},
+				)
+			} catch (error) {
+				throw handleOpenAIError(error, this.providerName)
+			}
+
+			yield* this.handleStreamResponse(stream)
+		} else {
+			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+				model: modelId,
+				messages: [
+					{
+						role: "developer",
+						content: `Formatting re-enabled\n${systemPrompt}`,
+					},
+					...convertToOpenAiMessages(messages),
+				],
+				reasoning_effort: modelInfo.reasoningEffort as "low" | "medium" | "high" | undefined,
+				temperature: undefined,
+				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
+				tools: this.convertToolsForOpenAI(metadata?.tools, {
+					enableStrict: this._shouldUseOpenAiStrictTools(),
+				}),
+				tool_choice: metadata?.tool_choice,
+				parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+			}
+
+			// O3 family models do not support the deprecated max_tokens parameter
+			// but they do support max_completion_tokens (the modern OpenAI parameter)
+			// This allows O3 models to limit response length when includeMaxTokens is enabled
+			this.addMaxTokensIfNeeded(requestOptions, modelInfo)
+
+			let response
+			try {
+				response = await this.client.chat.completions.create(
+					requestOptions,
+					methodIsAzureAiInference ? { path: OPENAI_AZURE_AI_INFERENCE_PATH } : {},
+				)
+			} catch (error) {
+				throw handleOpenAIError(error, this.providerName)
+			}
+
+			const message = response.choices?.[0]?.message
+			if (message?.tool_calls) {
+				for (const toolCall of message.tool_calls) {
+					if (toolCall.type === "function") {
+						yield {
+							type: "tool_call",
+							id: toolCall.id,
+							name: toolCall.function.name,
+							arguments: toolCall.function.arguments,
+						}
+					}
+				}
+			}
+
+			yield {
+				type: "text",
+				text: message?.content || "",
+			}
+			yield this.processUsageMetrics(response.usage)
+		}
+	}
+
+	private async *handleStreamResponse(stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>): ApiStream {
+		const activeToolCallIds = new Set<string>()
+
+		for await (const chunk of stream) {
+			const delta = chunk.choices?.[0]?.delta
+			const finishReason = chunk.choices?.[0]?.finish_reason
+
+			if (delta) {
+				if (delta.content) {
+					yield {
+						type: "text",
+						text: delta.content,
+					}
+				}
+
+				yield* this.processToolCalls(delta, finishReason, activeToolCallIds)
+			}
+
+			if (chunk.usage) {
+				yield {
+					type: "usage",
+					inputTokens: chunk.usage.prompt_tokens || 0,
+					outputTokens: chunk.usage.completion_tokens || 0,
+				}
+			}
+		}
+	}
+
+	/**
+	 * Helper generator to process tool calls from a stream chunk.
+	 * Tracks active tool call IDs and yields tool_call_partial and tool_call_end events.
+	 * @param delta - The delta object from the stream chunk
+	 * @param finishReason - The finish_reason from the stream chunk
+	 * @param activeToolCallIds - Set to track active tool call IDs (mutated in place)
+	 */
+	protected *processToolCalls(
+		delta: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta | undefined,
+		finishReason: string | null | undefined,
+		activeToolCallIds: Set<string>,
+	): Generator<
+		| { type: "tool_call_partial"; index: number; id?: string; name?: string; arguments?: string }
+		| { type: "tool_call_end"; id: string }
+	> {
+		if (delta?.tool_calls) {
+			for (const toolCall of delta.tool_calls) {
+				// Interleaved-thinking / reasoning providers (preserveReasoning) are strict
+				// about tool-call id format (^[a-zA-Z0-9_-]+$); sanitize so multi-turn
+				// continuations don't 400. No-op for other providers (id already valid).
+				const id =
+					toolCall.id && this._toolCallIdNormalizer ? this._toolCallIdNormalizer(toolCall.id) : toolCall.id
+				if (id) {
+					activeToolCallIds.add(id)
+				}
+				yield {
+					type: "tool_call_partial",
+					index: toolCall.index,
+					id,
+					name: toolCall.function?.name,
+					arguments: toolCall.function?.arguments,
+				}
+			}
+		}
+
+		// Emit tool_call_end events when finish_reason is "tool_calls"
+		// This ensures tool calls are finalized even if the stream doesn't properly close
+		if (finishReason === "tool_calls" && activeToolCallIds.size > 0) {
+			for (const id of activeToolCallIds) {
+				yield { type: "tool_call_end", id }
+			}
+			activeToolCallIds.clear()
+		}
+	}
+
+	protected _getUrlHost(baseUrl?: string): string {
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).host
+	}
+
+	/**
+	 * Flattens array content in messages to plain strings for free/no-auth endpoints
+	 * that only support string content (e.g., g4f.space's Go backend).
+	 * Handles: system messages, user messages, and assistant messages.
+	 */
+	private _flattenMessageContent(messages: OpenAI.Chat.ChatCompletionMessageParam[]): void {
+		for (const msg of messages) {
+			if (Array.isArray(msg.content)) {
+				const textParts: string[] = []
+
+				for (const part of msg.content) {
+					if (part.type === "text") {
+						textParts.push((part as any).text)
+					}
+				}
+
+				// Always flatten to string for free endpoints — the Go backends
+				// (e.g., g4f.space) require content to be a plain string.
+				msg.content = textParts.length > 0 ? textParts.join("\n") : ""
+			}
+		}
+	}
+
+	private _isGrokXAI(baseUrl?: string): boolean {
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isGrokXAI
+	}
+
+	protected _isAzureAiInference(baseUrl?: string): boolean {
+		return analyzeOpenAiCompatibleBaseUrl(baseUrl).isAzureAiInference
+	}
+
+	/**
+	 * Free/no-auth endpoints (e.g. g4f.space) have neither a Bearer API key nor
+	 * custom credential headers. Custom endpoints that authenticate via X-Api-Key
+	 * (or similar) omit openAiApiKey so Authorization is not sent, but they are
+	 * still authenticated and must receive tools.
+	 */
+	private _isFreeEndpoint(): boolean {
+		if (this.options.openAiApiKey) {
+			return false
+		}
+
+		const headers = this.options.openAiHeaders || {}
+		const hasCredentialHeader = Object.keys(headers).some((name) => {
+			const lower = name.toLowerCase()
+			// Ignore non-auth metadata headers that may be present on openAiHeaders.
+			if (lower === "user-agent" || lower === "x-title" || lower === "http-referer" || lower === "referer") {
+				return false
+			}
+			const value = headers[name]
+			return typeof value === "string" ? value.length > 0 : value != null
+		})
+
+		return !hasCredentialHeader
+	}
+
+	/**
+	 * OpenAI strict tool schemas (`strict: true` + all properties required) are
+	 * only reliable on official OpenAI / Azure OpenAI. Third-party gateways
+	 * (Logfare, LiteLLM, vLLM, OpenRouter-compatible, Qwen-compatible, etc.)
+	 * often mishandle them, producing empty streams or broken tool calling.
+	 */
+	private _shouldUseOpenAiStrictTools(): boolean {
+		const analyzed = analyzeOpenAiCompatibleBaseUrl(this.options.openAiBaseUrl, "https://api.openai.com/v1")
+		if (analyzed.isAzureAiInference) {
+			return false
+		}
+		if (analyzed.isAzureOpenAi || this.options.openAiUseAzure) {
+			return true
+		}
+		const host = analyzed.host.toLowerCase()
+		return host === "api.openai.com"
+	}
+
+	/**
+	 * Adds max_completion_tokens to the request body if needed based on provider configuration
+	 * Note: max_tokens is deprecated in favor of max_completion_tokens as per OpenAI documentation
+	 * O3 family models handle max_tokens separately in handleO3FamilyMessage
+	 */
+	protected addMaxTokensIfNeeded(
+		requestOptions:
+			| OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
+			| OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+		modelInfo: ModelInfo,
+	): void {
+		// Only add max_completion_tokens if includeMaxTokens is true
+		if (this.options.includeMaxTokens === true) {
+			// Use user-configured modelMaxTokens if available, otherwise fall back to model's default maxTokens
+			// Using max_completion_tokens as max_tokens is deprecated
+			const maxTokens = this.options.modelMaxTokens || modelInfo.maxTokens
+			// Guard: -1 is an internal sentinel meaning "unknown/unlimited" and must
+			// never be sent to the API — many providers (e.g. tongapi, LiteLLM) reject
+			// negative values with a 500 error.
+			if (maxTokens != null && maxTokens > 0) {
+				requestOptions.max_completion_tokens = maxTokens
+			}
+		}
+	}
+}
+
+function extractOpenAiText(message: any): string {
+	const values = [message?.content, message?.output_text, message?.text, message?.refusal]
+
+	for (const value of values) {
+		const text = normalizeOpenAiText(value)
+		if (text) {
+			return text
+		}
+	}
+
+	return ""
+}
+
+function normalizeOpenAiText(value: unknown): string {
+	if (typeof value === "string") {
+		return value.trim() ? value : ""
+	}
+
+	if (!Array.isArray(value)) {
+		return ""
+	}
+
+	return value
+		.map((part) => {
+			if (typeof part === "string") {
+				return part
+			}
+			if (!part || typeof part !== "object") {
+				return ""
+			}
+
+			const objectPart = part as Record<string, unknown>
+			if (typeof objectPart.text === "string") {
+				return objectPart.text
+			}
+			if (typeof objectPart.content === "string") {
+				return objectPart.content
+			}
+			if (typeof objectPart.refusal === "string") {
+				return objectPart.refusal
+			}
+			return ""
+		})
+		.join("")
+}
+
+export async function getOpenAiModels(baseUrl?: string, apiKey?: string, openAiHeaders?: Record<string, string>) {
+	if (!baseUrl) {
+		throw new Error("No base URL provided. Please configure a base URL in Image Generation settings.")
+	}
+
+	const analyzedBaseUrl = analyzeOpenAiCompatibleBaseUrl(baseUrl)
+	if (!analyzedBaseUrl.isValid || !analyzedBaseUrl.baseUrl) {
+		throw new Error(`Invalid base URL: "${baseUrl}". Please check the URL format.`)
+	}
+
+	const config: Record<string, any> = {}
+	const headers: Record<string, string> = {
+		...DEFAULT_HEADERS,
+		"User-Agent": `RooCode/${Package.version} ZooCode/${Package.version} (VSCode; OpenAI-Compatible)`,
+		"X-Title": "Roo Code",
+		...(openAiHeaders || {}),
+	}
+
+	if (apiKey) {
+		headers["Authorization"] = `Bearer ${apiKey}`
+	}
+
+	if (Object.keys(headers).length > 0) {
+		config["headers"] = headers
+	}
+
+	try {
+		const response = await axios.get(getOpenAiCompatibleModelsUrl(analyzedBaseUrl.baseUrl), config)
+		const modelsArray = response.data?.data?.map((model: any) => model.id) || []
+		return [...new Set<string>(modelsArray)]
+	} catch (error) {
+		if (axios.isAxiosError(error)) {
+			const status = error.response?.status
+			if (status === 401 || status === 403) {
+				throw new Error(`Authentication failed (HTTP ${status}). Please check your API key.`)
+			}
+			if (status === 404) {
+				throw new Error(
+					`Models endpoint not found at "${getOpenAiCompatibleModelsUrl(analyzedBaseUrl.baseUrl)}". The server may not support model listing.`,
+				)
+			}
+			throw new Error(
+				`Failed to fetch models: ${error.message}${status ? ` (HTTP ${status})` : ""}. Check your base URL and API key.`,
+			)
+		}
+		throw error
+	}
+}
