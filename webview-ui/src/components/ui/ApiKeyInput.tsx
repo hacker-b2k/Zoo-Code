@@ -23,15 +23,14 @@ interface ApiKeyInputProps {
 /**
  * Reusable API Key input with eye-icon visibility toggle.
  *
- * Uses VS Code codicons (codicon-eye / codicon-eye-closed) for guaranteed
- * rendering in the VS Code webview. Lucide icons may not render.
+ * Uses VS Code codicons via `slot="end"` inside VSCodeTextField — the same
+ * pattern used by HistoryView.tsx for the clear-search button. This places
+ * the icon INSIDE the text field's shadow DOM, so height/alignment are
+ * automatically correct.
  *
  * Security: defaults to masked (password) state. Resets to masked when:
  * - Component unmounts (panel close / provider switch)
  * - The value prop changes (different key loaded)
- *
- * The toggle is purely display-layer — the actual stored/secret value
- * is never modified by this component.
  */
 export const ApiKeyInput = ({
 	value,
@@ -59,45 +58,39 @@ export const ApiKeyInput = ({
 	}, [])
 
 	return (
-		<div className={cn("apikey-input-wrapper", className)}>
-			<div className="apikey-input-row" style={{ display: "flex", alignItems: "stretch", gap: "4px" }}>
-				<div style={{ flex: 1 }}>
-					<VSCodeTextField
-						value={value || ""}
-						type={revealed ? "text" : "password"}
-						onInput={onInput}
-						placeholder={placeholder}
-						className="w-full"
-						data-testid={testId}>
-						{label}
-					</VSCodeTextField>
-				</div>
-				<button
-					type="button"
-					tabIndex={0}
+		<div className={cn("w-full", className)}>
+			<VSCodeTextField
+				value={value || ""}
+				type={revealed ? "text" : "password"}
+				onInput={onInput}
+				placeholder={placeholder}
+				className="w-full"
+				data-testid={testId}>
+				{label}
+				<div
+					slot="end"
+					className="input-icon-button codicon flex justify-center items-center"
+					style={{ cursor: "pointer", opacity: 0.65 }}
 					onClick={toggleReveal}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault()
+							toggleReveal()
+						}
+					}}
+					tabIndex={0}
+					role="button"
 					aria-label={revealed ? "Hide API key" : "Show API key"}
-					title={revealed ? "Hide API key" : "Show API key"}
-					className={cn(
-						"flex items-center justify-center",
-						"rounded-sm",
-						"bg-transparent border-none",
-						"text-vscode-descriptionForeground opacity-70",
-						"hover:opacity-100 hover:bg-[rgba(255,255,255,0.05)]",
-						"focus:outline-none focus-visible:ring-1 focus-visible:ring-vscode-focusBorder",
-						"cursor-pointer",
-						"transition-opacity duration-150",
-					)}
-					style={{ width: "28px", padding: 0 }}>
+					title={revealed ? "Hide API key" : "Show API key"}>
 					<span
 						className={cn(
 							"codicon",
 							revealed ? "codicon-eye-closed" : "codicon-eye",
 						)}
-						style={{ fontSize: "16px", lineHeight: 1 }}
+						style={{ fontSize: "14px" }}
 					/>
-				</button>
-			</div>
+				</div>
+			</VSCodeTextField>
 			{children}
 		</div>
 	)
