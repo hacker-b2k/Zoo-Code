@@ -1,0 +1,7 @@
+{
+    "lastSyncDate":  "2026-06-17T00:00:00Z",
+    "lastSyncCommit":  "",
+    "lastCheckedDate":  "2026-08-07T08:37:57Z",
+    "upstreamHead":  "f1490732c",
+    "note":  "Date-wise sync system. lastSyncDate = all commits up to this date are done. Set by upstream-import.ps1. Never shows skipped commits again."
+}
