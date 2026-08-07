@@ -18,7 +18,6 @@ import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 import { useExtensionState } from "@src/context/ExtensionStateContext"
 import { vscode } from "@src/utils/vscode"
 import { Button } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -108,21 +107,22 @@ export const Poe = ({
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.poeApiKey || ""}
+				type="password"
 				onInput={handleInputChange("poeApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.poeApiKey")}</label>}
-				data-testid="poe-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.poeApiKey && (
-					<VSCodeButtonLink href="https://poe.com/api_key" appearance="secondary">
-						{t("settings:providers.getPoeApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.poeApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.poeApiKey && (
+				<VSCodeButtonLink href="https://poe.com/api_key" appearance="secondary">
+					{t("settings:providers.getPoeApiKey")}
+				</VSCodeButtonLink>
+			)}
 			<Button
 				variant="outline"
 				onClick={handleRefreshModels}

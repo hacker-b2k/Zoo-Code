@@ -781,9 +781,7 @@ export class NativeToolCallParser {
 				if (partialArgs.path || partialArgs.content) {
 					nativeArgs = {
 						path: partialArgs.path,
-						// Default to empty string when content is missing (truncated at max_tokens).
-						// WriteToFileTool handler will catch empty content and return a helpful error.
-						content: partialArgs.content ?? "",
+						content: partialArgs.content,
 					}
 				}
 				break
@@ -1860,12 +1858,10 @@ export class NativeToolCallParser {
 					break
 
 				case "write_to_file":
-					// Allow through even when content is missing (truncated at max_tokens).
-					// WriteToFileTool handler will catch empty/undefined content and return a helpful error.
-					if (args.path !== undefined) {
+					if (args.path !== undefined && args.content !== undefined) {
 						nativeArgs = {
 							path: args.path,
-							content: args.content ?? "",
+							content: args.content,
 						} as NativeArgsFor<TName>
 					}
 					break

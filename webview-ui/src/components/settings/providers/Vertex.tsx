@@ -7,7 +7,6 @@ import { type ProviderSettings, VERTEX_REGIONS, VERTEX_1M_CONTEXT_MODEL_IDS, loo
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -96,19 +95,19 @@ export const Vertex = ({ apiConfiguration, setApiConfigurationField }: VertexPro
 				className="w-full">
 				<label className="block font-medium mb-1">{t("settings:providers.googleCloudKeyFile")}</label>
 			</VSCodeTextField>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.vertexApiKey || ""}
 				onInput={handleInputChange("vertexApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.vertexApiKey")}</label>}
-				data-testid="vertex-api-key">
-				<div className="text-sm text-vscode-descriptionForeground mb-2">
-					<Trans
-						i18nKey="settings:providers.vertexApiKeyDescription"
-						defaults="Express Mode — no billing required. Get key from Vertex AI Studio."
-					/>
-				</div>
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.vertexApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-1 mb-2">
+				<Trans
+					i18nKey="settings:providers.vertexApiKeyDescription"
+					defaults="Express Mode — no billing required. Get key from Vertex AI Studio."
+				/>
+			</div>
 			<VSCodeTextField
 				value={apiConfiguration?.vertexProjectId || ""}
 				onInput={handleInputChange("vertexProjectId")}

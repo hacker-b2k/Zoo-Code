@@ -14,7 +14,6 @@ import {
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Button, StandardTooltip } from "@src/components/ui"
 import { vscode } from "@src/utils/vscode"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { ModelPicker } from "../ModelPicker"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@src/components/ui"
@@ -102,12 +101,14 @@ export const CustomEndpoint = ({
 				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.baseUrl")}</label>
 			</VSCodeTextField>
 
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.customEndpointApiKey || ""}
+				type="password"
 				onInput={handleInputChange("customEndpointApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.apiKey")}</label>}
-				data-testid="custom-endpoint-api-key" />
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.apiKey")}</label>
+			</VSCodeTextField>
 
 			<div>
 				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.format")}</label>

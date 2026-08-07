@@ -5,7 +5,6 @@ import { type ProviderSettings, type RouterModels, mistralDefaultModelId } from 
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -32,21 +31,22 @@ export const Mistral = ({ apiConfiguration, setApiConfigurationField }: MistralP
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.mistralApiKey || ""}
+				type="password"
 				onInput={handleInputChange("mistralApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<span className="font-medium">{t("settings:providers.mistralApiKey")}</span>}
-				data-testid="mistral-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.mistralApiKey && (
-					<VSCodeButtonLink href="https://console.mistral.ai/" appearance="secondary">
-						{t("settings:providers.getMistralApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<span className="font-medium">{t("settings:providers.mistralApiKey")}</span>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.mistralApiKey && (
+				<VSCodeButtonLink href="https://console.mistral.ai/" appearance="secondary">
+					{t("settings:providers.getMistralApiKey")}
+				</VSCodeButtonLink>
+			)}
 			{(apiConfiguration?.apiModelId?.startsWith("codestral-") ||
 				(!apiConfiguration?.apiModelId && mistralDefaultModelId.startsWith("codestral-"))) && (
 				<>
@@ -58,7 +58,7 @@ export const Mistral = ({ apiConfiguration, setApiConfigurationField }: MistralP
 						className="w-full">
 						<label className="block font-medium mb-1">{t("settings:providers.codestralBaseUrl")}</label>
 					</VSCodeTextField>
-					<div className="text-sm text-vscode-descriptionForeground">
+					<div className="text-sm text-vscode-descriptionForeground -mt-2">
 						{t("settings:providers.codestralBaseUrlDesc")}
 					</div>
 				</>

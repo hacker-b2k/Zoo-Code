@@ -12,7 +12,6 @@ import {
 import { vscode } from "@src/utils/vscode"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Button } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -52,29 +51,32 @@ export const Unbound = ({
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.unboundApiKey || ""}
+				type="password"
 				onInput={handleInputChange("unboundApiKey")}
 				placeholder={t("settings:providers.unboundApiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.unboundApiKey")}</label>}
-				data-testid="unbound-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
+				className="w-full">
+				<div className="flex justify-between items-center mb-1">
+					<label className="block font-medium">{t("settings:providers.unboundApiKey")}</label>
 				</div>
-				<a
-					href="https://gateway.getunbound.ai"
-					target="_blank"
-					rel="noopener noreferrer"
-					className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 rounded-md px-3 w-full"
-					style={{
-						width: "100%",
-						textDecoration: "none",
-						color: "var(--vscode-button-foreground)",
-						backgroundColor: "var(--vscode-button-background)",
-					}}>
-					{t("settings:providers.getUnboundApiKey")}
-				</a>
-			</ApiKeyInput>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			<a
+				href="https://gateway.getunbound.ai"
+				target="_blank"
+				rel="noopener noreferrer"
+				className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 rounded-md px-3 w-full"
+				style={{
+					width: "100%",
+					textDecoration: "none",
+					color: "var(--vscode-button-foreground)",
+					backgroundColor: "var(--vscode-button-background)",
+				}}>
+				{t("settings:providers.getUnboundApiKey")}
+			</a>
 			<Button
 				variant="outline"
 				onClick={() => {

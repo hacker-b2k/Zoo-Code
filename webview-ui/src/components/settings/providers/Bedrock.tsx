@@ -13,7 +13,6 @@ import {
 } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StandardTooltip } from "@src/components/ui"
 
 import { inputEventTransform, noTransform } from "../transforms"
@@ -96,12 +95,14 @@ export const Bedrock = ({ apiConfiguration, setApiConfigurationField, selectedMo
 				{t("settings:providers.apiKeyStorageNotice")}
 			</div>
 			{apiConfiguration?.awsUseApiKey ? (
-				<ApiKeyInput
+				<VSCodeTextField
 					value={apiConfiguration?.awsApiKey || ""}
+					type="password"
 					onInput={handleInputChange("awsApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
-					label={<label className="block font-medium mb-1">{t("settings:providers.awsApiKey")}</label>}
-					data-testid="bedrock-api-key" />
+					className="w-full">
+					<label className="block font-medium mb-1">{t("settings:providers.awsApiKey")}</label>
+				</VSCodeTextField>
 			) : apiConfiguration?.awsUseProfile ? (
 				<VSCodeTextField
 					value={apiConfiguration?.awsProfile || ""}
@@ -112,24 +113,30 @@ export const Bedrock = ({ apiConfiguration, setApiConfigurationField, selectedMo
 				</VSCodeTextField>
 			) : (
 				<>
-					<ApiKeyInput
+					<VSCodeTextField
 						value={apiConfiguration?.awsAccessKey || ""}
+						type="password"
 						onInput={handleInputChange("awsAccessKey")}
 						placeholder={t("settings:placeholders.accessKey")}
-						label={<label className="block font-medium mb-1">{t("settings:providers.awsAccessKey")}</label>}
-						data-testid="bedrock-access-key" />
-					<ApiKeyInput
+						className="w-full">
+						<label className="block font-medium mb-1">{t("settings:providers.awsAccessKey")}</label>
+					</VSCodeTextField>
+					<VSCodeTextField
 						value={apiConfiguration?.awsSecretKey || ""}
+						type="password"
 						onInput={handleInputChange("awsSecretKey")}
 						placeholder={t("settings:placeholders.secretKey")}
-						label={<label className="block font-medium mb-1">{t("settings:providers.awsSecretKey")}</label>}
-						data-testid="bedrock-secret-key" />
-					<ApiKeyInput
+						className="w-full">
+						<label className="block font-medium mb-1">{t("settings:providers.awsSecretKey")}</label>
+					</VSCodeTextField>
+					<VSCodeTextField
 						value={apiConfiguration?.awsSessionToken || ""}
+						type="password"
 						onInput={handleInputChange("awsSessionToken")}
 						placeholder={t("settings:placeholders.sessionToken")}
-						label={<label className="block font-medium mb-1">{t("settings:providers.awsSessionToken")}</label>}
-						data-testid="bedrock-session-token" />
+						className="w-full">
+						<label className="block font-medium mb-1">{t("settings:providers.awsSessionToken")}</label>
+					</VSCodeTextField>
 				</>
 			)}
 			<div>

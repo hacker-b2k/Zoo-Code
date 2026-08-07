@@ -12,7 +12,6 @@ import {
 import { vscode } from "@src/utils/vscode"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Button } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -73,39 +72,38 @@ export const Requesty = ({
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.requestyApiKey || ""}
+				type="password"
 				onInput={handleInputChange("requestyApiKey")}
 				placeholder={t("settings:providers.getRequestyApiKey")}
-				label={
-					<div className="flex justify-between items-center mb-1">
-						<label className="block font-medium">{t("settings:providers.requestyApiKey")}</label>
-						{apiConfiguration?.requestyApiKey && (
-							<RequestyBalanceDisplay
-								baseUrl={apiConfiguration.requestyBaseUrl}
-								apiKey={apiConfiguration.requestyApiKey}
-							/>
-						)}
-					</div>
-				}
-				data-testid="requesty-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
+				className="w-full">
+				<div className="flex justify-between items-center mb-1">
+					<label className="block font-medium">{t("settings:providers.requestyApiKey")}</label>
+					{apiConfiguration?.requestyApiKey && (
+						<RequestyBalanceDisplay
+							baseUrl={apiConfiguration.requestyBaseUrl}
+							apiKey={apiConfiguration.requestyApiKey}
+						/>
+					)}
 				</div>
-				<a
-					href={getApiKeyUrl()}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 rounded-md px-3 w-full"
-					style={{
-						width: "100%",
-						textDecoration: "none",
-						color: "var(--vscode-button-foreground)",
-						backgroundColor: "var(--vscode-button-background)",
-					}}>
-					{t("settings:providers.getRequestyApiKey")}
-				</a>
-			</ApiKeyInput>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			<a
+				href={getApiKeyUrl()}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 rounded-md px-3 w-full"
+				style={{
+					width: "100%",
+					textDecoration: "none",
+					color: "var(--vscode-button-foreground)",
+					backgroundColor: "var(--vscode-button-background)",
+				}}>
+				{t("settings:providers.getRequestyApiKey")}
+			</a>
 
 			<VSCodeCheckbox
 				checked={requestyEndpointSelected}

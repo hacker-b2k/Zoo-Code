@@ -28,7 +28,7 @@ export const BedrockCustomArn = ({ apiConfiguration, setApiConfigurationField }:
 				className="w-full">
 				<label className="block font-medium mb-1">{t("settings:labels.customArn")}</label>
 			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground">
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
 				{t("settings:providers.awsCustomArnUse")}
 				<ul className="list-disc pl-5 mt-1">
 					<li>

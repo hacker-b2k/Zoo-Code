@@ -83,8 +83,9 @@ export class SpawnWorkerTool extends BaseTool<"spawn_worker"> {
 				name,
 				role,
 				mode: workerMode,
-				apiConfigName: params.api_config_name ?? null,
-				fallback: params.fallback_api_config_names ?? null,
+				// Don't show raw null — runtime auto-assigns from worker pool.
+				apiConfigName: params.api_config_name?.trim() || "auto-assigned (worker pool)",
+				fallback: params.fallback_api_config_names ?? undefined,
 				messagePreview: message.slice(0, 200),
 			})
 

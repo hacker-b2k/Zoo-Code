@@ -5,7 +5,6 @@ import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import type { ProviderSettings, ExtensionMessage, ModelRecord, ResolvedModelCapabilities } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 import { useRouterModels } from "@src/components/ui/hooks/useRouterModels"
 import { vscode } from "@src/utils/vscode"
 
@@ -90,16 +89,17 @@ export const Ollama = ({ apiConfiguration, setApiConfigurationField, selectedMod
 				<label className="block font-medium mb-1">{t("settings:providers.ollama.baseUrl")}</label>
 			</VSCodeTextField>
 			{apiConfiguration?.ollamaBaseUrl && (
-				<ApiKeyInput
+				<VSCodeTextField
 					value={apiConfiguration?.ollamaApiKey || ""}
+					type="password"
 					onInput={handleInputChange("ollamaApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
-					label={<label className="block font-medium mb-1">{t("settings:providers.ollama.apiKey")}</label>}
-					data-testid="ollama-api-key">
+					className="w-full">
+					<label className="block font-medium mb-1">{t("settings:providers.ollama.apiKey")}</label>
 					<div className="text-xs text-vscode-descriptionForeground mt-1">
 						{t("settings:providers.ollama.apiKeyHelp")}
 					</div>
-				</ApiKeyInput>
+				</VSCodeTextField>
 			)}
 			<ModelPicker
 				apiConfiguration={apiConfiguration}

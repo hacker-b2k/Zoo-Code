@@ -39,12 +39,10 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 			return
 		}
 
-		if (newContent === undefined || newContent === "") {
+		if (newContent === undefined) {
 			task.consecutiveMistakeCount++
 			task.recordToolError("write_to_file")
-			pushToolResult(
-				await task.sayAndCreateMissingParamError("write_to_file", "content"),
-			)
+			pushToolResult(await task.sayAndCreateMissingParamError("write_to_file", "content"))
 			await task.diffViewProvider.reset()
 			return
 		}
@@ -67,31 +65,6 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		} else {
 			fileExists = await fileExistsAtPath(absolutePath)
 			task.diffViewProvider.editType = fileExists ? "modify" : "create"
-		}
-
-		// ─── Deduplication: skip write if file already has identical content ───
-		// Workers sometimes re-write files they already created (context loss / retry).
-		// This check prevents redundant writes and saves API time.
-		if (fileExists) {
-			try {
-				const existingContent = await fs.readFile(absolutePath, "utf-8")
-				const normalizedNew = newContent.replace(/\r\n/g, "\n").trim()
-				const normalizedExisting = existingContent.replace(/\r\n/g, "\n").trim()
-				if (normalizedNew === normalizedExisting) {
-					pushToolResult(
-						JSON.stringify({
-							ok: true,
-							path: relPath,
-							skipped: true,
-							reason: "File already has identical content — no write needed.",
-						}),
-					)
-					await task.diffViewProvider.reset()
-					return
-				}
-			} catch {
-				// Can't read — proceed with write (file may be locked or permission issue)
-			}
 		}
 
 		// Create parent directories early for new files to prevent ENOENT errors

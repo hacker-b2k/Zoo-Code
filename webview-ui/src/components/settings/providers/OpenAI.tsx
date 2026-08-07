@@ -7,7 +7,6 @@ import type { ModelInfo, ProviderSettings } from "@roo-code/types"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, StandardTooltip } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -60,21 +59,22 @@ export const OpenAI = ({ apiConfiguration, setApiConfigurationField, selectedMod
 					/>
 				</>
 			)}
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.openAiNativeApiKey || ""}
+				type="password"
 				onInput={handleInputChange("openAiNativeApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.openAiApiKey")}</label>}
-				data-testid="openai-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.openAiNativeApiKey && (
-					<VSCodeButtonLink href="https://platform.openai.com/api-keys" appearance="secondary">
-						{t("settings:providers.getOpenAiApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.openAiApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.openAiNativeApiKey && (
+				<VSCodeButtonLink href="https://platform.openai.com/api-keys" appearance="secondary">
+					{t("settings:providers.getOpenAiApiKey")}
+				</VSCodeButtonLink>
+			)}
 
 			{(() => {
 				const allowedTiers = (selectedModelInfo?.tiers?.map((t) => t.name).filter(Boolean) || []).filter(

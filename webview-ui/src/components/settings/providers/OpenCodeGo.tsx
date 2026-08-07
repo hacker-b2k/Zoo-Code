@@ -16,7 +16,6 @@ import { vscode } from "@src/utils/vscode"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 import { Button } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -93,21 +92,22 @@ export const OpenCodeGo = ({
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.opencodeGoApiKey || ""}
+				type="password"
 				onInput={handleInputChange("opencodeGoApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.opencodeGoApiKey")}</label>}
-				data-testid="opencode-go-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.opencodeGoApiKey && (
-					<VSCodeButtonLink href="https://opencode.ai/docs/go/" appearance="primary" style={{ width: "100%" }}>
-						{t("settings:providers.getOpencodeGoApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.opencodeGoApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.opencodeGoApiKey && (
+				<VSCodeButtonLink href="https://opencode.ai/docs/go/" appearance="primary" style={{ width: "100%" }}>
+					{t("settings:providers.getOpencodeGoApiKey")}
+				</VSCodeButtonLink>
+			)}
 			<Button
 				variant="outline"
 				onClick={handleRefreshModels}

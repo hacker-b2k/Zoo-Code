@@ -5,7 +5,6 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { cn } from "@/lib/utils"
@@ -52,21 +51,22 @@ export const Mimo = ({ apiConfiguration, setApiConfigurationField }: MimoProps) 
 				</VSCodeDropdown>
 			</div>
 			<div>
-				<ApiKeyInput
+				<VSCodeTextField
 					value={apiConfiguration?.mimoApiKey || ""}
+					type="password"
 					onInput={handleInputChange("mimoApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
-					label={<label className="block font-medium mb-1">{t("settings:providers.mimoApiKey")}</label>}
-					data-testid="mimo-api-key">
-					<div className="text-sm text-vscode-descriptionForeground">
-						{t("settings:providers.apiKeyStorageNotice")}
-					</div>
-					{!apiConfiguration?.mimoApiKey && (
-						<VSCodeButtonLink href="https://platform.xiaomimimo.com" appearance="secondary">
-							{t("settings:providers.getMimoApiKey")}
-						</VSCodeButtonLink>
-					)}
-				</ApiKeyInput>
+					className="w-full">
+					<label className="block font-medium mb-1">{t("settings:providers.mimoApiKey")}</label>
+				</VSCodeTextField>
+				<div className="text-sm text-vscode-descriptionForeground">
+					{t("settings:providers.apiKeyStorageNotice")}
+				</div>
+				{!apiConfiguration?.mimoApiKey && (
+					<VSCodeButtonLink href="https://platform.xiaomimimo.com" appearance="secondary">
+						{t("settings:providers.getMimoApiKey")}
+					</VSCodeButtonLink>
+				)}
 			</div>
 		</>
 	)

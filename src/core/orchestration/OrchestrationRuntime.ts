@@ -669,61 +669,48 @@ export class OrchestrationRuntime extends EventEmitter {
 				return
 			}
 
-			const body =
-				entry.kind === "completed" || entry.kind === "review_digest"
-					? (entry.summary ?? "(empty summary)")
-					: entry.kind === "failed" || entry.kind === "cancelled"
-						? (entry.error ?? entry.summary ?? "failed")
-						: (entry.summary ?? entry.error ?? entry.kind)
+			// SHORT UI breadcrumb only — no full result injection into chat.
+			// Full results are delivered as a batch at the next reasoning boundary
+			// via ResultInbox.collect() in recursivelyMakeClineRequests.
+			// This keeps the chat clean and delivers all results at once.
+			const status =
+				entry.kind === "completed"
+					? "completed"
+					: entry.kind === "failed"
+						? "failed"
+						: entry.kind === "cancelled"
+							? "cancelled"
+							: entry.kind === "question"
+								? "has a question"
+								: entry.kind === "review_digest"
+									? "review digest"
+									: entry.kind
 
-			const notice =
-				`[worker_event kind=${entry.kind} worker="${entry.name}" id=${entry.workerId}` +
-				` role=${entry.role}` +
-				(entry.apiConfigName ? ` provider=${entry.apiConfigName}` : "") +
-				` attempt=${entry.attempt}]\n${body}\n\n` +
-				(entry.kind === "review_digest"
-					? `(Reviewer digest only - worker still watching. Use list_workers / get_worker_status for evidence; do not treat as final worker completion.)`
-					: `(Also stored in ResultInbox - use collect_results to drain unread. ` +
-						`Reply to the worker if it asked a question, or continue orchestration.)`)
+			const breadcrumb = `[${entry.kind}] "${entry.name}" ${status}`
 
-			// UI breadcrumb when main is focused
+			// UI breadcrumb — non-interactive, just a visual indicator in the chat.
+			// Does NOT wake the agent or inject full result text.
 			try {
-				await parent.say?.("text", notice, undefined, false, undefined, undefined, {
+				await parent.say?.("text", breadcrumb, undefined, false, undefined, undefined, {
 					isNonInteractive: true,
 				})
 			} catch {
 				// non-fatal
 			}
 
-			// If main is blocked on an ask (completion_result / followup / idle), fulfill it
-			// so the agent loop can continue with the worker notice as user message.
-			const ask = parent.taskAsk
-			if (ask) {
-				try {
-					// submitUserMessage answers pending ask and continues the loop (do not also queue).
-					await parent.submitUserMessage?.(notice)
-					return
-				} catch {
-					// fall through
+			// If worker has a question, wake the agent so it can respond.
+			// Questions need immediate attention, unlike completed/failed results.
+			if (entry.kind === "question") {
+				const ask = parent.taskAsk
+				if (ask) {
+					try {
+						await parent.submitUserMessage?.(
+							`[worker_question] "${entry.name}" asks: ${entry.summary ?? entry.error ?? "worker needs input"}`,
+						)
+					} catch {
+						// fall through
+					}
 				}
-			}
-
-			// Not blocked: queue for next drain so main sees it on next turn without stealing focus mid-stream.
-			try {
-				if (typeof parent.messageQueueService?.addMessage === "function") {
-					parent.messageQueueService.addMessage(notice)
-				}
-				// If main is idle/blocked, process queue when possible
-				const status = String(parent.taskStatus ?? "").toLowerCase()
-				if (
-					typeof parent.processQueuedMessages === "function" &&
-					(status === "idle" || status === "resumable" || status === "interactive")
-				) {
-					parent.processQueuedMessages()
-				}
-				void provider.postStateToWebview?.()
-			} catch {
-				// ignore
 			}
 		} catch (err) {
 			console.error(`[OrchestrationRuntime#notifyParentAndWake] failed: ${(err as Error)?.message ?? err}`)

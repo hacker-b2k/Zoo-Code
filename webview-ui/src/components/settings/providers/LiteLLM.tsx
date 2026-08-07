@@ -16,7 +16,6 @@ import { vscode } from "@src/utils/vscode"
 import { useExtensionState } from "@src/context/ExtensionStateContext"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { Button } from "@src/components/ui"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -117,16 +116,18 @@ export const LiteLLM = ({
 				<label className="block font-medium mb-1">{t("settings:providers.litellmBaseUrl")}</label>
 			</VSCodeTextField>
 
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.litellmApiKey || ""}
+				type="password"
 				onInput={handleInputChange("litellmApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.litellmApiKey")}</label>}
-				data-testid="litellm-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.litellmApiKey")}</label>
+			</VSCodeTextField>
+
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
 
 			<Button
 				variant="outline"

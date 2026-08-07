@@ -6,7 +6,6 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -35,21 +34,22 @@ export const Gemini = ({ apiConfiguration, setApiConfigurationField }: GeminiPro
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.geminiApiKey || ""}
+				type="password"
 				onInput={handleInputChange("geminiApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.geminiApiKey")}</label>}
-				data-testid="gemini-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.geminiApiKey && (
-					<VSCodeButtonLink href="https://ai.google.dev/" appearance="secondary">
-						{t("settings:providers.getGeminiApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.geminiApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.geminiApiKey && (
+				<VSCodeButtonLink href="https://ai.google.dev/" appearance="secondary">
+					{t("settings:providers.getGeminiApiKey")}
+				</VSCodeButtonLink>
+			)}
 
 			<div>
 				<Checkbox

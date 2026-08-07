@@ -5,7 +5,6 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -30,21 +29,22 @@ export const XAI = ({ apiConfiguration, setApiConfigurationField }: XAIProps) =>
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.xaiApiKey || ""}
+				type="password"
 				onInput={handleInputChange("xaiApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.xaiApiKey")}</label>}
-				data-testid="xai-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.xaiApiKey && (
-					<VSCodeButtonLink href="https://api.x.ai/docs" appearance="secondary">
-						{t("settings:providers.getXaiApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.xaiApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.xaiApiKey && (
+				<VSCodeButtonLink href="https://api.x.ai/docs" appearance="secondary">
+					{t("settings:providers.getXaiApiKey")}
+				</VSCodeButtonLink>
+			)}
 		</>
 	)
 }

@@ -249,14 +249,17 @@ export class ProviderManager {
 				failureClass,
 			}
 		} catch (err) {
-			// Skip broken profile: recurse with advanced index via synthetic worker state
+			// Skip broken profile: recurse with advanced index via synthetic worker state.
+			// Do NOT increment providerSwitchCount — skipping an invalid profile is not
+			// a real switch. Only actual successful switches increment this counter.
+			// This prevents hitting maxProviderSwitches when many invalid profiles
+			// exist in the chain (e.g. "null", unconfigured providers).
 			return this.resolveOnFailure({
 				...params,
 				worker: {
 					...params.worker,
 					fallbackIndex: nextIndex,
 				},
-				providerSwitchCount: params.providerSwitchCount + 1,
 				error: err,
 			})
 		}
@@ -265,12 +268,18 @@ export class ProviderManager {
 	/**
 	 * Build ordered unique chain of profile names for a worker.
 	 * Appends user-enabled worker pool names so multi-provider failover works without manual fallback lists.
+	 * Filters out null sentinels and obviously invalid names.
 	 */
 	buildChain(params: { preferred?: string; perWorkerFallback?: string[]; current?: string }): string[] {
 		const ordered: string[] = []
+		const SENTINELS = new Set(["null", "undefined", "none", "nil", "n/a", ""])
 		const push = (n?: string) => {
-			if (n && n.trim() && !ordered.includes(n.trim())) {
-				ordered.push(n.trim())
+			if (!n) return
+			const trimmed = n.trim().toLowerCase()
+			if (!trimmed || SENTINELS.has(trimmed)) return
+			const original = n.trim()
+			if (!ordered.includes(original)) {
+				ordered.push(original)
 			}
 		}
 

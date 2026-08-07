@@ -5,7 +5,6 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 
 import { inputEventTransform } from "../transforms"
 
@@ -30,21 +29,22 @@ export const DeepSeek = ({ apiConfiguration, setApiConfigurationField }: DeepSee
 
 	return (
 		<>
-			<ApiKeyInput
+			<VSCodeTextField
 				value={apiConfiguration?.deepSeekApiKey || ""}
+				type="password"
 				onInput={handleInputChange("deepSeekApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				label={<label className="block font-medium mb-1">{t("settings:providers.deepSeekApiKey")}</label>}
-				data-testid="deepseek-api-key">
-				<div className="text-sm text-vscode-descriptionForeground">
-					{t("settings:providers.apiKeyStorageNotice")}
-				</div>
-				{!apiConfiguration?.deepSeekApiKey && (
-					<VSCodeButtonLink href="https://platform.deepseek.com/" appearance="secondary">
-						{t("settings:providers.getDeepSeekApiKey")}
-					</VSCodeButtonLink>
-				)}
-			</ApiKeyInput>
+				className="w-full">
+				<label className="block font-medium mb-1">{t("settings:providers.deepSeekApiKey")}</label>
+			</VSCodeTextField>
+			<div className="text-sm text-vscode-descriptionForeground -mt-2">
+				{t("settings:providers.apiKeyStorageNotice")}
+			</div>
+			{!apiConfiguration?.deepSeekApiKey && (
+				<VSCodeButtonLink href="https://platform.deepseek.com/" appearance="secondary">
+					{t("settings:providers.getDeepSeekApiKey")}
+				</VSCodeButtonLink>
+			)}
 		</>
 	)
 }

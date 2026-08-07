@@ -4,7 +4,6 @@ import { VSCodeTextField, VSCodeDropdown, VSCodeOption } from "@vscode/webview-u
 import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 
 import { inputEventTransform } from "../transforms"
@@ -47,27 +46,28 @@ export const Moonshot = ({ apiConfiguration, setApiConfigurationField }: Moonsho
 				</VSCodeDropdown>
 			</div>
 			<div>
-				<ApiKeyInput
+				<VSCodeTextField
 					value={apiConfiguration?.moonshotApiKey || ""}
+					type="password"
 					onInput={handleInputChange("moonshotApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
-					label={<label className="block font-medium mb-1">{t("settings:providers.moonshotApiKey")}</label>}
-					data-testid="moonshot-api-key">
-					<div className="text-sm text-vscode-descriptionForeground">
-						{t("settings:providers.apiKeyStorageNotice")}
-					</div>
-					{!apiConfiguration?.moonshotApiKey && (
-						<VSCodeButtonLink
-							href={
-								apiConfiguration.moonshotBaseUrl === "https://api.moonshot.cn/v1"
-									? "https://platform.moonshot.cn/console/api-keys"
-									: "https://platform.moonshot.ai/console/api-keys"
-							}
-							appearance="secondary">
-							{t("settings:providers.getMoonshotApiKey")}
-						</VSCodeButtonLink>
-					)}
-				</ApiKeyInput>
+					className="w-full">
+					<label className="block font-medium mb-1">{t("settings:providers.moonshotApiKey")}</label>
+				</VSCodeTextField>
+				<div className="text-sm text-vscode-descriptionForeground">
+					{t("settings:providers.apiKeyStorageNotice")}
+				</div>
+				{!apiConfiguration?.moonshotApiKey && (
+					<VSCodeButtonLink
+						href={
+							apiConfiguration.moonshotBaseUrl === "https://api.moonshot.cn/v1"
+								? "https://platform.moonshot.cn/console/api-keys"
+								: "https://platform.moonshot.ai/console/api-keys"
+						}
+						appearance="secondary">
+						{t("settings:providers.getMoonshotApiKey")}
+					</VSCodeButtonLink>
+				)}
 			</div>
 		</>
 	)

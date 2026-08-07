@@ -4,7 +4,6 @@ import { VSCodeTextField, VSCodeDropdown, VSCodeOption } from "@vscode/webview-u
 import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { ApiKeyInput } from "@src/components/ui/ApiKeyInput"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 
 import { inputEventTransform } from "../transforms"
@@ -46,27 +45,28 @@ export const MiniMax = ({ apiConfiguration, setApiConfigurationField }: MiniMaxP
 				</VSCodeDropdown>
 			</div>
 			<div>
-				<ApiKeyInput
+				<VSCodeTextField
 					value={apiConfiguration?.minimaxApiKey || ""}
+					type="password"
 					onInput={handleInputChange("minimaxApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
-					label={<label className="block font-medium mb-1">{t("settings:providers.minimaxApiKey")}</label>}
-					data-testid="minimax-api-key">
-					<div className="text-sm text-vscode-descriptionForeground">
-						{t("settings:providers.apiKeyStorageNotice")}
-					</div>
-					{!apiConfiguration?.minimaxApiKey && (
-						<VSCodeButtonLink
-							href={
-								apiConfiguration.minimaxBaseUrl === "https://api.minimaxi.com/v1"
-									? "https://platform.minimaxi.com/user-center/basic-information/interface-key"
-									: "https://www.minimax.io/platform/user-center/basic-information/interface-key"
-							}
-							appearance="secondary">
-							{t("settings:providers.getMiniMaxApiKey")}
-						</VSCodeButtonLink>
-					)}
-				</ApiKeyInput>
+					className="w-full">
+					<label className="block font-medium mb-1">{t("settings:providers.minimaxApiKey")}</label>
+				</VSCodeTextField>
+				<div className="text-sm text-vscode-descriptionForeground">
+					{t("settings:providers.apiKeyStorageNotice")}
+				</div>
+				{!apiConfiguration?.minimaxApiKey && (
+					<VSCodeButtonLink
+						href={
+							apiConfiguration.minimaxBaseUrl === "https://api.minimaxi.com/v1"
+								? "https://platform.minimaxi.com/user-center/basic-information/interface-key"
+								: "https://www.minimax.io/platform/user-center/basic-information/interface-key"
+						}
+						appearance="secondary">
+						{t("settings:providers.getMiniMaxApiKey")}
+					</VSCodeButtonLink>
+				)}
 			</div>
 		</>
 	)
