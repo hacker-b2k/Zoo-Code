@@ -3339,24 +3339,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					const iterator = stream[Symbol.asyncIterator]()
 
 					// Bound every provider read. A provider that neither emits nor closes must
-					// not leave the task and message queue permanently busy.
-					// Staged stream liveness: hard timeout and responsive abort remain as
-					// before; the controller additionally derives a soft "stalled"
-					// warning taken from observed activity across text/reasoning/tool
-					// chunks so a silent provider surfaces visible state before the
-					// final hard timeout.
+					// not leave the task and message queue permanently busy. The hard timeout
+					// is wall-clock based and starts from the last MEANINGFUL activity so
+					// empty/internal stream events do not reset the timer.
 					const { StreamLivenessController } = await import("./StreamLivenessController")
 					const liveness = new StreamLivenessController()
-					let stallNudgeShown = false
 
 					const nextChunkWithAbort = async (timeoutMs = DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS) => {
 						const nextPromise = iterator.next()
 						const controller = this.currentRequestAbortController
 						const signal = controller?.signal
 						let abortHandler: (() => void) | undefined
-						// Wall-clock hard timeout: starts from the last MEANINGFUL activity,
-						// not from the last iterator.next() resolution. Empty/internal stream
-						// events must not reset this timer.
 						const hardTimeoutPromise = new Promise<never>((_, reject) => {
 							const remaining = liveness.msUntil("expired")
 							const effectiveMs = remaining !== null && remaining < timeoutMs ? remaining : timeoutMs
@@ -3370,43 +3363,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							if (signal?.aborted) abortHandler()
 							else signal?.addEventListener("abort", abortHandler, { once: true })
 						})
-						// Soft warning: when activity has been silent past the "stalled"
-						// threshold, emit a non-terminal status so the task and UI do not
-						// look frozen, and record no duplicate nudge across repeated checks.
-						const stallWarning = new Promise<{ livenessWarning: true }>((resolve) => {
-							const checkMs = liveness.msUntil("stalled")
-							if (checkMs === null || checkMs >= timeoutMs) return
-							setTimeout(() => {
-								if (liveness.stage === "stalled" && !stallNudgeShown) {
-									stallNudgeShown = true
-									resolve({ livenessWarning: true })
-								}
-							}, checkMs)
-						})
 
 						try {
-							const raced = await Promise.race([
-								nextPromise,
-								hardTimeoutPromise,
-								abortPromise,
-								stallWarning,
-							])
-							if (raced && typeof raced === "object" && "livenessWarning" in raced) {
-								await this.say(
-									"stream_stalled_warning",
-									"Provider is responding slowly, please wait...",
-									undefined,
-									true,
-									undefined,
-									undefined,
-									{
-										isNonInteractive: true,
-									},
-								).catch(() => {})
-								// After showing the warning, continue waiting for the actual chunk.
-								// The hard timeout and abort still apply via their own promises.
-								return nextPromise
-							}
+							const raced = await Promise.race([nextPromise, hardTimeoutPromise, abortPromise])
 							return raced
 						} finally {
 							if (signal && abortHandler) signal.removeEventListener("abort", abortHandler)
@@ -3430,9 +3389,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						// This ensures the wall-clock timeout tracks real provider
 						// inactivity, not empty/internal stream events.
 						liveness.recordActivity()
-						// New activity clears the one-shot soft warning so a later stall
-						// can signal again without spamming every reset.
-						stallNudgeShown = false
 
 						switch (chunk.type) {
 							case "reasoning": {

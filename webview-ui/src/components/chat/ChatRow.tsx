@@ -1691,16 +1691,6 @@ export const ChatRowContent = ({
 						/>
 					)
 				}
-				case "stream_stalled_warning":
-					return (
-						<WarningRow
-							title={t("chat:streamStalled.title", "Slow Response")}
-							message={
-								message.text ||
-								t("chat:streamStalled.message", "Provider is responding slowly, please wait...")
-							}
-						/>
-					)
 				default:
 					return (
 						<>
