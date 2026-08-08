@@ -13,6 +13,7 @@ import {
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { getOpenRouterAuthUrl } from "@src/oauth/urls"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
+import { ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 
@@ -58,25 +59,23 @@ export const OpenRouter = ({
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.openRouterApiKey || ""}
-				type="password"
 				onInput={handleInputChange("openRouterApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<div className="flex justify-between items-center mb-1">
-					<label className="block font-medium">{t("settings:providers.openRouterApiKey")}</label>
-					{apiConfiguration?.openRouterApiKey && (
-						<OpenRouterBalanceDisplay
-							apiKey={apiConfiguration.openRouterApiKey}
-							baseUrl={apiConfiguration.openRouterBaseUrl}
-						/>
-					)}
-				</div>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={
+					<div className="flex justify-between items-center mb-1">
+						<label className="block font-medium">{t("settings:providers.openRouterApiKey")}</label>
+						{apiConfiguration?.openRouterApiKey && (
+							<OpenRouterBalanceDisplay
+								apiKey={apiConfiguration.openRouterApiKey}
+								baseUrl={apiConfiguration.openRouterBaseUrl}
+							/>
+						)}
+					</div>
+				}
+				className="w-full"
+			/>
 			{!apiConfiguration?.openRouterApiKey && (
 				<VSCodeButtonLink href={getOpenRouterAuthUrl(uriScheme)} style={{ width: "100%" }} appearance="primary">
 					{t("settings:providers.getOpenRouterApiKey")}

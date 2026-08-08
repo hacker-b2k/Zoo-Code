@@ -6,6 +6,7 @@ import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
+import { ApiKeyInput } from "@src/components/ui"
 import { useSelectedModel } from "@src/components/ui/hooks/useSelectedModel"
 
 import { inputEventTransform, noTransform } from "../transforms"
@@ -42,17 +43,13 @@ export const Anthropic = ({ apiConfiguration, setApiConfigurationField }: Anthro
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.apiKey || ""}
-				type="password"
 				onInput={handleInputChange("apiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.anthropicApiKey")}</label>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<label className="block font-medium mb-1">{t("settings:providers.anthropicApiKey")}</label>}
+				className="w-full"
+	/>
 			{!apiConfiguration?.apiKey && (
 				<VSCodeButtonLink href="https://console.anthropic.com/settings/keys" appearance="secondary">
 					{t("settings:providers.getAnthropicApiKey")}

@@ -12,7 +12,7 @@ import {
 } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { Button, StandardTooltip } from "@src/components/ui"
+import { Button, ApiKeyInput, StandardTooltip } from "@src/components/ui"
 import { vscode } from "@src/utils/vscode"
 
 import { ModelPicker } from "../ModelPicker"
@@ -101,14 +101,13 @@ export const CustomEndpoint = ({
 				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.baseUrl")}</label>
 			</VSCodeTextField>
 
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.customEndpointApiKey || ""}
-				type="password"
 				onInput={handleInputChange("customEndpointApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.apiKey")}</label>
-			</VSCodeTextField>
+				label={<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.apiKey")}</label>}
+				className="w-full"
+			/>
 
 			<div>
 				<label className="block font-medium mb-1">{t("settings:providers.customEndpoint.format")}</label>

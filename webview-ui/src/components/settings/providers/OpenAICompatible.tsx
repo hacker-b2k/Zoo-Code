@@ -15,7 +15,7 @@ import {
 } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { Button, StandardTooltip } from "@src/components/ui"
+import { Button, StandardTooltip, ApiKeyInput } from "@src/components/ui"
 
 import { convertHeadersToObject } from "../utils/headers"
 import { inputEventTransform, noTransform } from "../transforms"
@@ -136,14 +136,13 @@ export const OpenAICompatible = ({
 				className="w-full">
 				<label className="block font-medium mb-1">{t("settings:providers.openAiBaseUrl")}</label>
 			</VSCodeTextField>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.openAiApiKey || ""}
-				type="password"
 				onInput={handleInputChange("openAiApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.apiKey")}</label>
-			</VSCodeTextField>
+				label={<label className="block font-medium mb-1">{t("settings:providers.apiKey")}</label>}
+				className="w-full"
+			/>
 			<ModelPicker
 				apiConfiguration={apiConfiguration}
 				setApiConfigurationField={setApiConfigurationField}

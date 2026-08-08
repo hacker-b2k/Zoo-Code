@@ -5,6 +5,7 @@ import { type ProviderSettings, type RouterModels, mistralDefaultModelId } from 
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
+import { ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 
@@ -31,17 +32,13 @@ export const Mistral = ({ apiConfiguration, setApiConfigurationField }: MistralP
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.mistralApiKey || ""}
-				type="password"
 				onInput={handleInputChange("mistralApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<span className="font-medium">{t("settings:providers.mistralApiKey")}</span>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<span className="font-medium">{t("settings:providers.mistralApiKey")}</span>}
+				className="w-full"
+	/>
 			{!apiConfiguration?.mistralApiKey && (
 				<VSCodeButtonLink href="https://console.mistral.ai/" appearance="secondary">
 					{t("settings:providers.getMistralApiKey")}

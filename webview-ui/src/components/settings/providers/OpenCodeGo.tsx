@@ -1,5 +1,4 @@
 import { useCallback, useState, useEffect, useRef } from "react"
-import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 
 import {
 	type ProviderSettings,
@@ -15,7 +14,7 @@ import type { RouterName } from "@roo/api"
 import { vscode } from "@src/utils/vscode"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
-import { Button } from "@src/components/ui"
+import { Button, ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -92,17 +91,13 @@ export const OpenCodeGo = ({
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.opencodeGoApiKey || ""}
-				type="password"
 				onInput={handleInputChange("opencodeGoApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.opencodeGoApiKey")}</label>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<label className="block font-medium mb-1">{t("settings:providers.opencodeGoApiKey")}</label>}
+				className="w-full"
+			/>
 			{!apiConfiguration?.opencodeGoApiKey && (
 				<VSCodeButtonLink href="https://opencode.ai/docs/go/" appearance="primary" style={{ width: "100%" }}>
 					{t("settings:providers.getOpencodeGoApiKey")}

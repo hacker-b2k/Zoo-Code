@@ -6,7 +6,7 @@ import { VSCodeLink, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { type ProviderSettings, VERTEX_REGIONS, VERTEX_1M_CONTEXT_MODEL_IDS, looksLikeFilePath } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@src/components/ui"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 
@@ -95,13 +95,13 @@ export const Vertex = ({ apiConfiguration, setApiConfigurationField }: VertexPro
 				className="w-full">
 				<label className="block font-medium mb-1">{t("settings:providers.googleCloudKeyFile")}</label>
 			</VSCodeTextField>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.vertexApiKey || ""}
 				onInput={handleInputChange("vertexApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.vertexApiKey")}</label>
-			</VSCodeTextField>
+				label={<label className="block font-medium mb-1">{t("settings:providers.vertexApiKey")}</label>}
+				className="w-full"
+			/>
 			<div className="text-sm text-vscode-descriptionForeground -mt-1 mb-2">
 				<Trans
 					i18nKey="settings:providers.vertexApiKeyDescription"

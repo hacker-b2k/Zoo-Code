@@ -1,5 +1,4 @@
 import { useCallback } from "react"
-import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 
 import {
 	type ProviderSettings,
@@ -11,6 +10,7 @@ import {
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
+import { ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -49,17 +49,13 @@ export const VercelAiGateway = ({
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.vercelAiGatewayApiKey || ""}
-				type="password"
 				onInput={handleInputChange("vercelAiGatewayApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.vercelAiGatewayApiKey")}</label>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<label className="block font-medium mb-1">{t("settings:providers.vercelAiGatewayApiKey")}</label>}
+				className="w-full"
+			/>
 			{!apiConfiguration?.vercelAiGatewayApiKey && (
 				<VSCodeButtonLink
 					href="https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=AI+Gateway+API+Key"
