@@ -68,7 +68,7 @@ export function createReadFileTool(options: ReadFileToolOptions = {}): OpenAI.Ch
 		` Supports two modes: 'slice' (default) reads lines sequentially with offset/limit; 'indentation' extracts complete semantic code blocks around an anchor line based on indentation hierarchy.` +
 		` Slice mode is ideal for initial file exploration, understanding overall structure, reading configuration/data files, or when you need a specific line range. Use it when you don't have a target line number.` +
 		` PREFER indentation mode when you have a specific line number from search results, error messages, or definition lookups - it guarantees complete, syntactically valid code blocks without mid-function truncation.` +
-		` IMPORTANT: Indentation mode requires anchor_line to be useful. Without it, only header content (imports) is returned.`
+		` IMPORTANT: When mode='indentation' and anchor_line is missing, the tool falls back to slice mode. Always provide anchor_line for meaningful indentation results.`
 
 	const limitNote = ` By default, returns up to ${DEFAULT_LINE_LIMIT} lines per file. Lines longer than ${MAX_LINE_LENGTH} characters are truncated.`
 

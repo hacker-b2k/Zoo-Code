@@ -1,90 +1,52 @@
 <#
 .SYNOPSIS
-  Cherry-pick a specific upstream commit into our fork
+  Mark upstream sync point - updates lastSyncDate in STATE.json.
 .DESCRIPTION
-  Stage 2 of the upstream sync system: cherry-pick a specific commit
-  and mark it as imported in STATE.json
-.PARAMETER Sha
-  The full SHA of the upstream commit to cherry-pick
+  After reviewing commits with upstream-check.ps1 and deciding what to keep,
+  run this script to advance the sync date. Prevents those commits from
+  appearing in future checks.
+  
+  Does NOT merge or cherry-pick. Only updates the date marker.
 .EXAMPLE
-  ./scripts/upstream-import.ps1 abc123def456
+  ./scripts/upstream-import.ps1
 #>
 
-param(
-    [Parameter(Mandatory=$true)]
-    [string]$Sha
-)
-
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$UpstreamDir = Join-Path $RepoRoot ".upstream"
-$StateFile = Join-Path $UpstreamDir "STATE.json"
+$StateFile = Join-Path $RepoRoot ".upstream\STATE.json"
 
-$Cyan = "Cyan"
-$Green = "Green"
-$Yellow = "Yellow"
-$Gray = "Gray"
-$Red = "Red"
-$White = "White"
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  UPSTREAM IMPORT - Advance Sync Date" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
 
-if ($Sha.Length -lt 7) {
-    Write-Host "[ERR] SHA too short. Provide at least 7 characters." -ForegroundColor $Red
+if (-not (Test-Path $StateFile)) {
+    Write-Host "[!] STATE.json not found. Run upstream-check.ps1 first." -ForegroundColor Yellow
     exit 1
 }
 
-# Resolve full SHA
-$FullSha = git rev-parse "$Sha^{commit}" 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERR] Commit $Sha not found. Did you run 'pnpm upstream:check' first?" -ForegroundColor $Red
-    exit 1
-}
-
-Write-Host "[INFO] Commit details:" -ForegroundColor $Cyan
-git log --oneline -1 $FullSha 2>&1 | ForEach-Object { Write-Host "   $_" -ForegroundColor $Yellow }
-$CommitMsg = git log --format="%s" -1 $FullSha 2>&1
-$AuthorDate = git log --format="%ai" -1 $FullSha 2>&1
-
-Write-Host "   Author date: $AuthorDate" -ForegroundColor $Gray
-
-# Check if already imported
 $State = Get-Content $StateFile | ConvertFrom-Json
-$AlreadyImported = $State.importedCommits | Where-Object { $_.sha -eq $FullSha }
-if ($AlreadyImported) {
-    Write-Host "[WARN] Commit $($FullSha.Substring(0,9)) is already imported!" -ForegroundColor $Red
-    exit 0
-}
+$OldDate = $State.lastSyncDate
+$UpstreamHead = (git rev-parse upstream/main 2>&1).Trim()
+$UpstreamHeadShort = $UpstreamHead.Substring(0, 9)
+$Now = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
 
-# Do the cherry-pick
-Write-Host "[ACT] Cherry-picking $($FullSha.Substring(0,9))..." -ForegroundColor $Cyan
-$PickResult = git cherry-pick $FullSha 2>&1
+Write-Host ""
+Write-Host "Previous sync date : $OldDate" -ForegroundColor Yellow
+Write-Host "New sync date      : $Now" -ForegroundColor Green
+Write-Host "Upstream HEAD      : $UpstreamHeadShort" -ForegroundColor Green
+Write-Host ""
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[WARN] Cherry-pick had conflicts!" -ForegroundColor $Yellow
-    Write-Host "   Fix conflicts manually, then run:" -ForegroundColor $White
-    Write-Host "   git add <files> ; git cherry-pick --continue" -ForegroundColor $White
-    Write-Host "   Then mark as imported:" -ForegroundColor $White
-    Write-Host "   ./scripts/upstream-import.ps1 $FullSha" -ForegroundColor $White
-    exit 1
-}
+$State.lastSyncDate = $Now
+$State.lastSyncCommit = $UpstreamHeadShort
+$State.lastCheckedDate = $Now
+$State.upstreamHead = $UpstreamHeadShort
 
-# Mark as imported in state
-$ImportRecord = @{
-    sha = $FullSha
-    message = $CommitMsg
-    authorDate = $AuthorDate
-    importedAt = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    status = "imported"
-}
+$State | ConvertTo-Json | Set-Content $StateFile
 
-$State.importedCommits += $ImportRecord
-
-# Remove from pending if present
-$State.pendingCommits = @($State.pendingCommits | Where-Object { $_.sha -ne $FullSha })
-
-# Update last sync info
-$State.lastSyncCommit = $FullSha
-$State.lastSyncAt = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-
-$State | ConvertTo-Json -Depth 5 | Set-Content $StateFile
-
-Write-Host "[OK] Successfully imported $($FullSha.Substring(0,9))" -ForegroundColor $Green
-Write-Host "   Marked as IMPORTED in STATE.json" -ForegroundColor $Green
+Write-Host "[OK] STATE.json updated. Sync date advanced to: $Now" -ForegroundColor Green
+Write-Host ""
+Write-Host "Next steps:" -ForegroundColor Cyan
+Write-Host "   1. git add .upstream/STATE.json" -ForegroundColor White
+Write-Host "   2. git commit -m 'chore: upstream sync up to $UpstreamHeadShort'" -ForegroundColor White
+Write-Host "   3. git push origin integration" -ForegroundColor White
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan

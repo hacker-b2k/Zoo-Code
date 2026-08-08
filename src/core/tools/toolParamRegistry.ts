@@ -188,10 +188,10 @@ export const TOOL_PARAM_REGISTRY: Record<string, ToolParamSpec> = {
 		required: ["pageId", "url"],
 	},
 	extract_browser_urls: {
-		required: ["pageId"],
+		required: [], // pageId optional — auto-detected if only one tab open
 	},
 	extract_browser_data: {
-		required: ["pageId"],
+		required: [], // pageId optional — auto-detected if only one tab open
 	},
 	click_browser_element: {
 		required: ["pageId", "selector"],

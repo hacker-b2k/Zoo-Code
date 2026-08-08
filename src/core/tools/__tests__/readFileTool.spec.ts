@@ -1093,18 +1093,18 @@ describe("ReadFileTool", () => {
 			)
 		})
 
-		it("should default anchorLine to 1 when neither anchor_line nor offset in indentation mode", async () => {
+		it("should fall back to slice mode when indentation mode has no anchor_line or offset", async () => {
 			const mockTask = createMockTask()
 			const callbacks = createMockCallbacks()
 
 			mockedFsReadFile.mockResolvedValue(Buffer.from("content"))
-			mockedReadWithIndentation.mockReturnValue({
+			mockedReadWithSlice.mockReturnValue({
 				content: "1 | first line",
 				returnedLines: 1,
 				totalLines: 10,
 				wasTruncated: false,
-				includedRanges: [[1, 1]],
-			})
+				includedRanges: [],
+			} as any)
 
 			await readFileTool.execute(
 				{
@@ -1115,10 +1115,10 @@ describe("ReadFileTool", () => {
 				callbacks,
 			)
 
-			expect(mockedReadWithIndentation).toHaveBeenCalledWith(
-				expect.any(String),
-				expect.objectContaining({ anchorLine: 1 }),
-			)
+			// Should NOT call readWithIndentation when no anchor_line and no offset
+			expect(mockedReadWithIndentation).not.toHaveBeenCalled()
+			// Should fall back to readWithSlice
+			expect(mockedReadWithSlice).toHaveBeenCalled()
 		})
 
 		it("should show truncation notice in indentation mode", async () => {

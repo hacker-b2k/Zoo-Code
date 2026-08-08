@@ -4,7 +4,7 @@ const WEB_RESEARCH_DESCRIPTION = `Use this high-level tool for non-interactive i
 
 Use interactive browser tools instead when the task requires clicking, forms, authentication, dynamic UI state, screenshots, or other browser interaction. Use open_tabs when the user explicitly asks to open a visible browser tab.
 
-Legacy calls using action=search with query, or action=read_url with url, remain accepted for conversation-history compatibility.`
+The "input" parameter is the primary way to use this tool. If "input" is omitted, the tool auto-infers from "query" (for search) or "url" (for direct URLs). You can provide just "query" or just "url" without "input" — it will work.`
 
 export default {
 	type: "function",
@@ -22,10 +22,10 @@ export default {
 				action: {
 					type: ["string", "null"],
 					enum: ["search", "read_url", null],
-					description: "Legacy adapter action",
+					description: "Action type (auto-inferred from query/url if omitted)",
 				},
-				query: { type: ["string", "null"], description: "Legacy search query" },
-				url: { type: ["string", "null"], description: "Legacy direct URL" },
+				query: { type: ["string", "null"], description: "Search query text (used as input if input is omitted)" },
+				url: { type: ["string", "null"], description: "Direct URL to read (used as input if input is omitted)" },
 				max_results: { type: ["number", "null"], description: "Maximum normalized sources (default 8)" },
 				read_top_sources: {
 					type: ["number", "null"],

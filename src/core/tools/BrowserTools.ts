@@ -101,6 +101,32 @@ export class NavigateBrowserPageTool extends BaseTool<"navigate_browser_page"> {
 	}
 }
 
+/**
+ * Resolve a pageId — use the explicit value if provided, otherwise auto-detect
+ * from open tabs. Returns the resolved pageId or an error message.
+ *
+ * Normalizes common "empty" sentinels that models may send when pageId is optional:
+ * null, undefined, empty string, "None", "null", "undefined"
+ */
+async function resolvePageId(
+	engine: BrowserEngineManager,
+	taskId: string,
+	pageId?: string | null,
+): Promise<{ resolved: string | null; error?: string }> {
+	// Normalize: treat falsy values and common "empty" sentinels as missing
+	const normalized = pageId && pageId !== "None" && pageId !== "null" && pageId !== "undefined" && pageId !== ""
+		? pageId
+		: null
+	if (normalized) return { resolved: normalized }
+
+	const tabs = engine.listPages(taskId)
+	if (tabs.length === 0) return { resolved: null, error: "No browser tabs open. Use open_browser_page first." }
+	if (tabs.length === 1) return { resolved: tabs[0].pageId }
+
+	const tabList = tabs.map((t, i) => `${i + 1}. [${t.pageId}] ${t.url}`).join("\n")
+	return { resolved: null, error: `Multiple tabs open. Specify pageId:\n${tabList}` }
+}
+
 // ============================================================
 // extract_browser_urls
 // ============================================================
@@ -112,20 +138,21 @@ export class ExtractBrowserUrlsTool extends BaseTool<"extract_browser_urls"> {
 		task: Task,
 		callbacks: ToolCallbacks,
 	): Promise<void> {
-		const { pageId, sameOriginOnly, limit } = params
+		const { sameOriginOnly, limit } = params
 		const { handleError, pushToolResult } = callbacks
 
 		try {
+			const engine = BrowserEngineManager.getInstance()
+			const { resolved: pageId, error: resolveError } = await resolvePageId(engine, task.taskId, params.pageId)
 			if (!pageId) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("extract_browser_urls")
 				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("extract_browser_urls" as any, "pageId" as any))
+				pushToolResult(resolveError ?? await task.sayAndCreateMissingParamError("extract_browser_urls" as any, "pageId" as any))
 				return
 			}
 
 			task.consecutiveMistakeCount = 0
-			const engine = BrowserEngineManager.getInstance()
 			const urls = await engine.extractUrls(task.taskId, pageId, {
 				sameOriginOnly: sameOriginOnly ?? undefined,
 				limit: limit ?? undefined,
@@ -158,20 +185,21 @@ export class ExtractBrowserDataTool extends BaseTool<"extract_browser_data"> {
 		task: Task,
 		callbacks: ToolCallbacks,
 	): Promise<void> {
-		const { pageId, selector, extractType, maxRows } = params
+		const { selector, extractType, maxRows } = params
 		const { handleError, pushToolResult } = callbacks
 
 		try {
+			const engine = BrowserEngineManager.getInstance()
+			const { resolved: pageId, error: resolveError } = await resolvePageId(engine, task.taskId, params.pageId)
 			if (!pageId) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("extract_browser_data")
 				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("extract_browser_data" as any, "pageId" as any))
+				pushToolResult(resolveError ?? await task.sayAndCreateMissingParamError("extract_browser_data" as any, "pageId" as any))
 				return
 			}
 
 			task.consecutiveMistakeCount = 0
-			const engine = BrowserEngineManager.getInstance()
 			const result = await engine.extractData(task.taskId, pageId, {
 				selector: selector ?? undefined,
 				extractType: (extractType as any) ?? undefined,
@@ -421,20 +449,21 @@ export class BrowserScreenshotTool extends BaseTool<"browser_screenshot"> {
 		task: Task,
 		callbacks: ToolCallbacks,
 	): Promise<void> {
-		const { pageId, fullPage } = params
+		const { fullPage } = params
 		const { handleError, pushToolResult } = callbacks
 
 		try {
+			const engine = BrowserEngineManager.getInstance()
+			const { resolved: pageId, error: resolveError } = await resolvePageId(engine, task.taskId, params.pageId)
 			if (!pageId) {
 				task.consecutiveMistakeCount++
 				task.recordToolError("browser_screenshot")
 				task.didToolFailInCurrentTurn = true
-				pushToolResult(await task.sayAndCreateMissingParamError("browser_screenshot" as any, "pageId" as any))
+				pushToolResult(resolveError ?? await task.sayAndCreateMissingParamError("browser_screenshot" as any, "pageId" as any))
 				return
 			}
 
 			task.consecutiveMistakeCount = 0
-			const engine = BrowserEngineManager.getInstance()
 
 			// Use the engine's screenshotPage method, passing fullPage option.
 			const { mimeType, data } = await engine.screenshotPage(task.taskId, pageId, {

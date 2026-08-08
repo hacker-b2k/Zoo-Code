@@ -30,7 +30,7 @@ export class WebResearchTool extends BaseTool<"web_research"> {
 		const query = typeof params.query === "string" ? params.query : null
 		const url = typeof params.url === "string" ? params.url : null
 		const directInput = typeof params.input === "string" ? params.input : null
-		const input = directInput ?? (action === "search" ? query : url)
+		const input = directInput ?? query ?? url
 
 		try {
 			if (!input) {

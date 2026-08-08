@@ -90,6 +90,10 @@ export class GetWorkerStatusTool extends BaseTool<"get_worker_status"> {
 									lastError: live.lastError ?? snapshot.lastError ?? null,
 									lastToolCall: live.lastToolCall ?? null,
 									currentStep: live.currentStep ?? null,
+									currentObjective: live.currentObjective ?? null,
+									percentComplete: live.percentComplete ?? null,
+									estimatedRemaining: live.estimatedRemaining ?? null,
+									summary: live.summary,
 									filesTouched: [...live.filesCreated, ...live.filesModified, ...live.filesDeleted],
 								}
 							: {

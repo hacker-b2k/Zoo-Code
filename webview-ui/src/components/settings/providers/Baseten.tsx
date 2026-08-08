@@ -1,10 +1,10 @@
 import { useCallback } from "react"
-import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 
 import type { ProviderSettings } from "@roo-code/types"
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
+import { ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 
@@ -30,17 +30,13 @@ export const Baseten = ({ apiConfiguration, setApiConfigurationField }: BasetenP
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.basetenApiKey || ""}
-				type="password"
 				onInput={handleInputChange("basetenApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.basetenApiKey")}</label>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<label className="block font-medium mb-1">{t("settings:providers.basetenApiKey")}</label>}
+				className="w-full"
+	/>
 			{!apiConfiguration?.basetenApiKey && (
 				<VSCodeButtonLink href="https://app.baseten.co/settings/api_keys" appearance="secondary">
 					{t("settings:providers.getBasetenApiKey")}

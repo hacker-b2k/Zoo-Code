@@ -476,10 +476,6 @@
 		"messageTemplate": "You have {{tools}} enabled via {{servers}}. Such a high number can confuse the model and lead to errors. Try to keep it below {{threshold}}.",
 		"openMcpSettings": "Open MCP Settings"
 	},
-	"streamStalled": {
-		"title": "Slow Response",
-		"message": "Provider is responding slowly, please wait..."
-	},
 	"readCommandOutput": {
 		"title": "Zoo read command output"
 	},

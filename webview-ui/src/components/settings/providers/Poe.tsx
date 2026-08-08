@@ -1,5 +1,4 @@
 import { useCallback, useState, useEffect, useRef } from "react"
-import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { useQueryClient } from "@tanstack/react-query"
 
 import {
@@ -17,7 +16,7 @@ import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { VSCodeButtonLink } from "@src/components/common/VSCodeButtonLink"
 import { useExtensionState } from "@src/context/ExtensionStateContext"
 import { vscode } from "@src/utils/vscode"
-import { Button } from "@src/components/ui"
+import { Button, ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -107,17 +106,13 @@ export const Poe = ({
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.poeApiKey || ""}
-				type="password"
 				onInput={handleInputChange("poeApiKey")}
 				placeholder={t("settings:placeholders.apiKey")}
-				className="w-full">
-				<label className="block font-medium mb-1">{t("settings:providers.poeApiKey")}</label>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={<label className="block font-medium mb-1">{t("settings:providers.poeApiKey")}</label>}
+				className="w-full"
+			/>
 			{!apiConfiguration?.poeApiKey && (
 				<VSCodeButtonLink href="https://poe.com/api_key" appearance="secondary">
 					{t("settings:providers.getPoeApiKey")}

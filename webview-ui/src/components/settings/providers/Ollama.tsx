@@ -6,6 +6,7 @@ import type { ProviderSettings, ExtensionMessage, ModelRecord, ResolvedModelCapa
 
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { useRouterModels } from "@src/components/ui/hooks/useRouterModels"
+import { ApiKeyInput } from "@src/components/ui"
 import { vscode } from "@src/utils/vscode"
 
 import { inputEventTransform } from "../transforms"
@@ -89,17 +90,16 @@ export const Ollama = ({ apiConfiguration, setApiConfigurationField, selectedMod
 				<label className="block font-medium mb-1">{t("settings:providers.ollama.baseUrl")}</label>
 			</VSCodeTextField>
 			{apiConfiguration?.ollamaBaseUrl && (
-				<VSCodeTextField
+				<ApiKeyInput
 					value={apiConfiguration?.ollamaApiKey || ""}
-					type="password"
 					onInput={handleInputChange("ollamaApiKey")}
 					placeholder={t("settings:placeholders.apiKey")}
+					label={<label className="block font-medium mb-1">{t("settings:providers.ollama.apiKey")}</label>}
 					className="w-full">
-					<label className="block font-medium mb-1">{t("settings:providers.ollama.apiKey")}</label>
 					<div className="text-xs text-vscode-descriptionForeground mt-1">
 						{t("settings:providers.ollama.apiKeyHelp")}
 					</div>
-				</VSCodeTextField>
+				</ApiKeyInput>
 			)}
 			<ModelPicker
 				apiConfiguration={apiConfiguration}

@@ -693,12 +693,15 @@ export class NativeToolCallParser {
 				break
 
 			case "web_research":
-				if (partialArgs.action !== undefined) {
+				// FIX: Accept partial args when action OR query OR url OR input is present
+				if (partialArgs.action !== undefined || partialArgs.query !== undefined || partialArgs.url !== undefined || partialArgs.input !== undefined) {
 					nativeArgs = {
+						input: this.coerceNullableStringParam(partialArgs.input),
 						action: this.coerceOptionalStringParam(partialArgs.action),
 						query: this.coerceNullableStringParam(partialArgs.query),
 						url: this.coerceNullableStringParam(partialArgs.url),
 						max_results: partialArgs.max_results != null ? Number(partialArgs.max_results) : null,
+						read_top_sources: partialArgs.read_top_sources != null ? Number(partialArgs.read_top_sources) : null,
 					}
 				}
 				break
@@ -719,9 +722,10 @@ export class NativeToolCallParser {
 				}
 				break
 			case "extract_browser_urls":
-				if (partialArgs.pageId !== undefined) {
+				// FIX: Always produce nativeArgs even without pageId for auto-detection
+				{
 					nativeArgs = {
-						pageId: partialArgs.pageId,
+						pageId: partialArgs.pageId ?? null,
 						sameOriginOnly: this.coerceOptionalBoolean(partialArgs.sameOriginOnly),
 						limit: partialArgs.limit != null ? Number(partialArgs.limit) : null,
 					}
@@ -1467,13 +1471,18 @@ export class NativeToolCallParser {
 					// and `searchWeb({}, …)` would search the literal string
 					// "[object Object]" — silent wrong-but-plausible results, which
 					// is worse than failing.
-					if (args.action) {
+					// FIX: Accept args when action OR query OR url OR input is present.
+					// Previously only `args.action` triggered nativeArgs, causing
+					// "missing nativeArgs" when model sent only `query` or `input`.
+					if (args.action || args.query || args.url || args.input) {
 						nativeArgs = {
+							input: this.coerceNullableStringParam(args.input),
 							action: this.coerceOptionalStringParam(args.action),
 							query: this.coerceNullableStringParam(args.query),
 							url: this.coerceNullableStringParam(args.url),
 							max_results: args.max_results != null ? Number(args.max_results) : null,
-						} as NativeArgsFor<TName>
+							read_top_sources: args.read_top_sources != null ? Number(args.read_top_sources) : null,
+						} as unknown as NativeArgsFor<TName>
 					}
 					break
 
@@ -1493,18 +1502,21 @@ export class NativeToolCallParser {
 					}
 					break
 				case "extract_browser_urls":
-					if (args.pageId) {
+					// FIX: Always produce nativeArgs even without pageId so the
+					// tool's resolvePageId auto-detection can run.
+					{
 						nativeArgs = {
-							pageId: args.pageId,
+							pageId: args.pageId ?? null,
 							sameOriginOnly: this.coerceOptionalBoolean(args.sameOriginOnly),
 							limit: args.limit != null ? Number(args.limit) : null,
 						} as NativeArgsFor<TName>
 					}
 					break
 				case "extract_browser_data":
-					if (args.pageId) {
+					// FIX: Always produce nativeArgs even without pageId.
+					{
 						nativeArgs = {
-							pageId: args.pageId,
+							pageId: args.pageId ?? null,
 							selector: args.selector ?? null,
 							extractType: args.extractType ?? null,
 							maxRows: args.maxRows != null ? Number(args.maxRows) : null,
@@ -1548,9 +1560,11 @@ export class NativeToolCallParser {
 					break
 
 				case "browser_screenshot":
-					if (args.pageId !== undefined) {
+					// FIX: Always produce nativeArgs even without pageId so the
+					// tool's resolvePageId auto-detection can run.
+					{
 						nativeArgs = {
-							pageId: args.pageId,
+							pageId: args.pageId ?? null,
 							fullPage: args.fullPage ?? undefined,
 						} as NativeArgsFor<TName>
 					}

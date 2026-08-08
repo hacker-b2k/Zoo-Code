@@ -16,6 +16,8 @@ import {
 	resolveToolAlias,
 } from "../prompts/tools/filter-tools-for-mode"
 
+import { type ToolDeliveryLevel, filterToCoreTools } from "./SmartToolSelector"
+
 interface BuildToolsOptions {
 	provider: ClineProvider
 	cwd: string
@@ -34,6 +36,13 @@ interface BuildToolsOptions {
 	includeAllToolsWithRestrictions?: boolean
 	/** Multi-agent role: "reviewer" strips to watch+report tools only. */
 	workerRole?: "worker" | "reviewer"
+	/**
+	 * Tool delivery level for payload optimization.
+	 * - "core": Only essential tools (file awareness + conversation). ~8 tools, ~2K tokens.
+	 * - "full": All mode-appropriate tools. ~50+ tools, ~15-20K tokens.
+	 * Defaults to "full" for backward compatibility.
+	 */
+	deliveryLevel?: ToolDeliveryLevel
 }
 
 interface BuildToolsResult {
@@ -94,6 +103,7 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 		modelInfo,
 		includeAllToolsWithRestrictions,
 		workerRole,
+		deliveryLevel = "full",
 	} = options
 
 	const mcpHub = provider.getMcpHub()
@@ -155,7 +165,14 @@ export async function buildNativeToolsArrayWithRestrictions(options: BuildToolsO
 	}
 
 	// Combine filtered tools (for backward compatibility and for allowedFunctionNames)
-	const filteredTools = [...filteredNativeTools, ...filteredMcpTools, ...nativeCustomTools]
+	let filteredTools = [...filteredNativeTools, ...filteredMcpTools, ...nativeCustomTools]
+
+	// Apply delivery level filtering for payload optimization.
+	// "core" level sends only essential tools (~8) to reduce payload size
+	// for conversational turns. "full" sends all mode-appropriate tools.
+	if (deliveryLevel === "core") {
+		filteredTools = filterToCoreTools(filteredTools)
+	}
 
 	// If includeAllToolsWithRestrictions is true, return ALL tools but provide
 	// allowed names based on mode filtering

@@ -2660,6 +2660,7 @@ export class ClineProvider
 			clineMessages: currentTask?.clineMessages || [],
 			currentTaskTodos: currentTask?.todoList || [],
 			orchestrationWorkers: this.getOrchestrationWorkersForWebview(currentTask),
+			workerResults: this.getWorkerResultsForWebview(currentTask),
 			lastFocusedWorkerId: this.lastFocusedWorkerId,
 			messageQueue: currentTask?.messageQueueService?.messages,
 			taskHistory: this.taskHistoryStore.getAll().filter((item: HistoryItem) => item.ts && item.task),
@@ -3621,6 +3622,46 @@ export class ClineProvider
 				mode: s.mode,
 				apiConfigName: s.apiConfigName,
 				index: i + 1,
+			}))
+		} catch {
+			return []
+		}
+	}
+
+	private getWorkerResultsForWebview(currentTask?: Task): Array<{
+		workerId: string
+		name: string
+		role: string
+		kind: string
+		summary: string
+		provider?: string
+		attempt: number
+		ts: number
+	}> {
+		try {
+			const runtime = this.getOrchestrationRuntime()
+			let parentId: string | undefined
+			if (currentTask?.isBackgroundWorker) {
+				parentId = currentTask.parentTask?.taskId
+			} else if (currentTask) {
+				parentId = currentTask.taskId
+			}
+			if (!parentId) return []
+			const results = runtime.listResults(parentId, false)
+			return results.map((r) => ({
+				workerId: r.workerId,
+				name: r.name,
+				role: r.role,
+				kind: r.kind,
+				summary:
+					r.kind === "completed" || r.kind === "review_digest"
+						? (r.summary ?? "")
+						: r.kind === "failed" || r.kind === "cancelled"
+							? (r.error ?? r.summary ?? "")
+							: (r.summary ?? r.error ?? r.kind),
+				provider: r.apiConfigName,
+				attempt: r.attempt,
+				ts: r.ts,
 			}))
 		} catch {
 			return []

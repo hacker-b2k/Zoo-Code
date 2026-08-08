@@ -11,7 +11,7 @@ import {
 
 import { vscode } from "@src/utils/vscode"
 import { useAppTranslation } from "@src/i18n/TranslationContext"
-import { Button } from "@src/components/ui"
+import { Button, ApiKeyInput } from "@src/components/ui"
 
 import { inputEventTransform } from "../transforms"
 import { ModelPicker } from "../ModelPicker"
@@ -72,25 +72,23 @@ export const Requesty = ({
 
 	return (
 		<>
-			<VSCodeTextField
+			<ApiKeyInput
 				value={apiConfiguration?.requestyApiKey || ""}
-				type="password"
 				onInput={handleInputChange("requestyApiKey")}
 				placeholder={t("settings:providers.getRequestyApiKey")}
-				className="w-full">
-				<div className="flex justify-between items-center mb-1">
-					<label className="block font-medium">{t("settings:providers.requestyApiKey")}</label>
-					{apiConfiguration?.requestyApiKey && (
-						<RequestyBalanceDisplay
-							baseUrl={apiConfiguration.requestyBaseUrl}
-							apiKey={apiConfiguration.requestyApiKey}
-						/>
-					)}
-				</div>
-			</VSCodeTextField>
-			<div className="text-sm text-vscode-descriptionForeground -mt-2">
-				{t("settings:providers.apiKeyStorageNotice")}
-			</div>
+				label={
+					<div className="flex justify-between items-center mb-1">
+						<label className="block font-medium">{t("settings:providers.requestyApiKey")}</label>
+						{apiConfiguration?.requestyApiKey && (
+							<RequestyBalanceDisplay
+								baseUrl={apiConfiguration.requestyBaseUrl}
+								apiKey={apiConfiguration.requestyApiKey}
+							/>
+						)}
+					</div>
+				}
+				className="w-full"
+			/>
 			<a
 				href={getApiKeyUrl()}
 				target="_blank"

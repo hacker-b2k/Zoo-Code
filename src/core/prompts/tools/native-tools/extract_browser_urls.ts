@@ -2,7 +2,9 @@ import type OpenAI from "openai"
 
 const DESCRIPTION = `Extract all links/URLs from an open browser page. Returns a list of URLs with their link text.
 
-Use this after reading a page to find specific URLs to navigate to, or to get an overview of all links on a page.`
+Use this after reading a page to find specific URLs to navigate to, or to get an overview of all links on a page.
+
+pageId is required but auto-detected if only one browser tab is open — you can omit it in that case.`
 
 export default {
 	type: "function",
@@ -26,7 +28,7 @@ export default {
 					description: "Maximum number of URLs to return (default: 50)",
 				},
 			},
-			required: ["pageId", "sameOriginOnly", "limit"],
+			required: [],
 			additionalProperties: false,
 		},
 	},
